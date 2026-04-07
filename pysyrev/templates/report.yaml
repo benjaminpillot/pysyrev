@@ -1,0 +1,12 @@
+meta:
+  title : Bibliographic report - Pysyrev
+  subtitle :
+  author : Report generated with the pysyrev engine (v0.1)
+  date_format : %d/%m/%Y
+  version : 1.0.0
+  summary : This document has been automatically generated and emphasizes
+            the main features of the literature review performed through
+            a mixture of Bertopic, Berteley and use of LLMs (LatteReview)
+
+sections:
+  - title :
