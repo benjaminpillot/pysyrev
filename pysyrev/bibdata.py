@@ -139,9 +139,9 @@ class BibDataset:
         """
         datasets = [self._bib_dataset] + [other.dataset for other in others]
 
-        return BibDataset(merge_bibs(datasets,
-                                     doi_similarity,
-                                     title_similarity))
+        return self.__class__(merge_bibs(datasets,
+                                         doi_similarity,
+                                         title_similarity))
 
     def sample(self, size=100, random_state=None):
         """ Sample dataset at random
@@ -163,14 +163,14 @@ class BibDataset:
                                                                    axis=0,
                                                                    ignore_index=True))
 
-    def to_csv(self):
+    def to_csv(self, file_name):
         """ Write bib to csv file
 
         Returns
         -------
 
         """
-        pass
+        self.dataset.to_csv(file_name)
 
     @property
     def doi(self):

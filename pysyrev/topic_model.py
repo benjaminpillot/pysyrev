@@ -1,4 +1,4 @@
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import List
 
 from bertopic.vectorizers import ClassTfidfTransformer
@@ -76,14 +76,28 @@ class BertopicModel:
 
 
 @dataclass
+class TopicDist:
+
+    window : int
+    stride : int
+    min_similarity : float
+    batch_size : int
+
+
+@dataclass
 class TopicModel:
 
     allow_abbrev : bool
     bertopic_model : BertopicModel
+    topic_distribution : TopicDist
+    nr_repr_docs : int
+    export_to : str
     n_neighbors : List[int]
     n_components : List[int]
     min_topic_size : List[int]
     min_samples : List[int]
+    topic_size_step : int
+    min_sample_step : int
 
 
     def _clean_dataset(self, dataset, show_progress):
@@ -99,5 +113,18 @@ class TopicModel:
         embeddings = self.bertopic_model.embedding_model.encode(cleans_docs,
                                                                 show_progress_bar=show_progress)
 
-        return topic_modeling()
+        return topic_modeling(dataset,
+                              cleans_docs,
+                              self.bertopic_model,
+                              self.topic_distribution,
+                              embeddings,
+                              self.n_neighbors,
+                              self.n_components,
+                              self.min_topic_size,
+                              self.min_samples,
+                              self.topic_size_step,
+                              self.min_sample_step,
+                              self.export_to,
+                              self.nr_repr_docs,
+                              show_progress)
 

@@ -161,5 +161,5 @@ topic_modeling:
   topic_distribution:
     window : 8
     stride : 1
-    similarity : 0.1
+    min_similarity : 0.1
     batch_size : 1000

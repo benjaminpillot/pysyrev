@@ -23,6 +23,7 @@ def clean_dataset(dataset, allow_abbrev, show_progress):
 def topic_modeling(dataset,
                    documents,
                    bertopic_model,
+                   topic_distribution,
                    embeddings,
                    umap_n_neighbors,
                    umap_n_components,
@@ -31,13 +32,10 @@ def topic_modeling(dataset,
                    topic_size_step,
                    min_samples_step,
                    export_to,
-                   cluster_sel_method,
-                   window,
-                   stride,
-                   min_similarity,
-                   batch_size,
                    nr_repr_docs,
                    show_progress):
+
+    cluster_sel_method = bertopic_model.hdbscan_model.clusterselection_method
 
     min_topic_size_values = range(min_topic_size_range[0],
                                   min_topic_size_range[1] + 1,
@@ -95,19 +93,20 @@ def topic_modeling(dataset,
                                                                                                  **bt_model)
 
                     # Bertopic results
-                    topic_distr, _ = topic_model.approximate_distribution(documents,
-                                                                          window=window,
-                                                                          stride=stride,
-                                                                          min_similarity=min_similarity,
-                                                                          batch_size=batch_size)
-                    topic_distribution = pd.DataFrame(topic_distr,
-                                                      columns=[f"topic#{topic_n}" for
-                                                               topic_n in range(topic_distr.shape[1])])
+                    topic_dist, _ = (
+                        topic_model.approximate_distribution(documents,
+                                                             window=topic_distribution.window,
+                                                             stride=topic_distribution.stride,
+                                                             min_similarity=topic_distribution.min_similarity,
+                                                             batch_size=topic_distribution.batch_size))
+                    topic_distribution_df = pd.DataFrame(topic_dist,
+                                                         columns=[f"topic#{topic_n}" for
+                                                                  topic_n in range(topic_dist.shape[1])])
                     out_docs = pd.concat([pd.DataFrame({"document": documents}),
                                           dataset,
                                           pd.DataFrame({"topic": topic_model.topics_})], axis=1)
                     bertopic_results = pd.concat([out_docs,
-                                                  topic_distribution], axis=1)
+                                                  topic_distribution_df], axis=1)
                     bertopic_results.to_csv(out_file["bertopic_results"])
 
                     # Topic info for N representative documents
@@ -141,3 +140,5 @@ def topic_modeling(dataset,
 
     if show_progress:
         pg.close()
+
+    return 0
