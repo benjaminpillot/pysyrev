@@ -3,6 +3,7 @@ bibfile:
   open_alex : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
   scopus :
   pubmed:
+  doc_type : [article, review]  # Leave doc_type empty if ALL documents must be included in topic modeling
 
 
 review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
@@ -117,13 +118,18 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
                            disagree on how to evaluate it. You can read their evaluation above.
 
 
-topic_modeling:
-  doc_type : [article, review]  # Leave doc_type empty if ALL documents must be included in topic modeling
+topic_model:
   doc_dataset : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/
               PYSYREV/AI_REVIEW_RESULTS/included_articles.csv  # Document dataset for topic modeling
                                                                # corresponds to output after AI review
                                                                # filtering
   export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
+  distance_name : euclidean
+
+  # Keep n results : keep N best results among all
+  # clustering procedures corresponding to n_neighbors,
+  # n_components, topic size, and min sample values
+  keep_n_results : 15
 
   hdbscan:
     cluster_selection_method : leaf
