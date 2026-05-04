@@ -1,14 +1,74 @@
-bibfile:
-  wos : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/DECEMBER_2025/savedrecs_all.bib
-  open_alex : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
-  scopus :
+# Path to the .env file. Loaded at the very top of Config.load, so any
+# ${VAR} reference further down in this file is resolved against it.
+env: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/.env
+
+bib:
+  # WoS source: either a local file (source: file) or the Expanded API
+  # (source: api). Pick one. Switch to `source: api` once your API key
+  # is active and update the query below.
+  wos:
+    source: api   # 'file' or 'api'
+    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/DECEMBER_2025/savedrecs_all.bib
+#    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs.bib
+    api:
+      api_key: ${WOS_API_KEY}                                # resolved from .env
+      query: 'ALL = (agent-based (model* OR simulation) AND (energ* OR electric* OR net-zero OR carbon OR renewable OR green OR clean OR transition OR sustainab*)) AND PY=2015-2024'
+      cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
+  open_alex:
+#    source: file   # 'file' or 'api'
+    source:
+    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
+    api:
+      api_key: ${OPENALEX_API_KEY}
+      email: ${OPENALEX_EMAIL}                               # optional, polite-pool credit
+      query: agent-based energy transition                    # free-text search (BM25 on title+abstract)
+      filters:                                                # structured filters (combined with AND)
+        publication_year: '2015-2024'
+        type: article
+      cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/cache
+  scopus:
   pubmed:
-  doc_type : [article, review]  # Leave doc_type empty if ALL documents must be included in topic modeling
+
+  # --- Merge parameters (duplicates removal across sources) ---
+  # merge:
+  #   title_similarity: 98         # fuzzy similarity threshold (0-100) for duplicate detection
+  #   ngram_size: 3                # word n-gram size for the blocking index
+  #   max_candidates_per_row: 200  # max candidates per query in the blocking phase
+  #   scorer: token_set_ratio      # rapidfuzz scorer: token_set_ratio | partial_token_sort_ratio | WRatio | partial_ratio | ratio
+
+  # --- Cleaning parameters ---
+  # clean:
+  #   min_signals_to_reject: 2     # min number of garbage signals to drop an abstract
+  #   extra_garbage_phrases: []    # additional phrases to flag as garbage
+  #   use_langdetect: false        # use langdetect library for language detection
+
+  # --- Extraction / filtering parameters ---
+  extract:
+    doc_type: [article, review]  # leave empty to keep all document types
+  #   year: 1900                   # min publication year (inclusive)
+  #   nb_citations: 0              # min citation count (inclusive)
+    language: english              # str, list of str, or null/empty (default: null = keep all languages)
+  #   scorer: partial_token_sort_ratio
+  #   score_cutoff: 90             # min fuzzy match score (0-100)
+
+  # --- Reference resolution (opt-in, expensive) ---
+  # resolve_references:
+  #   enabled: false
+  #   fuzzy_score_cutoff: 90
+  #   ngram_size: 3
+  #   max_candidates: 50
+  #   scorer: token_set_ratio
+
+  # --- Output ---
+  # Full bibliography dataset, used as input for the review stage.
+  export_to: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/bib_dataset.csv
 
 
 review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
-  env : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/.env  # environment file stores API keys
-  export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEWED_DOCS/
+  # `env:` moved to the root of the file (used to be here).
+  export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/
+  run_name :  # optional — if set, output files are reviewed_dataset_<run_name>.csv
+              #            if empty, output files are reviewed_dataset.csv (default)
   batch_size : 100
   api_pause : 30  # time.sleep(api_pause) in order to limit nb of API requests per min during reviewing process
   text_inputs : [title, abstract, keywords]
@@ -119,17 +179,30 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
 
 
 topic_model:
-  doc_dataset : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/
-              PYSYREV/AI_REVIEW_RESULTS/included_articles.csv  # Document dataset for topic modeling
-                                                               # corresponds to output after AI review
-                                                               # filtering
+  # doc_dataset: filtered dataset produced by the review stage (required).
+  doc_dataset : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/included_articles.csv
   export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
-  distance_name : euclidean
+  run_name: # Leave empty for auto-timestamp file name
+  # Distance : euclidean, chebyshev
+  distance: chebyshev
+  # Coherence scorer
+  # Dict of 2 scorers among: c_v, c_npmi, u_mass
+  #   * 1st scorer ('ranking') is used to rank the
+  #     best configs among all configs (slower part
+  #     of the code)
+  #   * 2nd one ('purity') is used to compute
+  #     purity of the best ranked configurations
+  # Recommendation: use the quickest one for ranking,
+  # and the slowest one for computing final purity
+  # default : {'ranking' : 'u_mass', 'purity' : 'c_v'}
+  coherence_scorer :
+    ranking : u_mass
+    purity : c_v
 
   # Keep n results : keep N best results among all
   # clustering procedures corresponding to n_neighbors,
   # n_components, topic size, and min sample values
-  keep_n_results : 15
+  keep_n_results : 25
 
   hdbscan:
     cluster_selection_method : leaf

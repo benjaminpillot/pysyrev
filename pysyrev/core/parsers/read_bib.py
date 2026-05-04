@@ -214,7 +214,7 @@ def _clean_titles(titles):
     """
     out = []
     for raw in titles:
-        t = str(raw).lower().replace('\u2019', "'")                 # lowercase
+        t = str(raw).lower().replace('’', "'")                 # lowercase
         t = re.sub(r"[^a-zA-Z0-9']+", ' ', t)                       # special chars -> espace
         t = unicodedata.normalize('NFD', t).encode('ascii', 'ignore').decode('utf-8')  # accents
         t = re.sub(r'[0-9]', ' ', t)                                # chiffres

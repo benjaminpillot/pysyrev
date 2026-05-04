@@ -4,8 +4,19 @@ import numpy as np
 import pandas as pd
 
 from berteley.preprocessing import preprocess as berteley_preprocess
-from berteley.models import fit as berteley_fit
+from berteley.models import fit as berteley_fit, _calculate_metrics
 from tqdm import tqdm
+
+
+def _compute_distance(distance, *values):
+    norm = [(n - np.min(n)) / (np.max(n) - np.min(n)) for n in values]
+
+    # Distance to ideal
+    if distance == "euclidean":
+        return np.sqrt(np.sum([(1 - norm_n) ** 2 for norm_n in norm]))
+        # return np.sqrt((1 - norm[0]) ** 2 + (1 - norm[1]) ** 2 + (1 - norm[2]) ** 2)
+    else:  # Chebyshev
+        return np.maximum.reduce([1 - norm_n for norm_n in norm])
 
 
 def clean_dataset(dataset, allow_abbrev, show_progress):
@@ -34,6 +45,8 @@ def topic_modeling(dataset,
                    export_to,
                    nr_repr_docs,
                    distance_name,
+                   ranking_scorer,
+                   purity_scorer,
                    keep_n_results,
                    show_progress):
 
@@ -57,7 +70,8 @@ def topic_modeling(dataset,
     # Metrics
     nb_topics = []
     entropy = list()
-    purity = list()
+    coherence = list()
+    diversity = list()
     nb_outliers = list()
     topic_models = list()
 
@@ -85,52 +99,48 @@ def topic_modeling(dataset,
                         pg.update(1)
                         
                     bt_model = bertopic_model(min_topic_size,
-                                              min_samples,
-                                              n_neighbors,
-                                              n_components)
+                                              min_samples)
 
                     topics, probs, topic_sizes, topic_model, topic_words, metrics = berteley_fit(documents,
                                                                                                  reduced_embeddings,
+                                                                                                 coherence_scorer=ranking_scorer,
                                                                                                  **bt_model)
                     # Model
                     topic_models.append(topic_model)
-                    nb_topics.append(len(topics) - 1)
+                    nb_topics.append(len(topic_sizes) - 1)
 
                     # Compute metrics
                     try:
-                        nb_outliers.append(topic_sizes[-1])
+                        nb_outliers.append(topic_sizes.pop(-1))
                     except KeyError:
                         nb_outliers.append(np.nan)
-                    p_i_log_p_i = topics["Count"].values[1::] / nb_documents * np.log(
-                        topics["Count"].values[1::] / nb_documents)
+                    values = np.asarray(list(topic_sizes.values()))
+                    p_i_log_p_i = values / nb_documents * np.log(values / nb_documents)
                     entropy.append(-1 * np.sum(p_i_log_p_i))
-                    purity.append(metrics["Coherence"] * metrics["Diversity"])
+                    coherence.append(metrics["Coherence"])
+                    diversity.append(metrics["Diversity"])
 
     #---------
-    # Rank models according to entropy, purity, and nb of outliers
+    # Rank models according to entropy, coherence, and nb of outliers
     entropy = np.asarray(entropy)
-    purity = np.asarray(purity)
+    coherence = np.asarray(coherence)
     nb_outliers = np.asarray(nb_outliers)
-    no_outliers = nb_documents - nb_outliers
-    normalized_entropy = (entropy - np.min(entropy)) / (np.max(entropy) - np.min(entropy))
-    normalized_purity = (purity - np.min(purity)) / (np.max(purity) - np.min(purity))
-    normalized_outliers = (no_outliers - np.min(no_outliers)) / (np.max(no_outliers) - np.min(no_outliers))
-
-    # Distance to ideal
-    if distance_name == "euclidean":
-        distance = np.sqrt((1 - normalized_entropy)**2 + (1 - normalized_purity) ** 2 + (1 - normalized_outliers)**2)
-    else:  # Chebyshev
-        distance = np.maximum(1 - normalized_entropy, 1 - normalized_outliers, 1 - normalized_purity)
+    distance = _compute_distance(distance_name,
+                                 entropy,
+                                 coherence,
+                                 nb_documents - nb_outliers,
+                                 diversity)
 
     results = pd.DataFrame({
-        "hdbscan"     : hdbscan,
-        "umap"        : umap,
-        "nb_topics"   : nb_topics,
-        "entropy"     : entropy,
-        "purity"      : purity,
-        "nb_outliers" : nb_outliers,
-        "distance"    : distance,
-        "model"       : topic_models
+        "hdbscan"                       : hdbscan,
+        "umap"                          : umap,
+        "nb_topics"                     : nb_topics,
+        "entropy"                       : entropy,
+        ranking_scorer                  : coherence,
+        "diversity"                     : diversity,
+        "nb_outliers"                   : nb_outliers,
+        "distance"                      : distance,
+        "model"                         : topic_models
     }).sort_values(by="distance", ascending=True)
 
     best_results = results.iloc[:keep_n_results]
@@ -146,13 +156,21 @@ def topic_modeling(dataset,
         except FileExistsError:
             pass
 
+    coherence_downstream = list()
+    purity = list()
+
+    if purity_scorer != ranking_scorer:
+        compute_purity = True
+    else:
+        compute_purity = False
+
     # Store results
     for hdbscan_, umap_, model in zip(best_results.hdbscan,
                                       best_results.umap,
                                       best_results.model):
 
         # Output file names
-        file_name = f"hdbscan={hdbscan_}_umap={umap_}.csv"
+        file_name = f"hdbscan={hdbscan_}_umap={umap_}_distance={distance_name}.csv"
         out_file = {"topic_info": os.path.join(tinfo_dir,
                                                file_name),
                     "bertopic_results": os.path.join(bertopic_dir,
@@ -168,41 +186,50 @@ def topic_modeling(dataset,
         topic_distribution_df = pd.DataFrame(topic_dist,
                                              columns=[f"topic#{topic_n}" for
                                                       topic_n in range(topic_dist.shape[1])])
-        out_docs = pd.concat([pd.DataFrame({"document": documents}),
-                              dataset,
-                              pd.DataFrame({"topic": model.topics_})], axis=1)
+
+        # Prepare your documents to be used in a dataframe
+        out_docs = pd.DataFrame({"Document": documents,
+                                 "ID": range(len(documents)),
+                                 "Topic": model.topics_})
+
         bertopic_results = pd.concat([out_docs,
                                       topic_distribution_df], axis=1)
-        bertopic_results.to_csv(out_file["bertopic_results"])
+        bertopic_results.to_csv(out_file["bertopic_results"],
+                                index=False)
 
         # Topic info for N representative documents
         topic_info = model.get_topic_info()
         repr_docs, _, _, id_ = (
-            model.extract_representative_docs(c_tf_idf=model.c_tf_idf,
-                                              documents=out_docs,
-                                              topics=model.topic_representations_,
-                                              nr_repr_docs=nr_repr_docs))
-
+            model._extract_representative_docs(c_tf_idf=model.c_tf_idf_,
+                                               documents=out_docs,
+                                               topics=model.topic_representations_,
+                                               nr_repr_docs=nr_repr_docs))
         for field in dataset.columns:
-            topic_info[f"repr_doc_{field}"] = [dataset[field].values[np.asarray(idx)] for idx in id_]
+            topic_info[f"repr_doc_{field}"] = [dataset[field].values[np.asarray(idx)].tolist() for idx in id_]
+        topic_info.to_csv(out_file["topic_info"],
+                          index=False)
 
-        topic_info.to_csv(out_file["topic_info"])
+        # Re-compute coherence if necessary
+        if compute_purity:
+            final_metrics = _calculate_metrics(documents, model, model.topics_, purity_scorer)
+            coherence_downstream.append(final_metrics["Coherence"])
+            purity.append(final_metrics["Coherence"] * final_metrics["Diversity"])
 
-                    ###############
-                    # Store metrics
-                    # with open(metrics_file, "a") as file:
-                    #     try:
-                    #         nb_outliers = topic_sizes[-1]
-                    #     except KeyError:
-                    #         nb_outliers = np.nan
-                    #     try:
-                    #         print(f"Min topic size = {min_topic_size}, Min samples = {min_samples} :"
-                    #               f"{metrics}"
-                    #               f", nb of outliers = {nb_outliers}",
-                    #               file=file
-                    #               )
-                    #     except KeyError:
-                    #         pass
+    # Compute and store metrics
+    if compute_purity:
+        best_results.loc[:, purity_scorer] = coherence_downstream
+        best_results.loc[:, "purity"] = purity
+    else:
+        best_results.loc[:, "purity"] = best_results.loc[:, ranking_scorer] * best_results.loc[:, "diversity"]
+
+    best_results.loc[:, "distance_with_purity"] = _compute_distance(distance_name,
+                                                                    best_results["entropy"],
+                                                                    nb_documents - best_results["nb_outliers"],
+                                                                    best_results["purity"])
+    best_results.to_csv(os.path.join(metrics_dir, f"{distance_name}_best_results.csv"),
+                        index=False)
+    results.to_csv(os.path.join(metrics_dir, f"{distance_name}_results.csv"),
+                   index=False)
 
     if show_progress:
         pg.close()

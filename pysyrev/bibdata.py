@@ -1,19 +1,31 @@
+import warnings
 from rapidfuzz import fuzz
 
-from pysyrev.core.bib import fetch_citations, generate_bib, generate_oa_bib, extract_documents, \
-    check_bib_dataset
+from pysyrev.core.api import OpenAlexClient, WosClient
+from pysyrev.core.bib import (fetch_citations, generate_bib, generate_oa_bib,
+                               extract_documents, check_bib_dataset)
+from pysyrev.core.mappers import from_openalex_result, from_wos_result
+from pysyrev.core.references import resolve_references as _resolve_references
+from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
 from pysyrev.core.clean import clean_doi, clean_abstracts
-from typing import Iterable
+from typing import Iterable, List
 
 import pandas as pd
+
+_SCORER_MAP = {
+    "partial_token_sort_ratio": fuzz.partial_token_sort_ratio,
+    "token_set_ratio":          fuzz.token_set_ratio,
+    "partial_ratio":            fuzz.partial_ratio,
+    "WRatio":                   fuzz.WRatio,
+    "ratio":                    fuzz.ratio,
+}
 
 
 class BibDataset:
 
     _db = None
     _bib_dataset = None
-    # _pbx_probe = None
 
     def __init__(self, bibfile=None, bib_dataset=None):
         """
@@ -26,10 +38,12 @@ class BibDataset:
         bib_dataset: pandas.DataFrame
             Already processed bib dataset
         """
-        try:
+        if bibfile is not None:
             self.generate_bib(bibfile)
-        except TypeError:
+        elif bib_dataset is not None:
             self._bib_dataset = check_bib_dataset(bib_dataset)
+        else:
+            raise ValueError("Either bibfile or bib_dataset must be provided.")
 
 
     def clean_and_drop(self,
@@ -68,7 +82,8 @@ class BibDataset:
         return self
 
     def extract_documents(self, document_type, year=1900,
-                          nb_citations=0, language="en",
+                          nb_citations=0,
+                          language="english",
                           scorer=fuzz.partial_token_sort_ratio,
                           score_cutoff=90):
         """ Create sub bib dataset through metadata selection
@@ -81,7 +96,8 @@ class BibDataset:
             min publication year
         nb_citations: int or float
             min citation count
-        language: str or list[str]
+        language: str or list[str] or None
+            None means no language filter (keep all)
         scorer: function
         score_cutoff: int
 
@@ -96,6 +112,41 @@ class BibDataset:
                                                             nb_citations,
                                                             scorer,
                                                             score_cutoff))
+
+    def resolve_references(self,
+                           fuzzy_score_cutoff: int = 90,
+                           ngram_size:         int = 3,
+                           max_candidates:     int = 50,
+                           scorer=fuzz.token_set_ratio):
+        """Resolve raw references to internal document IDs.
+
+        Adds two columns to the dataset:
+
+        ``reference_ids``
+            Internal doc IDs of resolved references ('; '-joined), or None.
+        ``unresolved_references``
+            Raw reference strings that found no match ('; '-joined), or None.
+
+        Parameters
+        ----------
+        fuzzy_score_cutoff : int
+            Minimum rapidfuzz score (0-100) to accept a fuzzy title match.
+            Pass 100 to disable fuzzy matching entirely.
+        ngram_size : int
+            Word n-gram size for the blocking index.
+        max_candidates : int
+            Maximum candidates per query in the blocking phase.
+        scorer : callable
+            rapidfuzz scorer for fuzzy title comparison.
+        """
+        self._bib_dataset = _resolve_references(
+            self._bib_dataset,
+            fuzzy_score_cutoff=fuzzy_score_cutoff,
+            ngram_size=ngram_size,
+            max_candidates=max_candidates,
+            scorer=scorer,
+        )
+        return self
 
     def fetch_abstracts(self):
         """ Use online APIs to retrieve abstracts
@@ -218,6 +269,116 @@ class BibDataset:
                             sep=sep,
                             index=index)
 
+    # ---- bridge from configuration -----------------------------------------
+
+    @classmethod
+    def from_config(cls, config: BibConfig) -> 'BibDataset':
+        """Build a BibDataset from all sources declared in a BibConfig.
+
+        Pipeline: load sources → merge → clean → extract (if doc_type set)
+        → resolve references (if enabled).  All parameters are driven by the
+        config; see CleanConfig, ExtractConfig, MergeConfig, and
+        ResolveReferencesConfig for defaults.
+        """
+        datasets: List[BibDataset] = []
+
+        if config.wos:
+            datasets.append(WosDataset.from_config(config.wos))
+        if config.open_alex:
+            datasets.append(OpenAlexDataset.from_config(config.open_alex))
+        if config.scopus:
+            datasets.append(ScopusDataset(bibfile=config.scopus))
+        if config.pubmed:
+            datasets.append(PubmedDataset(bibfile=config.pubmed))
+
+        if not datasets:
+            raise ValueError("No bib source is configured — set at least one of "
+                             "wos, open_alex, scopus, or pubmed in the config.")
+
+        cfg_merge = config.merge
+        merged = (
+            datasets[0] if len(datasets) == 1
+            else datasets[0].merge(
+                datasets[1:],
+                title_similarity      = cfg_merge.title_similarity,
+                ngram_size            = cfg_merge.ngram_size,
+                max_candidates_per_row= cfg_merge.max_candidates_per_row,
+                scorer                = _SCORER_MAP[cfg_merge.scorer],
+            )
+        )
+
+        cfg_clean = config.clean
+        merged = merged.clean_and_drop(
+            min_signals_to_reject = cfg_clean.min_signals_to_reject,
+            extra_garbage_phrases = cfg_clean.extra_garbage_phrases or (),
+            use_langdetect        = cfg_clean.use_langdetect,
+        )
+
+        cfg_extract = config.extract
+        if cfg_extract.doc_type:
+            merged = merged.extract_documents(
+                cfg_extract.doc_type,
+                year         = cfg_extract.year,
+                nb_citations = cfg_extract.nb_citations,
+                language     = cfg_extract.language,
+                scorer       = _SCORER_MAP[cfg_extract.scorer],
+                score_cutoff = cfg_extract.score_cutoff,
+            )
+
+        cfg_rr = config.resolve_references
+        if cfg_rr.enabled:
+            api_sources = [
+                name for name, src in (('wos', config.wos), ('open_alex', config.open_alex))
+                if isinstance(src, (WosSourceConfig, OpenAlexSourceConfig))
+                and src.source == 'api'
+            ]
+            if api_sources:
+                warnings.warn(
+                    f"resolve_references is enabled but the following sources use "
+                    f"the API ({', '.join(api_sources)}), which does not return "
+                    f"references inline. The 'references' column will be empty for "
+                    f"those records and resolution will produce no matches. "
+                    f"Switch to source: file to get references.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            merged = merged.resolve_references(
+                fuzzy_score_cutoff = cfg_rr.fuzzy_score_cutoff,
+                ngram_size         = cfg_rr.ngram_size,
+                max_candidates     = cfg_rr.max_candidates,
+                scorer             = _SCORER_MAP[cfg_rr.scorer],
+            )
+
+        if config.export_to:
+            merged.to_csv(config.export_to)
+
+        return merged
+
+    @classmethod
+    def _from_source_config(cls, config) -> 'BibDataset':
+        """Template: branch on source type and return a new instance.
+
+        * ``source: file`` — delegates to the regular constructor.
+        * ``source: api``  — calls :meth:`_from_api_config` (subclass hook)
+          to produce a DEFAULT_FIELDS DataFrame, then wraps it in the constructor.
+        """
+        if config.source == 'file':
+            return cls(bibfile=config.file)
+        return cls(bib_dataset=cls._from_api_config(config.api))
+
+    @classmethod
+    def _from_api_config(cls, api_config) -> pd.DataFrame:
+        """Hook: query the source API and return a DEFAULT_FIELDS DataFrame.
+
+        Must be overridden by subclasses that support ``source: api``.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not support API source. "
+            "Override _from_api_config or set `source: file` in the config."
+        )
+
+    # ---- properties --------------------------------------------------------
+
     @property
     def doi(self):
         return self._bib_dataset.doi
@@ -235,10 +396,39 @@ class WosDataset(BibDataset):
 
     _db = "wos"
 
+    @classmethod
+    def from_config(cls, config: WosSourceConfig) -> 'WosDataset':
+        return cls._from_source_config(config)
+
+    @classmethod
+    def _from_api_config(cls, api_config) -> pd.DataFrame:
+        client = WosClient(
+            api_key      = api_config.api_key,
+            session_file = (f"{api_config.cache_dir}/session.json"
+                            if api_config.cache_dir else None),
+        )
+        return from_wos_result(client.search(query=api_config.query))
+
 
 class OpenAlexDataset(BibDataset):
 
     _db = "scopus"
+
+    @classmethod
+    def from_config(cls, config: OpenAlexSourceConfig) -> 'OpenAlexDataset':
+        return cls._from_source_config(config)
+
+    @classmethod
+    def _from_api_config(cls, api_config) -> pd.DataFrame:
+        client = OpenAlexClient(
+            api_key      = api_config.api_key,
+            email        = api_config.email,
+            session_file = (f"{api_config.cache_dir}/session.json"
+                            if api_config.cache_dir else None),
+        )
+        return from_openalex_result(
+            client.search(query=api_config.query, filters=api_config.filters)
+        )
 
     def generate_bib(self, bibfile, **kwargs):
 

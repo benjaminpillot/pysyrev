@@ -4,14 +4,13 @@ import time
 from functools import partial
 
 import numpy as np
+import pandas as pd
 from lattereview.agents import TitleAbstractReviewer
 from lattereview.providers import LiteLLMProvider, OpenAIProvider, OllamaProvider
 from lattereview.workflows import ReviewWorkflow
 
 MAX_RETRIES = 2
 MAX_CONCURRENT_REQUESTS = 30
-REVIEWED_DATASET = "reviewed_dataset.csv"
-REVIEWED_SUBSET = lambda x : f"reviewed_subset_{x}.csv"
 
 
 def build_reviewer(name, provider, model_id,
@@ -89,31 +88,38 @@ def eval_filter_func(row, eval_keys, decision_rule):
     return False
 
 
-def process_full(dataset, workflow_schema, out_dir):
+def process_full(dataset, workflow_schema):
 
-    reviewed_dataset = asyncio.run(review(dataset,
-                                          workflow_schema))
-    reviewed_dataset.to_csv(os.path.join(out_dir, REVIEWED_DATASET),
-                            index=False)
-
-    return 0
+    # reviewed_dataset = asyncio.run(review(dataset, workflow_schema))
+    # reviewed_dataset.to_csv(out_file, index=False)
+    #
+    # return 0
+    return asyncio.run(review(dataset, workflow_schema))
 
 
 def process_per_batch(dataset, workflow_schema,
-                      batch_size, out_dir, pause):
+                      batch_size, pause, subset_file_fn):
 
     subsets = [dataset.iloc[i: min(i + batch_size, len(dataset)), :]
-               for i in range (0, len(dataset), batch_size)]
+               for i in range(0, len(dataset), batch_size)]
 
     for n, subset in enumerate(subsets):
-        subset_file = os.path.join(out_dir, REVIEWED_SUBSET(n))
+        subset_file = subset_file_fn(n)
         if not os.path.exists(subset_file):
-            reviewed_subset = asyncio.run(review(subset,
-                                                 workflow_schema))
+            reviewed_subset = asyncio.run(review(subset, workflow_schema))
             reviewed_subset.to_csv(subset_file, index=False)
             time.sleep(pause)  # Limit API nb of requests per min
 
-    return 0
+    # Merge all subset files into the final output file.
+    reviewed_dataset = pd.concat(
+        [pd.read_csv(subset_file_fn(n)) for n in range(len(subsets))],
+        ignore_index=True,
+    )
+
+    return reviewed_dataset
+    # reviewed_dataset.to_csv(out_file, index=False)
+    #
+    # return 0
 
 
 async def review(dataset, workflow_schema):
@@ -128,19 +134,21 @@ async def review(dataset, workflow_schema):
     return updated_dataset
 
 
-def run_review(dataset, workflow_schema, out_dir,
-               batch_size, sample_size, pause):
+def run_review(dataset, workflow_schema,
+               batch_size, sample_size, pause, subset_file_fn=None):
 
     if sample_size:
         dataset = dataset.sample(sample_size)
 
     if batch_size and batch_size < len(dataset):
-        return process_per_batch(dataset,
-                                 workflow_schema,
-                                 batch_size,
-                                 out_dir,
-                                 pause)
+         return process_per_batch(dataset,
+                                  workflow_schema,
+                                  batch_size,
+                                  pause,
+                                  subset_file_fn)
     else:
         return process_full(dataset,
-                            workflow_schema,
-                            out_dir)
+                            workflow_schema)
+
+    # TODO
+    #  reviewed_dataset["final_score"] =

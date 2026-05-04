@@ -10,15 +10,18 @@ bridge between the two trivial.
 """
 
 from dataclasses import dataclass
-from typing import List
+from datetime import datetime
+from pathlib import Path
+from typing import List, Union
 
+import pandas as pd
 from bertopic.dimensionality import BaseDimensionalityReduction
 from bertopic.vectorizers import ClassTfidfTransformer
 from hdbscan import HDBSCAN
 from sentence_transformers import SentenceTransformer
 from umap import UMAP
 
-from pysyrev.config import Config, TopicModelConfig
+from pysyrev.core.config import TopicModelConfig
 from pysyrev.core.topic import clean_dataset, topic_modeling
 
 
@@ -84,18 +87,18 @@ class BertopicModel:
             self._embedding_model = SentenceTransformer(self.transformer_model)
         return self._embedding_model
 
-def __call__(self, min_topic_size, min_samples):
-        return dict(
-            embedding_model         = self.embedding_model,
-            nr_topics               = self.nr_topics,
-            n_gram_range            = self.n_gram_range,
-            verbose                 = self.verbose,
-            language                = self.language,
-            calculate_probabilities = self.calculate_probabilities,
-            ctfidf_model            = self.ctfidf_model,
-            umap_model              = BaseDimensionalityReduction(),
-            hdbscan_model           = self.hdbscan_model(min_topic_size, min_samples),
-        )
+    def __call__(self, min_topic_size, min_samples):
+            return dict(
+                embedding_model         = self.embedding_model,
+                nr_topics               = self.nr_topics,
+                n_gram_range            = self.n_gram_range,
+                verbose                 = self.verbose,
+                language                = self.language,
+                calculate_probabilities = self.calculate_probabilities,
+                ctfidf_model            = self.ctfidf_model,
+                umap_model              = BaseDimensionalityReduction(),
+                hdbscan_model           = self.hdbscan_model(min_topic_size, min_samples),
+            )
 
 
 @dataclass
@@ -112,8 +115,10 @@ class TopicDistribution:
 
 @dataclass
 class TopicModel:
+
+    doc_dataset:          str
     allow_abbrev:         bool
-    distance_name:        str
+    distance:        str
     bertopic_model:       BertopicModel
     topic_distribution:   TopicDistribution
     nr_repr_docs:         int
@@ -125,6 +130,9 @@ class TopicModel:
     topic_size_step:      int
     min_sample_step:      int
     keep_n_results:       int
+    ranking_scorer:       str
+    purity_scorer:        str
+    run_name:             Union[None, str] = None  # None -> auto-timestamp at run() time
 
     # ---- bridge from configuration --------------------------------------
 
@@ -166,8 +174,9 @@ class TopicModel:
             batch_size     = config.topic_distribution.batch_size,
         )
         return cls(
+            doc_dataset          = config.doc_dataset,
             allow_abbrev         = config.berteley.allow_abbrev,
-            distance_name        = config.distance_name,
+            distance             = config.distance,
             bertopic_model       = bertopic_model,
             topic_distribution   = topic_distribution,
             nr_repr_docs         = config.bertopic.nr_repr_docs,
@@ -179,6 +188,9 @@ class TopicModel:
             topic_size_step      = config.hdbscan.topic_size_step,
             min_sample_step      = config.hdbscan.min_sample_step,
             keep_n_results       = config.keep_n_results,
+            ranking_scorer       = config.coherence_scorer.ranking,
+            purity_scorer        = config.coherence_scorer.purity,
+            run_name             = config.run_name,
         )
 
     # ---- runtime --------------------------------------------------------
@@ -186,7 +198,20 @@ class TopicModel:
     def _clean_dataset(self, dataset, show_progress):
         return clean_dataset(dataset, self.allow_abbrev, show_progress)
 
-    def run(self, dataset, show_progress=True):
+    def _make_run_dir(self) -> Path:
+        """Create a unique subdirectory under `export_to` for this run.
+        If `run_name` is set, use it as-is; otherwise generate a timestamp.
+        Raises FileExistsError if the directory already exists, to prevent
+        accidental overwrite of a previous run."""
+        name = self.run_name or 'run_' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        run_dir = Path(self.export_to) / name
+        run_dir.mkdir(parents=True, exist_ok=False)
+        return run_dir
+
+    def run(self, show_progress=True):
+        run_dir = self._make_run_dir()
+
+        dataset = pd.read_csv(self.doc_dataset)
         cleans_docs = self._clean_dataset(dataset, show_progress=show_progress)
         embeddings = self.bertopic_model.embedding_model.encode(
             cleans_docs, show_progress_bar=show_progress,
@@ -203,9 +228,11 @@ class TopicModel:
             self.min_sample_range,
             self.topic_size_step,
             self.min_sample_step,
-            self.export_to,
+            str(run_dir),
             self.nr_repr_docs,
-            self.distance_name,
+            self.distance,
+            self.ranking_scorer,
+            self.purity_scorer,
             self.keep_n_results,
             show_progress,
         )

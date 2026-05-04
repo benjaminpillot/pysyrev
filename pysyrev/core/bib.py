@@ -3,15 +3,14 @@ import tempfile
 import numpy as np
 import pandas as pd
 
-from crossref.restful import Works
 from pandas.core.dtypes.common import is_string_dtype, is_numeric_dtype, is_object_dtype
-from semanticscholar import SemanticScholar
 from rapidfuzz import process as rf_process
 from tqdm import tqdm
 
-from pysyrev.pbx.read_bib import read_bib
+from pysyrev.core.parsers.read_bib import read_bib
 
 
+# Column rename map for OpenAlex CSV exports (flat column names).
 FROM_OA = {"keywords.display_name": "author_keywords",
            "cited_by_count": "cited_by",
            "publication_year": "year",
@@ -193,11 +192,9 @@ def extract_documents(dataset, doc_type, language, year, nb_citations,
 
 
 def fetch_citations(doi):
-    # First, import the client from semanticscholar module
-
+    from crossref.restful import Works
+    from semanticscholar import SemanticScholar
     works = Works()
-
-    # You'll need an instance of the client to request data from the API
     sch = SemanticScholar()
     citation_count = []
 
@@ -251,111 +248,3 @@ def generate_oa_bib(bibfile):
                      axis="columns")
 
     return dataframe
-
-
-# def check_bib_dataset(dataset):
-#     """
-#     Validate that `dataset` conforms to the expected bibliographic schema.
-#
-#     Checks:
-#       1. All required columns are present.
-#       2. Each column has a dtype compatible with its expected kind.
-#
-#     Raises
-#     ------
-#     ValueError
-#         If any required column is missing, with the list of missing columns.
-#         If any column has an incompatible dtype, with the offending (column,
-#         dtype, expected kind) triples.
-#
-#     Returns
-#     -------
-#     pd.DataFrame
-#         The input dataset, unchanged, if all checks pass.
-#     """
-#     missing = [col for col in DEFAULT_FIELDS if col not in dataset.columns]
-#     if missing:
-#         raise ValueError(f"Missing columns: {missing}")
-#
-#     bad_dtypes = []
-#     for col, kind in DEFAULT_FIELDS.items():
-#         check = _KIND_CHECKS[kind]
-#         if not check(dataset[col]):
-#             bad_dtypes.append((col, str(dataset[col].dtype), kind))
-#
-#     if bad_dtypes:
-#         details = ', '.join(f"{col}: got {dt}, expected {kind}"
-#                             for col, dt, kind in bad_dtypes)
-#         raise ValueError(f"Incompatible dtypes -> {details}")
-#
-#     return dataset
-
-
-# def extract_documents(dataset, doc_type, language,
-#                       year, nb_citations, scorer, score_cutoff):
-#
-#     dset = []
-#     new_dataset = dataset[(dataset.year >= year) & (dataset.cited_by >= nb_citations)]
-#     for d_type in doc_type:
-#         best_matches = process.extractBests(d_type,
-#                                             new_dataset.document_type,
-#                                             scorer=scorer,
-#                                             score_cutoff=score_cutoff,
-#                                             limit=len(new_dataset.document_type))
-#         dset.append(new_dataset.loc[[key for _, _, key in best_matches], :])
-#
-#     return pd.concat(dset, ignore_index=True)
-
-
-# Original function : too slow
-# The new one use rapidfuzz and an hybrid approach to remove duplicates
-#
-# def merge_bibs(datasets,
-#                doi_similarity_threshold,
-#                title_similarity_threshold):
-#
-#     def compare_idx(dataset, title_score, doi_score, title_idx, doi_idx):
-#         if doi_score >= doi_similarity_threshold:
-#             return dataset.index[doi_idx]
-#         else:
-#             if title_score >= title_similarity_threshold:
-#                 return dataset.index[title_idx]
-#             else:
-#                 return np.nan
-#
-#     main_ds = datasets[0]
-#
-#     for n, _ in enumerate(datasets):
-#
-#         if n < len(datasets) - 1:
-#
-#             other_ds = datasets[n+1]
-#
-#             similarity = []
-#             doi_similarity = []
-#             other_titles = {idx: title for idx, title in enumerate(other_ds.title)}
-#             other_doi = {idx: doi for idx, doi in enumerate(other_ds.doi)}
-#
-#             for (doi, title) in zip(main_ds.doi, main_ds.title):
-#                 try:
-#                     similarity.append(process.extractOne(title, other_titles))
-#                     doi_similarity.append(process.extractOne(doi, other_doi))
-#                 except TypeError:
-#                     pass
-#
-#             comparison = OrderedDict({"title_similarity": [s[1] for s in similarity],
-#                                       "doi_similarity": [s[1] for s in doi_similarity],
-#                                       "title_idx": [s[2] for s in similarity],
-#                                       "doi_idx": [s[2] for s in doi_similarity]})
-#
-#             corr_idx = [compare_idx(other_ds, *var) for var in zip(*comparison.values())]
-#             other_ds = other_ds.drop([idx for idx in corr_idx if ~np.isnan(idx)])
-#
-#             main_ds = pd.concat([main_ds,
-#                                  other_ds],
-#                                 ignore_index=True)
-#
-#     # _, new_bib_file = tempfile.mkstemp(suffix=".csv", dir=tempfile.tempdir)
-#     # main_ds.to_csv(new_bib_file, sep=",")
-#
-#     return main_ds
