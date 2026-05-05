@@ -140,6 +140,7 @@ class LLMReview:
         reviewed_ds = run_review(
             dataset,
             self.workflow_schema,
+            self.decision_rule,
             self.batch_size,
             self.sample_size,
             self.api_pause,

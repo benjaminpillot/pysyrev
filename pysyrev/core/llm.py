@@ -73,6 +73,14 @@ def build_workflow_schema(workflow, reviewers, text_inputs, decision_rule):
     return workflow_schema
 
 
+def compute_final_score(decision_rule, *scores):
+
+    if decision_rule == "mean":
+        return pd.concat(scores, axis=1).mean(axis=1)
+    else:  # decision_rule == "majority"
+        return pd.concat(scores, axis=1).median(axis=1)
+
+
 def eval_filter_func(row, eval_keys, decision_rule):
     score = np.asarray([int(row[eval_key]["evaluation"])
                         for eval_key in eval_keys])
@@ -134,21 +142,27 @@ async def review(dataset, workflow_schema):
     return updated_dataset
 
 
-def run_review(dataset, workflow_schema,
-               batch_size, sample_size, pause, subset_file_fn=None):
+def run_review(dataset,
+               workflow_schema,
+               decision_rule,
+               batch_size,
+               sample_size,
+               pause,
+               subset_file_fn=None):
 
     if sample_size:
         dataset = dataset.sample(sample_size)
 
     if batch_size and batch_size < len(dataset):
-         return process_per_batch(dataset,
-                                  workflow_schema,
-                                  batch_size,
-                                  pause,
-                                  subset_file_fn)
+        reviewed_dataset = process_per_batch(dataset,
+                                             workflow_schema,
+                                             batch_size,
+                                             pause,
+                                             subset_file_fn)
     else:
-        return process_full(dataset,
-                            workflow_schema)
+        reviewed_dataset = process_full(dataset,
+                                        workflow_schema)
 
-    # TODO
-    #  reviewed_dataset["final_score"] =
+    # reviewed_dataset["final_score"] = compute_final_score(decision_rule,
+    #                                                       *[])
+    return reviewed_dataset
