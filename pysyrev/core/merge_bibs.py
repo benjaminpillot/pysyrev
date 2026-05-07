@@ -205,6 +205,7 @@ def merge_bibs(
     normalization), kept in the signature for backward compatibility.
     """
     main_ds = datasets[0]
+    cross_id_map: dict[str, str] = {}  # {dropped_id: kept_id}
 
     for n in range(len(datasets) - 1):
         other_ds = datasets[n + 1]
@@ -231,13 +232,25 @@ def merge_bibs(
         )
 
         # --- Combine: DOI > exact title > fuzzy. -----------------------------
-        drop_pos = np.where(doi_match != -1, doi_match,
+        combined = np.where(doi_match != -1, doi_match,
                    np.where(title_exact_match != -1, title_exact_match,
                                                      title_fuzzy_match))
-        drop_pos = np.unique(drop_pos[drop_pos >= 0])
+
+        # Record dropped_id → kept_id before deduplication, so that
+        # resolve_references can redirect references to dropped IDs.
+        main_ids  = main_ds['id'].tolist()
+        other_ids = other_ds['id'].tolist()
+        for i, j in enumerate(combined):
+            if j >= 0:
+                kept_id    = main_ids[i]
+                dropped_id = other_ids[j]
+                if pd.notna(dropped_id) and pd.notna(kept_id):
+                    cross_id_map[str(dropped_id)] = str(kept_id)
+
+        drop_pos    = np.unique(combined[combined >= 0])
         drop_labels = other_ds.index[drop_pos]
 
         other_ds = other_ds.drop(drop_labels)
         main_ds = pd.concat([main_ds, other_ds], ignore_index=True)
 
-    return main_ds
+    return main_ds, cross_id_map

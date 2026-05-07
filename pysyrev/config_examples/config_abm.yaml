@@ -7,8 +7,8 @@ bib:
   # (source: api). Pick one. Switch to `source: api` once your API key
   # is active and update the query below.
   wos:
-    source: api   # 'file' or 'api'
-    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/DECEMBER_2025/savedrecs_all.bib
+    source: file   # 'file' or 'api'
+    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
 #    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs.bib
     api:
       api_key: ${WOS_API_KEY}                                # resolved from .env
@@ -16,7 +16,7 @@ bib:
       cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
 #    source: file   # 'file' or 'api'
-    source:
+    source: file
     file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
     api:
       api_key: ${OPENALEX_API_KEY}
@@ -52,8 +52,8 @@ bib:
   #   score_cutoff: 90             # min fuzzy match score (0-100)
 
   # --- Reference resolution (opt-in, expensive) ---
-  # resolve_references:
-  #   enabled: false
+  resolve_references:
+     enabled: true
   #   fuzzy_score_cutoff: 90
   #   ngram_size: 3
   #   max_candidates: 50

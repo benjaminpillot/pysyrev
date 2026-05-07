@@ -20,10 +20,13 @@ import nest_asyncio
 from lattereview.agents import TitleAbstractReviewer
 
 from pysyrev.core.config import ReviewConfig, ReviewerConfig
-from pysyrev.core.llm import run_review, build_workflow_schema, build_reviewer
+from pysyrev.core.llm import run_review, build_workflow_schema, build_reviewer, REVIEW_SCORE
 
-
-API_PAUSE = 30
+# API_PAUSE = 30
+INCLUDED_DOCS: str      = "included_docs"
+REVIEWED_DATASET: str   = "reviewed_dataset"
+REVIEWED_SUBSET: str    = "reviewed_subset"
+TOTAL_DOCS: str         = "total_docs"
 
 
 def _output_filename(base, run_name=None, index=None):
@@ -135,7 +138,7 @@ class LLMReview:
         nest_asyncio.apply()
         subset_file_fn = lambda n: os.path.join(
             self.export_to,
-            _output_filename('reviewed_subset', self.run_name, index=n),
+            _output_filename(REVIEWED_SUBSET, self.run_name, index=n),
         )
         reviewed_ds = run_review(
             dataset,
@@ -147,7 +150,7 @@ class LLMReview:
             subset_file_fn,
         )
         self._reviewed_dataset.total_docs = reviewed_ds
-        self._reviewed_dataset.included_docs = reviewed_ds.loc[reviewed_ds["final_score"] > 3, :]
+        self._reviewed_dataset.included_docs = reviewed_ds.loc[reviewed_ds[REVIEW_SCORE] > 3, :]
 
         return self
 
@@ -155,10 +158,10 @@ class LLMReview:
 
         out_file = lambda x : os.path.join(
             self.export_to,
-            _output_filename(f'reviewed_dataset_{x}', self.run_name),
+            _output_filename(f'{REVIEWED_DATASET}_{x}', self.run_name),
         )
 
-        self._reviewed_dataset.total_docs.to_csv(out_file("total_docs"), index=False)
-        self._reviewed_dataset.included_docs.to_csv(out_file("included_docs"), index=False)
+        self._reviewed_dataset.total_docs.to_csv(out_file(TOTAL_DOCS), index=False)
+        self._reviewed_dataset.included_docs.to_csv(out_file(INCLUDED_DOCS), index=False)
 
         return self

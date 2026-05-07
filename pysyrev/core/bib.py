@@ -9,31 +9,71 @@ from tqdm import tqdm
 
 from pysyrev.core.parsers.read_bib import read_bib
 
+ID: str = "id"
+AFFILIATION: str = "affiliations"
+AUTHOR: str = "author"
+ABSTRACT: str = "abstract"
+JOURNAL : str = "journal"
+TITLE: str = "title"
+KEYWORDS: str = "author_keywords"
+DOI: str = "doi"
+LANGUAGE: str = "language"
+DOC_TYPE: str = "document_type"
+REFS: str = "references"
+YEAR: str = "year"
+CITED_BY: str = "cited_by"
 
 # Column rename map for OpenAlex CSV exports (flat column names).
-FROM_OA = {"keywords.display_name": "author_keywords",
-           "cited_by_count": "cited_by",
-           "publication_year": "year",
-           "primary_location.source.display_name": "journal",
-           "type": "document_type",
-           "referenced_works": "references"}
+FROM_OA = {
+    "id":                                   ID,
+    "abstract":                             ABSTRACT,
+    "title":                                TITLE,
+    "authorships.author.display_name":      AUTHOR,
+    "authorships.raw_affiliation_strings":  AFFILIATION,
+    "keywords.display_name":                KEYWORDS,
+    "doi":                                  DOI,
+    "cited_by_count":                       CITED_BY,
+    "publication_year":                     YEAR,
+    "primary_location.source.display_name": JOURNAL,
+    "type":                                 DOC_TYPE,
+    "language":                             LANGUAGE,
+    "referenced_works":                     REFS
+}
+
+FROM_WOS = {
+    "id":               ID,
+    "affiliation_":     AFFILIATION,
+    "author":           AUTHOR,
+    "abstract":         ABSTRACT,
+    "journal":          JOURNAL,
+    "title":            TITLE,
+    "author_keywords":  KEYWORDS,
+    "doi":              DOI,
+    "language":         LANGUAGE,
+    "document_type":    DOC_TYPE,
+    "references":       REFS,
+    "year":             YEAR,
+    "cited_by":         CITED_BY
+}
 
 
 # Each field is described by a semantic kind rather than a concrete dtype.
 #   'string'  : any dtype that stores strings (object, StringDtype, ArrowDtype[str])
 #   'numeric' : any numeric dtype (int, float, Int64, Float64, pyarrow int/float)
 DEFAULT_FIELDS = {
-    'id':              'string',
-    'abstract':        'string',
-    'journal':         'string',
-    'title':           'string',
-    'author_keywords': 'string',
-    'doi':             'string',
-    'language':        'string',
-    'document_type':   'string',
-    'references':      'string',
-    'year':            'numeric',
-    'cited_by':        'numeric',
+    ID:                'string',
+    AUTHOR:            'string',
+    AFFILIATION:       'string',
+    ABSTRACT:          'string',
+    JOURNAL:           'string',
+    TITLE:             'string',
+    KEYWORDS:          'string',
+    DOI:               'string',
+    LANGUAGE:          'string',
+    DOC_TYPE:          'string',
+    REFS:              'string',
+    YEAR:              'numeric',
+    CITED_BY:          'numeric',
 }
 
 
@@ -94,8 +134,13 @@ def check_bib_dataset(dataset):
     return dataset
 
 
-def extract_documents(dataset, doc_type, language, year, nb_citations,
-                      scorer, score_cutoff):
+def extract_documents(dataset,
+                      doc_type,
+                      language,
+                      year,
+                      nb_citations,
+                      scorer,
+                      score_cutoff):
     """
     Extract documents matching one or more document types and (optionally) one
     or more languages, filtered by minimum year and citation count.
@@ -227,6 +272,10 @@ def generate_bib(bibfile, db, del_duplicated, print_log):
                             db=db,
                             del_duplicated=del_duplicated)
 
+    data.rename(FROM_WOS,
+                inplace=True,
+                axis="columns")
+
     if print_log:
         for line in log:
             print(line)
@@ -246,5 +295,10 @@ def generate_oa_bib(bibfile):
     dataframe.rename(FROM_OA,
                      inplace=True,
                      axis="columns")
+
+    # OpenAlex CSV uses '|' to separate multiple referenced works; normalize to '; '
+    # so that resolve_references can split on the standard '; ' delimiter.
+    if REFS in dataframe.columns:
+        dataframe[REFS] = dataframe[REFS].str.replace('|', '; ', regex=False)
 
     return dataframe

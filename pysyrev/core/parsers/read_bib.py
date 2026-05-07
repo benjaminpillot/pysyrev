@@ -548,7 +548,7 @@ def _rebuild_affiliation_from_affiliation_(data):
 # API publique.
 # =============================================================================
 
-def read_bib(path, db='scopus', del_duplicated=True):
+def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Lit un fichier bibliographique Scopus / WoS / PubMed.
 

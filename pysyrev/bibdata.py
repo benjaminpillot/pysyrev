@@ -26,6 +26,7 @@ class BibDataset:
 
     _db = None
     _bib_dataset = None
+    _cross_id_map: dict = {}  # {dropped_id: kept_id} built during merge
 
     def __init__(self, bibfile=None, bib_dataset=None):
         """
@@ -141,6 +142,7 @@ class BibDataset:
         """
         self._bib_dataset = _resolve_references(
             self._bib_dataset,
+            cross_id_map=self._cross_id_map,
             fuzzy_score_cutoff=fuzzy_score_cutoff,
             ngram_size=ngram_size,
             max_candidates=max_candidates,
@@ -222,11 +224,14 @@ class BibDataset:
         """
         datasets = [self._bib_dataset] + [other.dataset for other in others]
 
-        return self.__class__(bib_dataset=merge_bibs(datasets,
-                                                     title_similarity_threshold=title_similarity,
-                                                     ngram_size=ngram_size,
-                                                     max_candidates_per_row=max_candidates_per_row,
-                                                     scorer=scorer))
+        merged_df, cross_id_map = merge_bibs(datasets,
+                                             title_similarity_threshold=title_similarity,
+                                             ngram_size=ngram_size,
+                                             max_candidates_per_row=max_candidates_per_row,
+                                             scorer=scorer)
+        instance = self.__class__(bib_dataset=merged_df)
+        instance._cross_id_map = cross_id_map
+        return instance
 
     def sample(self, size=100, random_state=None):
         """ Sample dataset at random
@@ -314,17 +319,11 @@ class BibDataset:
             use_langdetect        = cfg_clean.use_langdetect,
         )
 
-        cfg_extract = config.extract
-        if cfg_extract.doc_type:
-            merged = merged.extract_documents(
-                cfg_extract.doc_type,
-                year         = cfg_extract.year,
-                nb_citations = cfg_extract.nb_citations,
-                language     = cfg_extract.language,
-                scorer       = _SCORER_MAP[cfg_extract.scorer],
-                score_cutoff = cfg_extract.score_cutoff,
-            )
-
+        # resolve_references runs before extract_documents so that:
+        #   1. _cross_id_map is still on the merged instance (not lost through a
+        #      new-instance-creating step), and
+        #   2. references are resolved against the full cleaned dataset, maximising
+        #      the number of resolvable targets.
         cfg_rr = config.resolve_references
         if cfg_rr.enabled:
             api_sources = [
@@ -347,6 +346,17 @@ class BibDataset:
                 ngram_size         = cfg_rr.ngram_size,
                 max_candidates     = cfg_rr.max_candidates,
                 scorer             = _SCORER_MAP[cfg_rr.scorer],
+            )
+
+        cfg_extract = config.extract
+        if cfg_extract.doc_type:
+            merged = merged.extract_documents(
+                cfg_extract.doc_type,
+                year         = cfg_extract.year,
+                nb_citations = cfg_extract.nb_citations,
+                language     = cfg_extract.language,
+                scorer       = _SCORER_MAP[cfg_extract.scorer],
+                score_cutoff = cfg_extract.score_cutoff,
             )
 
         if config.export_to:

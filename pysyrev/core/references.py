@@ -7,12 +7,16 @@ Each document's ``references`` column contains either:
 - Free-text WoS cited-reference strings (``Author, Year, Journal, V, P[, DOI]``)
   — produced by read_bib.
 
-Resolution runs three passes in decreasing reliability order:
+Resolution runs four passes in decreasing reliability order:
 
   1. Direct ID match — for OpenAlex references already stored as full IDs.
   2. Normalized DOI exact match — works across sources (WoS ref with DOI,
      OpenAlex document; or vice-versa) after stripping URL prefixes and
      lowercasing.
+  2.5 Author + year lookup — targets WoS references without a DOI. Parses
+     the first-author last name and year from the WoS reference string, then
+     disambiguates multiple candidates by fuzzy journal name matching (low
+     cutoff to account for WoS journal abbreviations).
   3. Fuzzy title fallback — n-gram blocking + rapidfuzz, controlled by
      ``fuzzy_score_cutoff``. Useful when the raw reference happens to contain
      a recognizable title fragment; set cutoff to 100 to disable entirely.
@@ -30,6 +34,7 @@ from typing import Optional
 
 import pandas as pd
 from rapidfuzz import fuzz, process as rf_process
+from tqdm import tqdm
 
 from pysyrev.core.merge_bibs import (
     _normalize_doi,
@@ -45,6 +50,58 @@ from pysyrev.core.merge_bibs import (
 
 _DOI_LABEL_RE = re.compile(r'(?:^|[\s,;])DOI\s+(\S+)', re.IGNORECASE)
 _DOI_URL_RE   = re.compile(r'https?://(?:dx\.)?doi\.org/(\S+)', re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Author / year / journal helpers for WoS reference strings
+# ---------------------------------------------------------------------------
+
+_YEAR_RE = re.compile(r'^\d{4}$')
+
+
+def _normalize_lastname(name: str) -> str:
+    norm = unicodedata.normalize('NFD', name).encode('ascii', 'ignore').decode('utf-8')
+    return re.sub(r'[^a-z]', '', norm.lower())
+
+
+def _first_author_lastname(author_field) -> Optional[str]:
+    """Extract and normalize the last name of the first author from a dataset author field.
+
+    Handles 'Smith, John; Jones, Mary', 'Smith J; Jones M', 'Smith, John'.
+    """
+    if not author_field or pd.isna(author_field):
+        return None
+    first = str(author_field).split(';')[0].strip()
+    lastname = re.split(r'[,\s]+', first)[0]
+    return _normalize_lastname(lastname) if lastname else None
+
+
+def _normalize_journal(journal: str) -> str:
+    norm = unicodedata.normalize('NFD', journal.lower()).encode('ascii', 'ignore').decode('utf-8')
+    return re.sub(r'[^a-z0-9 ]', ' ', norm).strip()
+
+
+def _parse_wos_ref(ref: str):
+    """Parse a WoS cited-reference string into (lastname, year, journal).
+
+    WoS format: 'Smith J, 2018, NAT COMMUN, V15, P123[, DOI ...]'
+    Returns (None, None, None) if the format is not recognized.
+    """
+    parts = [p.strip() for p in ref.split(',')]
+    if len(parts) < 2:
+        return None, None, None
+
+    author_tokens = parts[0].split()
+    if not author_tokens:
+        return None, None, None
+    lastname = _normalize_lastname(author_tokens[0])
+
+    if not _YEAR_RE.match(parts[1]):
+        return None, None, None
+    year = int(parts[1])
+
+    journal = parts[2] if len(parts) > 2 else None
+    return lastname, year, journal
 
 
 def _extract_ref_doi(ref: str) -> Optional[str]:
@@ -69,12 +126,14 @@ def _extract_ref_doi(ref: str) -> Optional[str]:
 
 def _resolve_one(
     ref: str,
-    id_to_pos:    dict,
-    doi_to_pos:   dict,
-    canon_titles: list,
-    ngram_index:  dict,
-    ngram_size:       int,
-    max_candidates:   int,
+    id_to_pos:          dict,
+    doi_to_pos:         dict,
+    author_year_to_pos: dict,
+    canon_journals:     list,
+    canon_titles:       list,
+    ngram_index:        dict,
+    ngram_size:         int,
+    max_candidates:     int,
     fuzzy_score_cutoff: int,
     scorer,
 ) -> Optional[int]:
@@ -91,6 +150,25 @@ def _resolve_one(
         pos = doi_to_pos.get(doi)
         if pos is not None:
             return pos
+
+    # Pass 2.5: first-author last name + year, disambiguated by journal.
+    # Targets WoS references that lack a DOI.
+    lastname, year, ref_journal = _parse_wos_ref(ref)
+    if lastname and year:
+        candidates = author_year_to_pos.get((lastname, year), [])
+        if len(candidates) == 1:
+            return candidates[0]
+        elif len(candidates) > 1 and ref_journal:
+            # WoS uses abbreviated journal names, so use a low score cutoff.
+            norm_ref_journal = _normalize_journal(ref_journal)
+            texts = [canon_journals[c] for c in candidates]
+            result = rf_process.extractOne(
+                norm_ref_journal, texts,
+                scorer=fuzz.token_set_ratio,
+                score_cutoff=60,
+            )
+            if result is not None:
+                return candidates[result[2]]
 
     # Pass 3: fuzzy title fallback (best-effort).
     if fuzzy_score_cutoff < 100:
@@ -120,6 +198,7 @@ def _resolve_one(
 
 def resolve_references(
     df: pd.DataFrame,
+    cross_id_map:       Optional[dict] = None,
     fuzzy_score_cutoff: int = 90,
     ngram_size:         int = 3,
     max_candidates:     int = 50,
@@ -131,6 +210,11 @@ def resolve_references(
     ----------
     df : pd.DataFrame
         Dataset conforming to ``DEFAULT_FIELDS``.
+    cross_id_map : dict, optional
+        Mapping ``{dropped_id: kept_id}`` produced by :func:`merge_bibs`.
+        Allows references pointing to IDs that were dropped during deduplication
+        (e.g. OpenAlex IDs replaced by WoS IDs) to resolve to the surviving
+        record.
     fuzzy_score_cutoff : int
         Minimum rapidfuzz score (0-100) to accept a fuzzy title match.
         Pass 100 to disable fuzzy matching entirely.
@@ -158,8 +242,26 @@ def resolve_references(
 
     id_to_pos = {id_: i for i, id_ in enumerate(df['id']) if pd.notna(id_)}
 
+    # Extend with alias IDs from cross-source deduplication (e.g. OA IDs that
+    # were dropped in favour of WoS IDs during merge_bibs).
+    for alias, canonical in (cross_id_map or {}).items():
+        if alias not in id_to_pos and canonical in id_to_pos:
+            id_to_pos[alias] = id_to_pos[canonical]
+
     doi_norm = _normalize_doi(df['doi'])
     doi_to_pos = {norm: i for i, norm in enumerate(doi_norm) if norm}
+
+    author_year_to_pos: dict[tuple, list[int]] = {}
+    for i, (author, yr) in enumerate(zip(df['author'], df['year'])):
+        lastname = _first_author_lastname(author)
+        if lastname and pd.notna(yr):
+            key = (lastname, int(yr))
+            author_year_to_pos.setdefault(key, []).append(i)
+
+    canon_journals = [
+        _normalize_journal(str(j)) if pd.notna(j) else ''
+        for j in df['journal']
+    ]
 
     canon_titles = _canonicalize_title(df['title']).tolist()
     ngram_index  = _build_ngram_index(canon_titles, n=ngram_size)
@@ -170,7 +272,9 @@ def resolve_references(
     resolved_col   = []
     unresolved_col = []
 
-    for _, row in df.iterrows():
+    for _, row in tqdm(df.iterrows(),
+                       total=len(df),
+                       desc="Resolving references"):
         raw = row['references']
         if pd.isna(raw) or not str(raw).strip():
             resolved_col.append(None)
@@ -185,6 +289,7 @@ def resolve_references(
             pos = _resolve_one(
                 ref,
                 id_to_pos, doi_to_pos,
+                author_year_to_pos, canon_journals,
                 canon_titles, ngram_index,
                 ngram_size, max_candidates,
                 fuzzy_score_cutoff, scorer,

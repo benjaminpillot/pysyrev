@@ -12,6 +12,8 @@ from lattereview.workflows import ReviewWorkflow
 MAX_RETRIES = 2
 MAX_CONCURRENT_REQUESTS = 30
 
+REVIEW_SCORE: str = "review_score"
+
 
 def build_reviewer(name, provider, model_id,
                    host, reasoning, max_tokens,
@@ -73,12 +75,16 @@ def build_workflow_schema(workflow, reviewers, text_inputs, decision_rule):
     return workflow_schema
 
 
-def compute_final_score(decision_rule, *scores):
+def compute_final_score(decision_rule, scores: pd.DataFrame):
 
     if decision_rule == "mean":
-        return pd.concat(scores, axis=1).mean(axis=1)
+        return scores.mean(axis=1)
     else:  # decision_rule == "majority"
-        return pd.concat(scores, axis=1).median(axis=1)
+        final_scores = scores.median(axis=1)
+        final_scores[final_scores == 3] = scores.iloc[final_scores == 3, -1]  # Take the evaluation of
+                                                                              # last reviewer is ambiguous
+
+        return final_scores
 
 
 def eval_filter_func(row, eval_keys, decision_rule):
@@ -91,17 +97,14 @@ def eval_filter_func(row, eval_keys, decision_rule):
     elif decision_rule == "majority":
         if np.count_nonzero(score > 3) == np.count_nonzero(score < 3):
             return True
-        if np.count_nonzero(score == 3) / score.size > .5:
+        if np.count_nonzero(score == 3) / score.size >= .5:  # If half or more of evaluations
+                                                             # is ambiguous, add review round
             return True
     return False
 
 
 def process_full(dataset, workflow_schema):
 
-    # reviewed_dataset = asyncio.run(review(dataset, workflow_schema))
-    # reviewed_dataset.to_csv(out_file, index=False)
-    #
-    # return 0
     return asyncio.run(review(dataset, workflow_schema))
 
 
@@ -125,9 +128,6 @@ def process_per_batch(dataset, workflow_schema,
     )
 
     return reviewed_dataset
-    # reviewed_dataset.to_csv(out_file, index=False)
-    #
-    # return 0
 
 
 async def review(dataset, workflow_schema):
@@ -150,6 +150,10 @@ def run_review(dataset,
                pause,
                subset_file_fn=None):
 
+    def ds_eval_keys():
+        return [f"round-{dict_from["round"]}_{reviewer.name}_evaluation"
+                for dict_from in workflow_schema for reviewer in dict_from["reviewers"]]
+
     if sample_size:
         dataset = dataset.sample(sample_size)
 
@@ -163,6 +167,6 @@ def run_review(dataset,
         reviewed_dataset = process_full(dataset,
                                         workflow_schema)
 
-    # reviewed_dataset["final_score"] = compute_final_score(decision_rule,
-    #                                                       *[])
+    reviewed_dataset[REVIEW_SCORE] = compute_final_score(decision_rule,
+                                                         reviewed_dataset.loc[:, ds_eval_keys()])
     return reviewed_dataset
