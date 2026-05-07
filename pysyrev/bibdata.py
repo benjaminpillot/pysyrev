@@ -5,7 +5,8 @@ from pysyrev.core.api import OpenAlexClient, WosClient
 from pysyrev.core.bib import (fetch_citations, generate_bib, generate_oa_bib,
                                extract_documents, check_bib_dataset)
 from pysyrev.core.mappers import from_openalex_result, from_wos_result
-from pysyrev.core.references import resolve_references as _resolve_references
+from pysyrev.core.references import (resolve_references as _resolve_references,
+                                     flag_shared_unresolved_references as _flag_unresolved)
 from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
 from pysyrev.core.clean import clean_doi, clean_abstracts
@@ -26,7 +27,7 @@ class BibDataset:
 
     _db = None
     _bib_dataset = None
-    _cross_id_map: dict = {}  # {dropped_id: kept_id} built during merge
+    _cross_id_map: dict  # {dropped_id: kept_id} built during merge
 
     def __init__(self, bibfile=None, bib_dataset=None):
         """
@@ -39,6 +40,7 @@ class BibDataset:
         bib_dataset: pandas.DataFrame
             Already processed bib dataset
         """
+        self._cross_id_map = {}
         if bibfile is not None:
             self.generate_bib(bibfile)
         elif bib_dataset is not None:
@@ -99,55 +101,33 @@ class BibDataset:
             min citation count
         language: str or list[str] or None
             None means no language filter (keep all)
-        scorer: function
+        scorer: callable
         score_cutoff: int
 
         Returns
         -------
 
         """
-        return self.__class__(bib_dataset=extract_documents(self._bib_dataset,
-                                                            document_type,
-                                                            language,
-                                                            year,
-                                                            nb_citations,
-                                                            scorer,
-                                                            score_cutoff))
-
-    def resolve_references(self,
-                           fuzzy_score_cutoff: int = 90,
-                           ngram_size:         int = 3,
-                           max_candidates:     int = 50,
-                           scorer=fuzz.token_set_ratio):
-        """Resolve raw references to internal document IDs.
-
-        Adds two columns to the dataset:
-
-        ``reference_ids``
-            Internal doc IDs of resolved references ('; '-joined), or None.
-        ``unresolved_references``
-            Raw reference strings that found no match ('; '-joined), or None.
-
-        Parameters
-        ----------
-        fuzzy_score_cutoff : int
-            Minimum rapidfuzz score (0-100) to accept a fuzzy title match.
-            Pass 100 to disable fuzzy matching entirely.
-        ngram_size : int
-            Word n-gram size for the blocking index.
-        max_candidates : int
-            Maximum candidates per query in the blocking phase.
-        scorer : callable
-            rapidfuzz scorer for fuzzy title comparison.
-        """
-        self._bib_dataset = _resolve_references(
-            self._bib_dataset,
-            cross_id_map=self._cross_id_map,
-            fuzzy_score_cutoff=fuzzy_score_cutoff,
-            ngram_size=ngram_size,
-            max_candidates=max_candidates,
-            scorer=scorer,
+        return self._propagate_to(
+            self.__class__(bib_dataset=extract_documents(self._bib_dataset,
+                                                         document_type,
+                                                         language,
+                                                         year,
+                                                         nb_citations,
+                                                         scorer,
+                                                         score_cutoff))
         )
+
+    def flag_shared_unresolved_references(self):
+        """Add a 'shared_unresolved_references' column.
+
+        For each document, the column contains the unresolved references
+        that appear in at least one other document in the dataset — useful
+        as edges for co-citation network analysis on unresolved refs.
+        Requires resolve_references() to have been called first.
+        """
+        self._bib_dataset = _flag_unresolved(self._bib_dataset)
+
         return self
 
     def fetch_abstracts(self):
@@ -233,6 +213,43 @@ class BibDataset:
         instance._cross_id_map = cross_id_map
         return instance
 
+    def resolve_references(self,
+                           fuzzy_score_cutoff: int = 90,
+                           ngram_size: int = 3,
+                           max_candidates: int = 50,
+                           scorer=fuzz.token_set_ratio):
+        """Resolve raw references to internal document IDs.
+
+        Adds two columns to the dataset:
+
+        ``reference_ids``
+            Internal doc IDs of resolved references ('; '-joined), or None.
+        ``unresolved_references``
+            Raw reference strings that found no match ('; '-joined), or None.
+
+        Parameters
+        ----------
+        fuzzy_score_cutoff : int
+            Minimum rapidfuzz score (0-100) to accept a fuzzy title match.
+            Pass 100 to disable fuzzy matching entirely.
+        ngram_size : int
+            Word n-gram size for the blocking index.
+        max_candidates : int
+            Maximum candidates per query in the blocking phase.
+        scorer : callable
+            rapidfuzz scorer for fuzzy title comparison.
+
+        """
+        self._bib_dataset = _resolve_references(
+            self._bib_dataset,
+            cross_id_map=self._cross_id_map,
+            fuzzy_score_cutoff=fuzzy_score_cutoff,
+            ngram_size=ngram_size,
+            max_candidates=max_candidates,
+            scorer=scorer,
+        )
+        return self
+
     def sample(self, size=100, random_state=None):
         """ Sample dataset at random
 
@@ -248,10 +265,12 @@ class BibDataset:
         new instance of BibDataset
 
         """
-        return self.__class__(bib_dataset=self._bib_dataset.sample(n=size,
-                                                                   random_state=random_state,
-                                                                   axis=0,
-                                                                   ignore_index=True))
+        return self._propagate_to(
+            self.__class__(bib_dataset=self._bib_dataset.sample(n=size,
+                                                                random_state=random_state,
+                                                                axis=0,
+                                                                ignore_index=True))
+        )
 
     def to_csv(self,
                file_name,
@@ -261,9 +280,9 @@ class BibDataset:
 
         Parameters
         ----------
-        file_name
-        sep
-        index
+        file_name: str
+        sep: str
+        index: bool
             Write row names
 
         Returns
@@ -273,6 +292,11 @@ class BibDataset:
         self.dataset.to_csv(file_name,
                             sep=sep,
                             index=index)
+
+    # ---- Protected methods -------------------------------------------------
+    def _propagate_to(self, instance):
+        instance._cross_id_map = self._cross_id_map
+        return instance
 
     # ---- bridge from configuration -----------------------------------------
 
@@ -320,10 +344,9 @@ class BibDataset:
         )
 
         # resolve_references runs before extract_documents so that:
-        #   1. _cross_id_map is still on the merged instance (not lost through a
-        #      new-instance-creating step), and
-        #   2. references are resolved against the full cleaned dataset, maximising
-        #      the number of resolvable targets.
+        #   * references are resolved against the full
+        #     cleaned dataset, maximizing the number of
+        #     resolvable targets.
         cfg_rr = config.resolve_references
         if cfg_rr.enabled:
             api_sources = [
@@ -347,6 +370,9 @@ class BibDataset:
                 max_candidates     = cfg_rr.max_candidates,
                 scorer             = _SCORER_MAP[cfg_rr.scorer],
             )
+
+            if cfg_rr.flag_unresolved:
+                merged = merged.flag_shared_unresolved_references()
 
         cfg_extract = config.extract
         if cfg_extract.doc_type:

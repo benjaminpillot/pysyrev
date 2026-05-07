@@ -8,19 +8,19 @@ bib:
   # is active and update the query below.
   wos:
     source: file   # 'file' or 'api'
-    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
-#    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs.bib
+#    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
+    file: /home/benjamin/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
     api:
-      api_key: ${WOS_API_KEY}                                # resolved from .env
+      api_key: #${WOS_API_KEY}                                # resolved from .env
       query: 'ALL = (agent-based (model* OR simulation) AND (energ* OR electric* OR net-zero OR carbon OR renewable OR green OR clean OR transition OR sustainab*)) AND PY=2015-2024'
       cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
 #    source: file   # 'file' or 'api'
-    source: file
+    source: #file
     file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
     api:
-      api_key: ${OPENALEX_API_KEY}
-      email: ${OPENALEX_EMAIL}                               # optional, polite-pool credit
+      api_key: #${OPENALEX_API_KEY}
+      email: #${OPENALEX_EMAIL}                               # optional, polite-pool credit
       query: agent-based energy transition                    # free-text search (BM25 on title+abstract)
       filters:                                                # structured filters (combined with AND)
         publication_year: '2015-2024'
@@ -54,6 +54,7 @@ bib:
   # --- Reference resolution (opt-in, expensive) ---
   resolve_references:
      enabled: true
+     flag_unresolved: true
   #   fuzzy_score_cutoff: 90
   #   ngram_size: 3
   #   max_candidates: 50
@@ -61,7 +62,8 @@ bib:
 
   # --- Output ---
   # Full bibliography dataset, used as input for the review stage.
-  export_to: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/bib_dataset.csv
+#  export_to: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/bib_dataset.csv
+  export_to: /home/benjamin/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/bib_dataset.csv
 
 
 review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
@@ -178,14 +180,27 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
                            disagree on how to evaluate it. You can read their evaluation above.
 
 
+bib_network:
+  coupling_network:
+    use_resolved: true
+    use_unresolved: true
+    min_shared: 1
+
+  cocitation_network:
+    use_resolved: true
+    use_unresolved: true
+    min_cocitations: 1
+
+
 topic_model:
   # doc_dataset: filtered dataset produced by the review stage (required).
   doc_dataset : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/included_articles.csv
   export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
   run_name: # Leave empty for auto-timestamp file name
-  # Distance : euclidean, chebyshev
+  # Distance : euclidean, chebyshev ; default = euclidean
   distance: chebyshev
-  # Coherence scorer
+
+  # ---- Coherence scorer -----------------------------
   # Dict of 2 scorers among: c_v, c_npmi, u_mass
   #   * 1st scorer ('ranking') is used to rank the
   #     best configs among all configs (slower part
@@ -195,50 +210,57 @@ topic_model:
   # Recommendation: use the quickest one for ranking,
   # and the slowest one for computing final purity
   # default : {'ranking' : 'u_mass', 'purity' : 'c_v'}
-  coherence_scorer :
-    ranking : u_mass
-    purity : c_v
+#  coherence_scorer :
+#    ranking : u_mass
+#    purity : c_v
 
   # Keep n results : keep N best results among all
   # clustering procedures corresponding to n_neighbors,
   # n_components, topic size, and min sample values
+  # default = 10
   keep_n_results : 25
 
+# ---- HDBSCAN parameters -------------------------
   hdbscan:
-    cluster_selection_method : leaf
-    metric : euclidean
     min_topic_size_range : [20, 60]
     min_sample_range : [2, 10]
     topic_size_step : 4
     min_sample_step : 2
-    prediction_data : True
+#    cluster_selection_method : leaf
+#    metric : euclidean
+#    prediction_data : True
 
+# ---- UMAP parameters ----------------------------
   umap:
-    metric : cosine
-    min_dist : 0.0
     n_neighbors : [5, 10]
     n_components : [5, 10, 15]
-    low_memory : False
-    random_state : 42
+#    metric : cosine
+#    min_dist : 0.0
+#    low_memory : False
+#    random_state : 42
 
+# ---- Bertopic parameters -------------
 # Bertopic parameters (see https://maartengr.github.io/BERTopic/index.html)
-  bertopic:
-    transformer_model : allenai/specter2_base
-    n_gram_range : bigram
-    language : english
-    nr_repr_docs : 50  # Number of representative documents for each topic
-    calculate_probabilities : True
+#  bertopic:
+#    transformer_model : allenai/specter2_base
+#    n_gram_range : bigram
+#    language : english
+#    nr_repr_docs : 50  # Number of representative documents for each topic
+#    calculate_probabilities : True
 
+# ---- Berteley parameters --------------
 # Berteley preprocess (see https://github.com/lbl-camera/berteley)
-  berteley:
-    allow_abbrev : False
+#  berteley:
+#    allow_abbrev : False
 
-  ctfidf:
-    bm25_weighting : True
-    reduce_frequent_words : True
+# ---- CTF-IDF parameters ----------------
+#  ctfidf:
+#    bm25_weighting : True
+#    reduce_frequent_words : True
 
-  topic_distribution:
-    window : 8
-    stride : 1
-    min_similarity : 0.1
-    batch_size : 1000
+# ---- Topic distribution parameters -----
+#  topic_distribution:
+#    window : 8
+#    stride : 1
+#    min_similarity : 0.1
+#    batch_size : 1000

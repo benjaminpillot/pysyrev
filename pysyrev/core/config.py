@@ -14,11 +14,10 @@ Environment variables: any string in the YAML may contain ${VAR} references.
 They are resolved at load time using the environment, augmented with the
 contents of the .env file pointed to by the root-level `env:` key (if any).
 """
-
 import dataclasses
 import os
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, field
 from typing import List, Union
 
 import yaml
@@ -29,7 +28,7 @@ from dotenv import load_dotenv
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}]+)\}')
 
 
-def _resolve_env_vars(node):
+def _resolve_env_vars(node) -> dict:
     """Recursively walk a YAML structure (dict / list / scalar) and replace
     ${VAR} occurrences in string values with os.environ[VAR]. Raises a
     ValueError if a referenced variable is missing."""
@@ -56,10 +55,10 @@ class ConfigField:
     explicitly, fall back to the dataclass default (when one is defined)."""
 
     def __post_init__(self):
-        for field in fields(self):
-            if (not isinstance(field.default, dataclasses._MISSING_TYPE)
-                    and getattr(self, field.name) is None):
-                setattr(self, field.name, field.default)
+        for field_ in fields(self):
+            if (not isinstance(field_.default, dataclasses._MISSING_TYPE)
+                    and getattr(self, field_.name) is None):
+                setattr(self, field_.name, field_.default)
 
 
 @dataclass
@@ -145,6 +144,7 @@ class ExtractConfig(ConfigField):
 @dataclass
 class ResolveReferencesConfig(ConfigField):
     enabled:            bool = False
+    flag_unresolved:    bool = False
     fuzzy_score_cutoff: int  = 90
     ngram_size:         int  = 3
     max_candidates:     int  = 50
@@ -161,27 +161,33 @@ class MergeConfig(ConfigField):
 
 @dataclass
 class BibConfig(ConfigField):
-    wos:               Union[None, str, WosSourceConfig]
-    open_alex:         Union[None, str, OpenAlexSourceConfig]
-    scopus:            Union[None, str]
-    pubmed:            Union[None, str]
+    wos:                Union[None, str, WosSourceConfig]          = None
+    open_alex:          Union[None, str, OpenAlexSourceConfig]     = None
+    scopus:             Union[None, str]                           = None
+    pubmed:             Union[None, str]                           = None
     export_to:          Union[None, str]                           = None
-    clean:             Union[None, dict, CleanConfig]             = None
-    extract:           Union[None, dict, ExtractConfig]           = None
+    clean:              Union[None, dict, CleanConfig]             = None
+    extract:            Union[None, dict, ExtractConfig]           = None
     resolve_references: Union[None, dict, ResolveReferencesConfig] = None
-    merge:             Union[None, dict, MergeConfig]             = None
+    merge:              Union[None, dict, MergeConfig]             = None
 
     def __post_init__(self):
         super().__post_init__()
         # Backwards compatibility: a string under `wos:` / `open_alex:` is
         # treated as a file path. A dict is parsed as a structured source config.
         if isinstance(self.wos, dict):
-            self.wos = WosSourceConfig(**self.wos)
+            if not self.wos["source"]:
+                self.wos = None
+            else:
+                self.wos = WosSourceConfig(**self.wos)
         elif isinstance(self.wos, str):
             self.wos = WosSourceConfig(source='file', file=self.wos)
 
         if isinstance(self.open_alex, dict):
-            self.open_alex = OpenAlexSourceConfig(**self.open_alex)
+            if not self.open_alex["source"]:
+                self.open_alex = None
+            else:
+                self.open_alex = OpenAlexSourceConfig(**self.open_alex)
         elif isinstance(self.open_alex, str):
             self.open_alex = OpenAlexSourceConfig(source='file', file=self.open_alex)
 
@@ -208,23 +214,23 @@ class BibConfig(ConfigField):
 
 @dataclass
 class HDBSCANConfig(ConfigField):
-    min_topic_size_range:     List[int]
-    min_sample_range:         List[int]
-    topic_size_step:          int = 1
-    min_sample_step:          int = 1
-    cluster_selection_method: str = 'leaf'
-    metric:                   str = 'euclidean'
-    prediction_data:          bool = True
+    min_topic_size_range:     List[int] = field(default_factory=lambda: [2, 2])
+    min_sample_range:         List[int] = field(default_factory=lambda: [2, 2])
+    topic_size_step:          int       = 1
+    min_sample_step:          int       = 1
+    cluster_selection_method: str       = 'leaf'
+    metric:                   str       = 'euclidean'
+    prediction_data:          bool      = True
 
 
 @dataclass
 class UMAPConfig(ConfigField):
-    n_neighbors:  List[int]
-    n_components: List[int]
-    metric:       str   = 'cosine'
-    min_dist:     float = 0.0
-    low_memory:   bool  = False
-    random_state: int   = 42
+    n_neighbors:  List[int] = field(default_factory=lambda: [5])
+    n_components: List[int] = field(default_factory=lambda: [5])
+    metric:       str       = 'cosine'
+    min_dist:     float     = 0.0
+    low_memory:   bool      = False
+    random_state: int       = 42
 
 
 @dataclass
@@ -302,29 +308,89 @@ class ReviewConfig(ConfigField):
 
 
 @dataclass
+class CouplingNetworkConfig(ConfigField):
+    use_resolved:   bool = False
+    use_unresolved: bool = False
+    min_shared:     int = 1
+
+
+@dataclass
+class CocitationNetworkConfig(ConfigField):
+    use_resolved:    bool = False
+    use_unresolved:  bool = False
+    min_cocitations: int = 1
+
+
+@dataclass
+class BibNetworkConfig(ConfigField):
+    coupling_network:   Union[None, CouplingNetworkConfig]   = None
+    cocitation_network: Union[None, CocitationNetworkConfig] = None
+
+    def post_init(self):
+        super().__post_init__()
+        if isinstance(self.coupling_network, dict):
+            self.coupling_network = CouplingNetworkConfig(**self.coupling_network)
+        elif self.coupling_network is None:
+            self.coupling_network = CouplingNetworkConfig()
+
+        if isinstance(self.cocitation_network, dict):
+            self.cocitation_network = CocitationNetworkConfig(**self.cocitation_network)
+        elif self.cocitation_network is None:
+            self.cocitation_network = CocitationNetworkConfig()
+
+
+@dataclass
 class TopicModelConfig(ConfigField):
     doc_dataset:         str
     export_to:           str
-    distance:            str
-    keep_n_results:      int
-    coherence_scorer:    CoherenceScorerConfig
-    hdbscan:             HDBSCANConfig
-    umap:                UMAPConfig
-    bertopic:            BertopicConfig
-    berteley:            BerteleyConfig
-    ctfidf:              CTFIDFConfig
-    topic_distribution:  TopicDistributionConfig
-    run_name:            Union[None, str] = None  # None -> auto-timestamp at run time
+    distance:            str                                    = "euclidean"
+    keep_n_results:      int                                    = 10
+    coherence_scorer:    Union[None, CoherenceScorerConfig]     = None
+    hdbscan:             Union[None, HDBSCANConfig]             = None
+    umap:                Union[None, UMAPConfig]                = None
+    bertopic:            Union[None, BertopicConfig]            = None
+    berteley:            Union[None, BerteleyConfig]            = None
+    ctfidf:              Union[None, CTFIDFConfig]              = None
+    topic_distribution:  Union[None, TopicDistributionConfig]   = None
+    run_name:            Union[None, str]                       = None  # None -> auto-timestamp at run time
 
     def __post_init__(self):
         super().__post_init__()
-        self.hdbscan            = HDBSCANConfig(**self.hdbscan)
-        self.umap               = UMAPConfig(**self.umap)
-        self.bertopic           = BertopicConfig(**self.bertopic)
-        self.berteley           = BerteleyConfig(**self.berteley)
-        self.ctfidf             = CTFIDFConfig(**self.ctfidf)
-        self.coherence_scorer   = CoherenceScorerConfig(**self.coherence_scorer)
-        self.topic_distribution = TopicDistributionConfig(**self.topic_distribution)
+
+        if isinstance(self.hdbscan, dict):
+            self.hdbscan = HDBSCANConfig(**self.hdbscan)
+        elif self.hdbscan is None:
+            self.hdbscan = HDBSCANConfig()
+
+        if isinstance(self.umap, dict):
+            self.umap = UMAPConfig(**self.umap)
+        elif self.umap is None:
+            self.umap = UMAPConfig()
+
+        if isinstance(self.bertopic, dict):
+            self.bertopic = BertopicConfig(**self.bertopic)
+        elif self.bertopic is None:
+            self.bertopic = BertopicConfig()
+
+        if isinstance(self.berteley, dict):
+            self.berteley = BerteleyConfig(**self.berteley)
+        elif self.berteley is None:
+            self.berteley = BerteleyConfig()
+
+        if isinstance(self.ctfidf, dict):
+            self.ctfidf = CTFIDFConfig(**self.ctfidf)
+        elif self.ctfidf is None:
+            self.ctfidf = CTFIDFConfig()
+
+        if isinstance(self.topic_distribution, dict):
+            self.topic_distribution = TopicDistributionConfig(**self.topic_distribution)
+        elif self.topic_distribution is None:
+            self.topic_distribution = TopicDistributionConfig()
+
+        if isinstance(self.coherence_scorer, dict):
+            self.coherence_scorer = CoherenceScorerConfig(**self.coherence_scorer)
+        elif self.coherence_scorer is None:
+            self.coherence_scorer = CoherenceScorerConfig()
 
 
 @dataclass
@@ -332,6 +398,7 @@ class Config:
     """Root configuration object."""
     bib:         BibConfig
     review:      ReviewConfig
+    bib_network: BibNetworkConfig
     topic_model: TopicModelConfig
     env:         Union[None, str] = None  # path to .env file (loaded before ${VAR} resolution)
 
@@ -362,5 +429,6 @@ class Config:
             env         = resolved.get('env'),
             bib         = BibConfig(**resolved['bib']),
             review      = ReviewConfig(**resolved['review']),
+            bib_network = BibNetworkConfig(**resolved['bib_network']),
             topic_model = TopicModelConfig(**resolved['topic_model']),
         )

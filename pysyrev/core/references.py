@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process as rf_process
 from tqdm import tqdm
@@ -195,6 +197,37 @@ def _resolve_one(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def flag_shared_unresolved_references(dataset: pd.DataFrame) -> pd.DataFrame:
+    """Add a 'shared_unresolved_references' column.
+
+    Parameters
+    ----------
+    dataset : pandas.DataFrame
+
+    Returns
+    -------
+    pandas.DataFrame
+    """
+    if 'unresolved_references' not in dataset.columns:
+        raise ValueError(
+            "No 'unresolved_references' column — run resolve_references() first."
+        )
+
+    sep = '; '
+    parsed = dataset['unresolved_references'].apply(
+        lambda x: x.split(sep) if isinstance(x, str) else []
+    )
+
+    counts = Counter(ref for refs in parsed for ref in refs)
+    shared = {r for r, n in counts.items() if n >= 2}
+
+    dataset['shared_unresolved_references'] = parsed.apply(
+        lambda refs: sep.join(r for r in refs if r in shared) or np.nan
+    )
+
+    return dataset
+
 
 def resolve_references(
     df: pd.DataFrame,
