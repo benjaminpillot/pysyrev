@@ -1,0 +1,298 @@
+# =============================================================================
+# pysyrev — pipeline configuration template
+# =============================================================================
+# Copy this file, fill in the required fields, and uncomment the optional
+# sections you need.  Default values are shown next to commented-out keys.
+#
+# Sections:
+#   bib          — bibliography collection and preparation
+#   review       — LLM-based title/abstract screening
+#   bib_network  — bibliographic coupling and co-citation graphs
+#   topic_model  — BERTopic-based topic modelling
+#
+# Usage:
+#   from pysyrev.core.config import Config
+#   config = Config.load("config_template.yaml")
+# =============================================================================
+
+# Optional: path to a .env file.  Any ${VAR} reference in this file is
+# resolved against it at load time.
+# env: /path/to/.env
+
+
+# =============================================================================
+# bib
+# =============================================================================
+bib:
+
+  # ---- Sources (include at least one) ------------------------------------
+  # Set source: to 'file' or 'api'.  Leave the block blank / remove it to
+  # skip that source.
+
+  wos:
+    source: file                    # 'file' | 'api'
+    file: /path/to/savedrecs.bib    # required when source: file
+    # api:                          # required when source: api
+    #   api_key: ${WOS_API_KEY}
+    #   query: 'ALL=(your query) AND PY=2015-2024'
+    #   cache_dir: /path/to/wos_cache/   # omit to disable caching
+
+  open_alex:
+    source: file                    # 'file' | 'api'
+    file: /path/to/open_alex.csv    # required when source: file
+    # api:                          # required when source: api
+    #   api_key: ${OPENALEX_API_KEY}
+    #   email: ${OPENALEX_EMAIL}         # optional — enables the polite pool
+    #   query: your search terms         # free-text BM25 on title + abstract
+    #   filters:                         # structured filters (combined with AND)
+    #     publication_year: '2015-2024'
+    #     type: article
+    #   cache_dir: /path/to/oa_cache/
+
+  # scopus:
+  # pubmed:
+
+  # ---- Duplicate removal across sources (defaults shown) -----------------
+  # merge:
+  #   title_similarity: 98         # fuzzy threshold (0-100)
+  #   ngram_size: 3
+  #   max_candidates_per_row: 200
+  #   scorer: token_set_ratio      # token_set_ratio | partial_token_sort_ratio | WRatio | ...
+
+  # ---- Abstract cleaning (defaults shown) --------------------------------
+  # clean:
+  #   min_signals_to_reject: 2     # garbage signals needed to drop an abstract
+  #   extra_garbage_phrases: []
+  #   use_langdetect: false
+
+  # ---- Document filtering ------------------------------------------------
+  extract:
+    # include_doc_type: [article, review]  # blank = keep all document types
+    # exclude_doc_type: [peer review]      # types to remove (fuzzy); takes priority over include_doc_type
+    year: 2000                     # min publication year (inclusive)
+    language: english              # str, list of str, or blank (keep all)
+    # nb_citations: 0              # min citation count (inclusive)
+    # scorer: partial_token_sort_ratio
+    # score_cutoff: 90
+
+  # ---- Reference resolution (opt-in, expensive) --------------------------
+  # resolve_references:
+  #   enabled: true
+  #   flag_unresolved: true
+  #   fuzzy_score_cutoff: 90
+  #   ngram_size: 3
+  #   max_candidates: 50
+  #   scorer: token_set_ratio
+
+  # ---- Output ------------------------------------------------------------
+  # Each run is stored in its own sub-directory: <export_dir>/<run_name>/.
+  # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS).
+  # The review section will automatically pick up the most recent run.
+  export:
+    export_dir: /path/to/output/bib_results/
+    run_name:               # blank → auto-timestamp; or e.g. "may_2026_wos_oa"
+
+
+# =============================================================================
+# review
+# =============================================================================
+review:
+
+  # ---- Input -------------------------------------------------------------
+  # Leave blank to auto-detect the most recent bib run in bib.export.export_dir.
+  # Set an explicit path to use a specific bib CSV.
+  doc_dataset:
+
+  # ---- Output ------------------------------------------------------------
+  # Each run is stored in its own sub-directory: <export_dir>/<run_name>/.
+  # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS) so
+  # successive runs never overwrite each other.
+  # Downstream sections (bib_network, topic_model) auto-detect the most recent run.
+  export:
+    export_dir: /path/to/output/review_results/
+    run_name:               # blank → auto-timestamp; or e.g. "pilot_run_1"
+    cache_dir:              # blank → <export_dir>/<run_name>/cache/
+
+  # ---- Execution parameters ----------------------------------------------
+  # batch_size: 100               # articles processed per checkpoint batch
+  # api_pause: 30.0               # seconds between batches (rate-limit guard)
+  # max_retries: 2                # on API error; overridable per reviewer
+  # max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
+  # items_per_call: 5             # articles per API call (backstory sent once)
+
+  # ---- Input -------------------------------------------------------------
+  text_inputs: [title, abstract, keywords]
+  # sample_size:                  # default: null (process full dataset); integer = random sample size
+
+  # ---- Screening criteria ------------------------------------------------
+  inclusion_criteria: |
+    <Describe what MUST be true for a document to be included.>
+
+  exclusion_criteria: |
+    1. <First reason to exclude a document.>
+    2. <Second reason to exclude a document.>
+
+  # ---- Decision logic ----------------------------------------------------
+  # decision_rule: majority       # default: majority  (majority | mean)
+
+  # ---- Workflow ----------------------------------------------------------
+  # Rounds are executed in order.  Round N+1 only runs on documents where
+  # round N produced no consensus.
+  workflow:
+    - round: A
+      reviewers: [Reviewer1, Reviewer2]
+
+    # - round: B                  # optional tie-breaker round
+    #   reviewers: [Reviewer3]
+
+  # ---- Reviewer definitions ----------------------------------------------
+  reviewers:
+    - name: Reviewer1
+      provider: anthropic         # anthropic | openai | litellm | ollama
+      model_id: claude-haiku-4-5
+      reasoning: brief            # brief | cot
+      max_tokens: 200
+      temperature: 0.7
+      host:                       # custom endpoint (litellm / ollama); blank for hosted APIs
+      reasoning_effort:           # low | medium | high (extended-thinking models only)
+      max_retries:                # blank → section-level value
+      max_concurrent_requests:    # blank → section-level value
+      items_per_call:             # blank → section-level value
+      backstory: |
+        <Describe Reviewer1's domain expertise, role, and reviewing style.>
+      additional_context:         # extra context injected at the end of each prompt
+
+    - name: Reviewer2
+      provider: anthropic
+      model_id: claude-haiku-4-5
+      reasoning: brief
+      max_tokens: 200
+      temperature: 0.1
+      host:
+      reasoning_effort:
+      max_retries:
+      max_concurrent_requests:
+      items_per_call:
+      backstory: |
+        <Describe Reviewer2's domain expertise, role, and reviewing style.>
+      additional_context:
+
+    # Uncomment to add a tie-breaker reviewer (used in round B above).
+    # - name: Reviewer3
+    #   provider: anthropic
+    #   model_id: claude-sonnet-4-5
+    #   reasoning:
+    #   max_tokens: 200
+    #   temperature:
+    #   host:
+    #   reasoning_effort: medium
+    #   max_retries:
+    #   max_concurrent_requests:
+    #   items_per_call:
+    #   backstory: |
+    #     <Describe Reviewer3's expertise.>
+    #   additional_context: |
+    #     <Context specific to this reviewer, e.g. previous reviewers' verdicts.>
+
+
+# =============================================================================
+# bib_network
+# =============================================================================
+bib_network:
+
+  # Input CSV (reviewed_included.csv produced by the review stage).
+  # Leave blank to auto-detect the most recent run in review.export.export_dir.
+  # Set an explicit path to target a specific run or an external file.
+  doc_dataset:
+
+  # ---- Bibliographic coupling --------------------------------------------
+  coupling_network:
+    use_resolved: true
+    use_unresolved: true
+    min_shared: 1                 # min shared references to draw an edge
+
+  # ---- Co-citation -------------------------------------------------------
+  cocitation_network:
+    use_resolved: true
+    use_unresolved: true
+    min_cocitations: 1            # min co-occurrences to draw an edge
+
+  # ---- Output ------------------------------------------------------------
+  # Each run is stored in its own sub-directory: <export_dir>/<run_name>/.
+  # Two GraphML files are written: coupling_network.graphml and
+  # cocitation_network.graphml.  These paths can be referenced in the report
+  # config (report.yaml) under bib_network.coupling_graph / cocitation_graph,
+  # or left blank there for auto-detection via the 'config' pointer.
+  # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS).
+  export:
+    export_dir: /path/to/output/bib_network_results/
+    run_name:               # blank → auto-timestamp; or e.g. "may_2026_network"
+
+
+# =============================================================================
+# topic_model
+# =============================================================================
+topic_model:
+
+  # Input CSV (reviewed_included.csv produced by the review stage).
+  # Leave blank to auto-detect the most recent review run.
+  # Set an explicit path to target a specific run or an external file.
+  doc_dataset:
+
+  export:
+    export_dir: /path/to/output/topic_modeling/
+    run_name:                     # blank → auto-timestamp
+
+  # ---- Distance metric used to rank configurations -----------------------
+  distance: euclidean             # euclidean | chebyshev
+
+  # ---- Number of best configurations to keep -----------------------------
+  keep_n_results: 10
+
+  # ---- Coherence scorers (defaults shown) --------------------------------
+  # coherence_scorer:
+  #   ranking: u_mass             # ranks all configurations (fast)
+  #   purity: c_v                 # scores the best configurations (slower)
+
+  # ---- HDBSCAN clustering ------------------------------------------------
+  hdbscan:
+    min_topic_size_range: [10, 50]    # [min, max] grid-search bounds
+    min_sample_range: [2, 10]
+    topic_size_step: 4
+    min_sample_step: 2
+    # cluster_selection_method: leaf
+    # metric: euclidean
+    # prediction_data: true
+
+  # ---- UMAP dimensionality reduction -------------------------------------
+  umap:
+    n_neighbors: [5, 10]              # grid-search values
+    n_components: [5, 10, 15]
+    # metric: cosine
+    # min_dist: 0.0
+    # low_memory: false
+    # random_state: 42
+
+  # ---- BERTopic model (defaults shown) -----------------------------------
+  # bertopic:
+  #   transformer_model: allenai/specter2_base
+  #   n_gram_range: bigram            # unigram | bigram
+  #   language: english
+  #   nr_repr_docs: 50                # representative documents per topic
+  #   calculate_probabilities: true
+
+  # ---- Berteley pre-processing (defaults shown) --------------------------
+  # berteley:
+  #   allow_abbrev: false
+
+  # ---- c-TF-IDF weighting (defaults shown) -------------------------------
+  # ctfidf:
+  #   bm25_weighting: true
+  #   reduce_frequent_words: true
+
+  # ---- Topic distribution approximation (defaults shown) -----------------
+  # topic_distribution:
+  #   window: 8
+  #   stride: 1
+  #   min_similarity: 0.1
+  #   batch_size: 1000

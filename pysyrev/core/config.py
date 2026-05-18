@@ -15,6 +15,7 @@ They are resolved at load time using the environment, augmented with the
 contents of the .env file pointed to by the root-level `env:` key (if any).
 """
 import dataclasses
+import datetime
 import os
 import re
 from dataclasses import dataclass, fields, field
@@ -26,6 +27,51 @@ from dotenv import load_dotenv
 
 # Pattern to resolve ${ENV_VAR} references inside YAML string values.
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}]+)\}')
+
+
+def _make_run_dir(export_dir: str, run_name: Union[str, None]) -> tuple:
+    """Return ``(run_name, run_dir)``, creating the directory.
+
+    If *run_name* is blank a timestamp (``YYYY-MM-DDTHHMMSS``) is generated.
+    ``exist_ok=True`` so that re-opening an existing run is allowed.
+    """
+    if not run_name:
+        run_name = datetime.datetime.now().strftime('%Y-%m-%dT%H%M%S')
+    run_dir = os.path.join(export_dir, run_name)
+    os.makedirs(run_dir, exist_ok=True)
+    return run_name, run_dir
+
+
+def _find_latest_dir(export_dir: str) -> Union[str, None]:
+    """Return the most recently modified subdirectory of *export_dir*."""
+    if not os.path.isdir(export_dir):
+        return None
+    candidates = [
+        (entry.stat().st_mtime, entry.path)
+        for entry in os.scandir(export_dir)
+        if entry.is_dir()
+    ]
+    return max(candidates, default=(None, None))[1]
+
+
+def _find_latest_file(export_dir: str, filename: str) -> Union[str, None]:
+    """Return *filename* in the most recently modified subdirectory of *export_dir*.
+
+    Handles two layouts:
+    - flat:              export_dir/filename
+    - timestamped dirs:  export_dir/<run_name>/filename
+    """
+    if not os.path.isdir(export_dir):
+        return None
+    flat = os.path.join(export_dir, filename)
+    if os.path.isfile(flat):
+        return flat
+    latest_dir = _find_latest_dir(export_dir)
+    if latest_dir is None:
+        return None
+    candidate = os.path.join(latest_dir, filename)
+    return candidate if os.path.isfile(candidate) else None
+
 
 
 def _resolve_env_vars(node) -> dict:
@@ -133,12 +179,13 @@ class CleanConfig(ConfigField):
 
 @dataclass
 class ExtractConfig(ConfigField):
-    doc_type:     Union[None, List[str]]             = None
-    year:         int                                = 1900
-    nb_citations: int                                = 0
-    language:     Union[None, str, List[str]]        = None
-    scorer:       str                                = "partial_token_sort_ratio"
-    score_cutoff: int                                = 90
+    include_doc_type: Union[None, List[str]]         = None
+    exclude_doc_type: Union[None, List[str]]         = None
+    year:             int                            = 1900
+    nb_citations:     int                            = 0
+    language:         Union[None, str, List[str]]    = None
+    scorer:           str                            = "partial_token_sort_ratio"
+    score_cutoff:     int                            = 90
 
 
 @dataclass
@@ -160,16 +207,36 @@ class MergeConfig(ConfigField):
 
 
 @dataclass
+class BibExportConfig(ConfigField):
+    """Output configuration for the bib stage.
+
+    Each run is stored in ``<export_dir>/<run_name>/bib_dataset.csv``.
+    Call :meth:`resolve` (done automatically by ``BibDataset.from_config``)
+    to finalise the run directory and set ``dataset`` on the instance.
+    Leave ``run_name`` blank to auto-generate a timestamp.
+    """
+    export_dir: str
+    run_name:   Union[None, str] = None
+    dataset: str                 = None
+
+    def resolve(self):
+        """Create the run directory and set the output CSV path."""
+        self.run_name, run_dir = _make_run_dir(self.export_dir, self.run_name)
+        self.dataset = os.path.join(run_dir, 'bib_dataset.csv')
+        return self
+
+
+@dataclass
 class BibConfig(ConfigField):
     wos:                Union[None, str, WosSourceConfig]          = None
     open_alex:          Union[None, str, OpenAlexSourceConfig]     = None
     scopus:             Union[None, str]                           = None
     pubmed:             Union[None, str]                           = None
-    export_to:          Union[None, str]                           = None
-    clean:              Union[None, dict, CleanConfig]             = None
-    extract:            Union[None, dict, ExtractConfig]           = None
-    resolve_references: Union[None, dict, ResolveReferencesConfig] = None
-    merge:              Union[None, dict, MergeConfig]             = None
+    export:             Union[None, BibExportConfig]               = None
+    clean:              CleanConfig                                = None
+    extract:            ExtractConfig                              = None
+    resolve_references: ResolveReferencesConfig                    = None
+    merge:              MergeConfig                                = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -190,6 +257,9 @@ class BibConfig(ConfigField):
                 self.open_alex = OpenAlexSourceConfig(**self.open_alex)
         elif isinstance(self.open_alex, str):
             self.open_alex = OpenAlexSourceConfig(source='file', file=self.open_alex)
+
+        if isinstance(self.export, dict):
+            self.export = BibExportConfig(**self.export)
 
         if isinstance(self.clean, dict):
             self.clean = CleanConfig(**self.clean)
@@ -268,43 +338,85 @@ class BertopicConfig(ConfigField):
 
 
 @dataclass
+class ReviewExportConfig(ConfigField):
+    """Output configuration for the review stage.
+
+    Declare the parent directory (``export_dir``) and an optional run label
+    (``run_name``).  If ``run_name`` is left blank, :meth:`resolve` generates
+    a timestamp name (``YYYY-MM-DDTHHMMSS``) at run time so that successive
+    test runs never overwrite each other.
+
+    ``resolve()`` must be called before the review runs (done automatically by
+    ``LLMReview.from_config``).  It creates the run directory, sets
+    ``included_docs`` / ``total_docs`` on the instance, and defaults
+    ``cache_dir`` to ``<run_dir>/cache/`` when not explicitly provided.
+
+    Downstream sections (``bib_network``, ``topic_model``) can reference the
+    output via ``config.review.export.included_docs`` after ``resolve()``,
+    or leave ``doc_dataset`` blank to have ``Config.load`` auto-detect the
+    most recent run.
+    """
+    export_dir: str
+    run_name: str      = None  # None → auto-timestamp at resolve() time
+    cache_dir: str     = None  # None → <run_dir>/cache/
+    included_docs: str = None
+    total_docs: str    = None
+
+    def resolve(self):
+        """Finalise run_name, create output directories, and set file paths."""
+        self.run_name, run_dir = _make_run_dir(self.export_dir, self.run_name)
+        self.included_docs = os.path.join(run_dir, 'reviewed_included.csv')
+        self.total_docs    = os.path.join(run_dir, 'reviewed_total.csv')
+        if self.cache_dir is None:
+            self.cache_dir = os.path.join(run_dir, 'cache')
+        os.makedirs(self.cache_dir, exist_ok=True)
+        return self
+
+
+@dataclass
 class ReviewerConfig(ConfigField):
     """Mirror of one entry under `review.reviewers` in the YAML.
     Cross-section fields like inclusion_criteria are NOT here — they live
     at the ReviewConfig level and are wired together by the runtime layer."""
-    model_id:           str
-    host:               str
-    provider:           str
-    name:               str
-    max_tokens:         int
-    temperature:        float
-    reasoning_effort:   str
-    backstory:          str
-    additional_context: str
-    reasoning:          str = 'brief'
+    model_id:                str
+    host:                    str
+    provider:                str
+    name:                    str
+    max_tokens:              int
+    temperature:             float
+    reasoning_effort:        str
+    backstory:               str
+    additional_context:      str
+    reasoning:               str              = 'brief'
+    max_retries:             Union[None, int] = None  # None → falls back to ReviewConfig value
+    max_concurrent_requests: Union[None, int] = None  # None → falls back to ReviewConfig value
+    items_per_call:          Union[None, int] = None  # None → falls back to ReviewConfig value
 
 
 @dataclass
 class ReviewConfig(ConfigField):
-    export_to:          str
-    batch_size:         int
-    api_pause:          float
-    text_inputs:        List[str]
-    inclusion_criteria: str
-    exclusion_criteria: str
-    decision_rule:      str
-    reviewers:          List[ReviewerConfig]
-    sampling:           bool
-    sample_size:        Union[None, int]
-    workflow:           List[dict]
-    run_name:           Union[None, str] = None  # None → default filenames
+    # --- Required ---
+    export:               ReviewExportConfig
+    text_inputs:          List[str]
+    inclusion_criteria:   str
+    exclusion_criteria:   str
+    reviewers:            List[ReviewerConfig]
+    workflow:             List[dict]
+    # --- Optional (section-level defaults) ---
+    doc_dataset:             Union[None, str] = None          # None = auto-detect latest bib run
+    batch_size:              int              = 100
+    api_pause:               float            = 30.0
+    decision_rule:           str              = 'majority'    # majority | mean
+    sample_size:             Union[None, int] = None          # None = process full dataset
+    max_retries:             Union[None, int] = None          # None → module default (2);  overridable per reviewer
+    max_concurrent_requests: Union[None, int] = None          # None → module default (10); overridable per reviewer
+    items_per_call:          Union[None, int] = None          # None → module default (1);  overridable per reviewer
 
     def __post_init__(self):
         super().__post_init__()
-        # Mirror nested YAML dicts as ReviewerConfig instances.
+        if isinstance(self.export, dict):
+            self.export = ReviewExportConfig(**self.export)
         self.reviewers = [ReviewerConfig(**r) for r in self.reviewers]
-        if not self.sampling:
-            self.sample_size = None
 
 
 @dataclass
@@ -322,11 +434,34 @@ class CocitationNetworkConfig(ConfigField):
 
 
 @dataclass
-class BibNetworkConfig(ConfigField):
-    coupling_network:   Union[None, CouplingNetworkConfig]   = None
-    cocitation_network: Union[None, CocitationNetworkConfig] = None
+class BibNetworkExportConfig(ConfigField):
+    """Output configuration for the bib_network stage.
 
-    def post_init(self):
+    Each run is stored in ``<export_dir>/<run_name>/``.
+    Leave ``run_name`` blank to auto-generate a timestamp.
+    Call :meth:`resolve` to finalise the run directory and set file paths.
+    """
+    export_dir:       str
+    run_name:         Union[None, str] = None
+    coupling_graph:   Union[None, str] = None   # set by resolve()
+    cocitation_graph: Union[None, str] = None   # set by resolve()
+
+    def resolve(self):
+        """Create the run directory and set output file paths."""
+        self.run_name, run_dir = _make_run_dir(self.export_dir, self.run_name)
+        self.coupling_graph   = os.path.join(run_dir, 'coupling_network.graphml')
+        self.cocitation_graph = os.path.join(run_dir, 'cocitation_network.graphml')
+        return self
+
+
+@dataclass
+class BibNetworkConfig(ConfigField):
+    doc_dataset:        str                                 = None
+    coupling_network:   CouplingNetworkConfig               = None
+    cocitation_network: CocitationNetworkConfig             = None
+    export:             Union[None, BibNetworkExportConfig] = None
+
+    def __post_init__(self):
         super().__post_init__()
         if isinstance(self.coupling_network, dict):
             self.coupling_network = CouplingNetworkConfig(**self.coupling_network)
@@ -338,24 +473,41 @@ class BibNetworkConfig(ConfigField):
         elif self.cocitation_network is None:
             self.cocitation_network = CocitationNetworkConfig()
 
+        if isinstance(self.export, dict):
+            self.export = BibNetworkExportConfig(**self.export)
+
+
+@dataclass
+class TopicExportConfig(ConfigField):
+    """Output configuration for the topic-model stage.
+
+    Each run is stored in its own sub-directory: ``<export_dir>/<run_name>/``.
+    Leave ``run_name`` blank to auto-generate a timestamp at run time
+    (directory creation is deferred to ``TopicModel.run()``).
+    """
+    export_dir: str
+    run_name:   Union[None, str] = None
+
 
 @dataclass
 class TopicModelConfig(ConfigField):
-    doc_dataset:         str
-    export_to:           str
+    export:              TopicExportConfig
+    doc_dataset:         Union[None, str]                       = None
     distance:            str                                    = "euclidean"
     keep_n_results:      int                                    = 10
-    coherence_scorer:    Union[None, CoherenceScorerConfig]     = None
-    hdbscan:             Union[None, HDBSCANConfig]             = None
-    umap:                Union[None, UMAPConfig]                = None
-    bertopic:            Union[None, BertopicConfig]            = None
-    berteley:            Union[None, BerteleyConfig]            = None
-    ctfidf:              Union[None, CTFIDFConfig]              = None
-    topic_distribution:  Union[None, TopicDistributionConfig]   = None
-    run_name:            Union[None, str]                       = None  # None -> auto-timestamp at run time
+    coherence_scorer:    CoherenceScorerConfig                  = None
+    hdbscan:             HDBSCANConfig                          = None
+    umap:                UMAPConfig                             = None
+    bertopic:            BertopicConfig                         = None
+    berteley:            BerteleyConfig                         = None
+    ctfidf:              CTFIDFConfig                           = None
+    topic_distribution:  TopicDistributionConfig                = None
 
     def __post_init__(self):
         super().__post_init__()
+
+        if isinstance(self.export, dict):
+            self.export = TopicExportConfig(**self.export)
 
         if isinstance(self.hdbscan, dict):
             self.hdbscan = HDBSCANConfig(**self.hdbscan)
@@ -394,6 +546,162 @@ class TopicModelConfig(ConfigField):
 
 
 @dataclass
+class ReportMetaConfig(ConfigField):
+    title:       str              = "Bibliographic report — Pysyrev"
+    subtitle:    Union[None, str] = None
+    author:      str              = "Report generated with the pysyrev engine (v0.1)"
+    date_format: str              = "%d/%m/%Y"
+    version:     str              = "1.0.0"
+    summary:     Union[None, str] = None
+
+
+@dataclass
+class ReportConfig(ConfigField):
+    meta:     Union[None, ReportMetaConfig] = None
+    sections: Union[None, List[dict]]       = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.meta, dict):
+            self.meta = ReportMetaConfig(**self.meta)
+        elif self.meta is None:
+            self.meta = ReportMetaConfig()
+
+
+@dataclass
+class TopicLabelerConfig(ConfigField):
+    """LLM configuration for generating human-readable topic labels."""
+    provider:                str
+    model_id:                str
+    host:                    Union[None, str] = None
+    max_tokens:              int              = 200
+    temperature:             float            = 0.3
+    max_retries:             int              = 2
+    max_concurrent_requests: int              = 5
+    nr_repr_docs:            int              = 3
+    system_prompt:           Union[None, str] = None
+
+
+@dataclass
+class TopicReportConfig(ConfigField):
+    """Model-selection parameters for the topic-report stage."""
+    run_dir:     str = None  # resolved by TopicReportFileConfig.load()
+    model_index: int = 0
+    export_to:   str = None
+
+
+@dataclass
+class BibNetworkReportConfig(ConfigField):
+    """Paths to the exported bib_network graphs for inclusion in the report.
+
+    Leave both paths blank and set 'config' at the root of the report YAML so
+    that the latest bib_network run is detected automatically from
+    bib_network.export.export_dir in the main pipeline config.
+    """
+    coupling_graph:   Union[None, str] = None
+    cocitation_graph: Union[None, str] = None
+
+
+@dataclass
+class TopicReportFileConfig:
+    """Root config for a report YAML file. Analogous to Config for the main pipeline.
+
+    Five independent top-level sections:
+      - config:       path to the main pysyrev config (used to auto-detect the latest
+                      topic_model run when topic_report.run_dir is left blank, and the
+                      latest bib_network run when bib_network paths are blank)
+      - topic_report: which run and which model to use
+      - bib_network:  optional — coupling / co-citation graph files to include
+      - llm:          optional LLM labeler to generate human-readable topic names
+      - report:       PDF layout (metadata, optional extra sections)
+    """
+    topic_report: TopicReportConfig
+    report:       ReportConfig
+    llm:          Union[None, TopicLabelerConfig]      = None
+    bib_network:  Union[None, BibNetworkReportConfig]  = None
+    env:          Union[None, str]                     = None
+    config:       Union[None, str]                     = None
+
+    @classmethod
+    def load(cls, config_file):
+        with open(config_file, 'r') as f:
+            raw = yaml.safe_load(f)
+
+        env_path = raw.get('env')
+        if env_path:
+            load_dotenv(env_path)
+
+        resolved = _resolve_env_vars(raw)
+
+        main_raw = None
+
+        def _load_main_raw():
+            nonlocal main_raw
+            if main_raw is not None:
+                return main_raw
+            main_config_path = resolved.get('config')
+            if not main_config_path:
+                return None
+            with open(main_config_path, 'r') as f:
+                main_raw = yaml.safe_load(f)
+            return main_raw
+
+        # ---- topic_report: auto-detect latest run when run_dir is blank ----
+        tr_raw = dict(resolved.get('topic_report', {}))
+        if not tr_raw.get('run_dir'):
+            main = _load_main_raw()
+            if not main:
+                raise ValueError(
+                    "topic_report.run_dir is blank: set 'config' (path to the main "
+                    "pysyrev config) so that the latest topic_model run can be "
+                    "detected automatically."
+                )
+            export_dir = (main.get('topic_model') or {}).get('export', {}).get('export_dir')
+            if not export_dir:
+                raise ValueError(
+                    f"topic_model.export.export_dir is not set in the main config."
+                )
+            latest = _find_latest_dir(export_dir)
+            if latest is None:
+                raise FileNotFoundError(
+                    f"No topic_model run directories found in {export_dir!r}."
+                )
+            tr_raw['run_dir'] = latest
+
+        # ---- bib_network: auto-detect graph paths when blank ---------------
+        bn_raw = dict(resolved.get('bib_network') or {})
+        if not bn_raw.get('coupling_graph') or not bn_raw.get('cocitation_graph'):
+            main = _load_main_raw()
+            if main:
+                bn_export_dir = (
+                    (main.get('bib_network') or {})
+                    .get('export', {})
+                    .get('export_dir')
+                )
+                if bn_export_dir:
+                    latest_dir = _find_latest_dir(bn_export_dir)
+                    if latest_dir:
+                        if not bn_raw.get('coupling_graph'):
+                            candidate = os.path.join(latest_dir, 'coupling_network.graphml')
+                            if os.path.isfile(candidate):
+                                bn_raw['coupling_graph'] = candidate
+                        if not bn_raw.get('cocitation_graph'):
+                            candidate = os.path.join(latest_dir, 'cocitation_network.graphml')
+                            if os.path.isfile(candidate):
+                                bn_raw['cocitation_graph'] = candidate
+
+        llm_raw = resolved.get('llm')
+        return cls(
+            env          = resolved.get('env'),
+            config       = resolved.get('config'),
+            topic_report = TopicReportConfig(**tr_raw),
+            report       = ReportConfig(**resolved.get('report', {})),
+            llm          = TopicLabelerConfig(**llm_raw) if llm_raw else None,
+            bib_network  = BibNetworkReportConfig(**bn_raw) if bn_raw else None,
+        )
+
+
+@dataclass
 class Config:
     """Root configuration object."""
     bib:         BibConfig
@@ -410,25 +718,46 @@ class Config:
           2. If `env:` (root-level) points to a .env file, load it so its
              variables become available in os.environ.
           3. Resolve all ${VAR} references throughout the structure.
-          4. Build typed dataclasses.
+          4. Auto-fill blank doc_dataset fields from the latest review run.
+          5. Build typed dataclasses.
         """
         with open(config_file, 'r') as file:
             raw = yaml.safe_load(file)
 
-        # Step 2: load .env BEFORE resolving ${VAR}, so variables it defines
-        # are available for resolution.
         env_path = raw.get('env')
         if env_path:
             load_dotenv(env_path)
 
-        # Step 3: walk the structure and substitute ${VAR}.
         resolved = _resolve_env_vars(raw)
 
-        # Step 4: build typed config.
+        # Step 4: propagate the latest output of each stage to the next one
+        # when doc_dataset is left blank (standalone re-run use case).
+        #   bib.export.export_dir      → review.doc_dataset
+        #   review.export.export_dir   → bib_network.doc_dataset
+        #                              → topic_model.doc_dataset
+        bib_export_dir    = (resolved.get('bib') or {}).get('export', {}).get('export_dir')
+        review_export_dir = (resolved.get('review') or {}).get('export', {}).get('export_dir')
+        review_data       = resolved.get('review', {})
+        bib_network_data  = resolved.get('bib_network', {})
+        topic_model_data  = resolved.get('topic_model', {})
+
+        if bib_export_dir and not review_data.get('doc_dataset'):
+            latest = _find_latest_file(bib_export_dir, 'bib_dataset.csv')
+            if latest:
+                review_data['doc_dataset'] = latest
+
+        if review_export_dir:
+            latest = _find_latest_file(review_export_dir, 'reviewed_included.csv')
+            if latest:
+                if not bib_network_data.get('doc_dataset'):
+                    bib_network_data['doc_dataset'] = latest
+                if not topic_model_data.get('doc_dataset'):
+                    topic_model_data['doc_dataset'] = latest
+
         return cls(
             env         = resolved.get('env'),
             bib         = BibConfig(**resolved['bib']),
-            review      = ReviewConfig(**resolved['review']),
-            bib_network = BibNetworkConfig(**resolved['bib_network']),
-            topic_model = TopicModelConfig(**resolved['topic_model']),
+            review      = ReviewConfig(**review_data),
+            bib_network = BibNetworkConfig(**bib_network_data),
+            topic_model = TopicModelConfig(**topic_model_data),
         )

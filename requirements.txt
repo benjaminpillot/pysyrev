@@ -1,0 +1,48 @@
+# =============================================================================
+# pysyrev — Python dependencies
+# =============================================================================
+# Install with:  pip install -r requirements.txt
+#
+# berteley (text pre-processing) is a local package — install it separately:
+#   pip install /path/to/berteley
+# =============================================================================
+
+# ---- Core -------------------------------------------------------------------
+pandas>=2.0
+numpy>=1.24
+pyyaml>=6.0
+python-dotenv>=1.0
+rapidfuzz>=3.0
+requests>=2.28
+tqdm>=4.64
+nest-asyncio>=1.5
+pydantic>=2.0
+
+# ---- LLM gateway (review stage) --------------------------------------------
+litellm>=1.0
+
+# ---- Bibliographic network (bib-network stage) -----------------------------
+networkx>=3.0
+
+# ---- PDF report engine ------------------------------------------------------
+reportlab>=4.0
+
+# ---- Topic modelling (topic-model stage) ------------------------------------
+bertopic>=0.16
+hdbscan>=0.8
+umap-learn>=0.5
+sentence-transformers>=2.0
+gensim>=4.0
+octis>=1.0
+# Text pre-processing (integrated from berteley — see pysyrev/core/berteley/)
+nltk>=3.8
+spacy>=3.0
+beautifulsoup4>=4.11
+contractions>=0.1
+# Note: spacy also requires the en_core_web_lg model (~700 MB), installed once with:
+#   python -m spacy download en_core_web_lg
+
+# ---- Optional: Plotly figure export in PDF reports --------------------------
+# Uncomment if you use the "plotly" block type in your report configuration.
+# plotly>=5.0
+# kaleido>=0.2

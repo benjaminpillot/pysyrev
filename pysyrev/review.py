@@ -13,53 +13,48 @@ config concerns, so they live here rather than in config.py.
 
 import os
 import pandas as pd
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Union
 
 import nest_asyncio
-from lattereview.agents import TitleAbstractReviewer
 
-from pysyrev.core.config import ReviewConfig, ReviewerConfig
-from pysyrev.core.llm import run_review, build_workflow_schema, build_reviewer, REVIEW_SCORE
+from pysyrev.core.config import ReviewConfig, ReviewerConfig, ReviewExportConfig
+from pysyrev.core.llm import (run_review, build_workflow_schema, build_reviewer,
+                               Reviewer, REVIEW_SCORE)
 
-# API_PAUSE = 30
-INCLUDED_DOCS: str      = "included_docs"
-REVIEWED_DATASET: str   = "reviewed_dataset"
-REVIEWED_SUBSET: str    = "reviewed_subset"
-TOTAL_DOCS: str         = "total_docs"
+REVIEWED_SUBSET: str = "reviewed_subset"
 
 
-def _output_filename(base, run_name=None, index=None):
-    """Build an output filename: <base>[_<run_name>][_<index>].csv"""
-    parts = [base]
-    if run_name:
-        parts.append(run_name)
-    if index is not None:
-        parts.append(str(index))
-    return '_'.join(parts) + '.csv'
+def _subset_filename(index):
+    """Name for an intermediate per-batch file: reviewed_subset_<n>.csv"""
+    return f"{REVIEWED_SUBSET}_{index}.csv"
 
 
 # =============================================================================
-# Helpers — moved out of __post_init__ for clarity.
+# Helpers
 # =============================================================================
 
 def _input_description(text_inputs: List[str]) -> str:
-    """Format the input description string consumed by reviewers.
-    Kept as a helper so the format choice is one-liner-changeable."""
     return f'article {text_inputs[0]}/{text_inputs[1]}/{text_inputs[2]}'
 
 
 def _reviewer_kwargs(reviewer_config: ReviewerConfig,
                      review_config: ReviewConfig,
                      input_description: str) -> dict:
-    """Build the dict consumed by `build_reviewer`. Combines what is in the
-    reviewer YAML entry with the cross-section fields (criteria, input
-    format) provided at the review level."""
+    """Build the dict consumed by `build_reviewer`. Combines reviewer-level
+    fields with cross-section fields (criteria, input format, section defaults)."""
     return {
         **reviewer_config.__dict__,
-        'inclusion_criteria': review_config.inclusion_criteria,
-        'exclusion_criteria': review_config.exclusion_criteria,
-        'input_description': input_description,
+        'inclusion_criteria':      review_config.inclusion_criteria,
+        'exclusion_criteria':      review_config.exclusion_criteria,
+        'input_description':       input_description,
+        # reviewer-level overrides section-level; section-level overrides module default
+        'max_retries':             (reviewer_config.max_retries
+                                    or review_config.max_retries),
+        'max_concurrent_requests': (reviewer_config.max_concurrent_requests
+                                    or review_config.max_concurrent_requests),
+        'items_per_call':          (reviewer_config.items_per_call
+                                    or review_config.items_per_call),
     }
 
 
@@ -83,29 +78,23 @@ class LLMReview:
     build it from a parsed ReviewConfig — direct construction is also
     supported for tests or programmatic use.
     """
-    decision_rule:   str
-    text_inputs:     List[str]
-    reviewers:       List[TitleAbstractReviewer]
-    workflow_schema: List[dict]
-    export_to:       str
-    batch_size:      int
-    api_pause:       float
-    sample_size:     Union[int, None] = None   # None when sampling is disabled
-    run_name:        Union[str, None] = None   # None → default filenames
-
-    _reviewed_dataset = ReviewedDataset()
+    text_inputs:       List[str]
+    reviewers:         List[Reviewer]
+    workflow_schema:   List[dict]
+    export:            ReviewExportConfig
+    decision_rule:     str
+    batch_size:        int
+    api_pause:         float
+    sample_size:       Union[int, None]
+    doc_dataset:       Union[str, None]
+    _reviewed_dataset: ReviewedDataset = field(default_factory=ReviewedDataset, init=False, repr=False)
 
     # ---- bridge from configuration --------------------------------------
 
     @classmethod
     def from_config(cls, config: ReviewConfig) -> 'LLMReview':
-        """
-        Build an LLMReview from a parsed ReviewConfig.
-
-        Loads the environment file, builds reviewers from their YAML entries
-        (combined with the review-level criteria), and assembles the
-        workflow schema.
-        """
+        """Build an LLMReview from a parsed ReviewConfig."""
+        config.export.resolve()
         input_description = _input_description(config.text_inputs)
         reviewers = [
             build_reviewer(**_reviewer_kwargs(rc, config, input_description))
@@ -123,23 +112,32 @@ class LLMReview:
             text_inputs     = config.text_inputs,
             reviewers       = reviewers,
             workflow_schema = workflow_schema,
-            export_to       = config.export_to,
+            export          = config.export,
             batch_size      = config.batch_size,
             api_pause       = config.api_pause,
             sample_size     = config.sample_size,
-            run_name        = config.run_name,
+            doc_dataset     = config.doc_dataset,
         )
 
     # ---- runtime --------------------------------------------------------
 
-    def run(self, dataset):
-        """Execute the review on `dataset`. Output directory and batching
-        parameters come from the config-supplied attributes."""
+    def run(self, dataset=None):
+        """Execute the review. If *dataset* is None, load from ``doc_dataset``."""
+        if dataset is None:
+            if not self.doc_dataset:
+                raise ValueError(
+                    "No dataset provided: pass a DataFrame to run() or set "
+                    "doc_dataset in the review section of your config."
+                )
+            dataset = pd.read_csv(self.doc_dataset)
         nest_asyncio.apply()
-        subset_file_fn = lambda n: os.path.join(
-            self.export_to,
-            _output_filename(REVIEWED_SUBSET, self.run_name, index=n),
-        )
+        if self.export.cache_dir:
+            subset_file_fn = lambda n: os.path.join(
+                self.export.cache_dir,
+                _subset_filename(n),
+            )
+        else:
+            subset_file_fn = None
         reviewed_ds = run_review(
             dataset,
             self.workflow_schema,
@@ -155,13 +153,12 @@ class LLMReview:
         return self
 
     def save(self):
-
-        out_file = lambda x : os.path.join(
-            self.export_to,
-            _output_filename(f'{REVIEWED_DATASET}_{x}', self.run_name),
-        )
-
-        self._reviewed_dataset.total_docs.to_csv(out_file(TOTAL_DOCS), index=False)
-        self._reviewed_dataset.included_docs.to_csv(out_file(INCLUDED_DOCS), index=False)
-
+        self._reviewed_dataset.total_docs.to_csv(self.export.total_docs, index=False)
+        self._reviewed_dataset.included_docs.to_csv(self.export.included_docs, index=False)
         return self
+
+    @property
+    def included_docs(self) -> pd.DataFrame:
+        if self._reviewed_dataset.included_docs is None:
+            raise ValueError("Review has not been run yet — call run() first.")
+        return self._reviewed_dataset.included_docs

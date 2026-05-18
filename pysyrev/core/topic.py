@@ -3,8 +3,8 @@ import os.path
 import numpy as np
 import pandas as pd
 
-from berteley.preprocessing import preprocess as berteley_preprocess
-from berteley.models import fit as berteley_fit, _calculate_metrics
+from pysyrev.core.berteley.preprocessing import preprocess as berteley_preprocess
+from pysyrev.core.berteley.models import fit as berteley_fit, _calculate_metrics
 from tqdm import tqdm
 
 
@@ -52,6 +52,26 @@ def topic_modeling(dataset,
 
     # cluster_sel_method = bertopic_model.hdbscan_model.clusterselection_method
 
+    nb_documents = len(documents)
+
+    # UMAP needs strictly more samples than n_components; filter invalid values early.
+    valid_n_components = [nc for nc in umap_n_components if nc < nb_documents]
+    if not valid_n_components:
+        raise ValueError(
+            f"topic_modeling requires more preprocessed documents than the largest "
+            f"n_components value. Got {nb_documents} document(s) after preprocessing "
+            f"but n_components = {sorted(umap_n_components)}. "
+            "Increase your corpus size (e.g. raise review sample_size or use the full "
+            "dataset), or lower n_components."
+        )
+    if len(valid_n_components) < len(umap_n_components):
+        skipped = sorted(set(umap_n_components) - set(valid_n_components))
+        print(
+            f"[topic_modeling] Warning: skipping n_components {skipped} — "
+            f"not enough documents ({nb_documents})."
+        )
+    umap_n_components = valid_n_components
+
     min_topic_size_values = range(min_topic_size_range[0],
                                   min_topic_size_range[1] + 1,
                                   topic_size_step)
@@ -59,9 +79,6 @@ def topic_modeling(dataset,
     min_samples_values = range(min_samples_range[0],
                                min_samples_range[1] + 1,
                                min_samples_step)
-
-    # Nb of documents
-    nb_documents = len(documents)
 
     # UMAP & HDBSCAN parameters
     umap = []

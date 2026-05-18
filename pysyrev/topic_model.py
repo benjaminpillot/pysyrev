@@ -118,11 +118,11 @@ class TopicModel:
 
     doc_dataset:          str
     allow_abbrev:         bool
-    distance:        str
+    distance:             str
     bertopic_model:       BertopicModel
     topic_distribution:   TopicDistribution
     nr_repr_docs:         int
-    export_to:            str
+    export_dir:           str
     n_neighbors:          List[int]
     n_components:         List[int]
     min_topic_size_range: List[int]
@@ -132,7 +132,7 @@ class TopicModel:
     keep_n_results:       int
     ranking_scorer:       str
     purity_scorer:        str
-    run_name:             Union[None, str] = None  # None -> auto-timestamp at run() time
+    run_name:             Union[None, str]
 
     # ---- bridge from configuration --------------------------------------
 
@@ -180,7 +180,7 @@ class TopicModel:
             bertopic_model       = bertopic_model,
             topic_distribution   = topic_distribution,
             nr_repr_docs         = config.bertopic.nr_repr_docs,
-            export_to            = config.export_to,
+            export_dir           = config.export.export_dir,
             n_neighbors          = config.umap.n_neighbors,
             n_components         = config.umap.n_components,
             min_topic_size_range = config.hdbscan.min_topic_size_range,
@@ -190,7 +190,7 @@ class TopicModel:
             keep_n_results       = config.keep_n_results,
             ranking_scorer       = config.coherence_scorer.ranking,
             purity_scorer        = config.coherence_scorer.purity,
-            run_name             = config.run_name,
+            run_name             = config.export.run_name,
         )
 
     # ---- runtime --------------------------------------------------------
@@ -199,20 +199,37 @@ class TopicModel:
         return clean_dataset(dataset, self.allow_abbrev, show_progress)
 
     def _make_run_dir(self) -> Path:
-        """Create a unique subdirectory under `export_to` for this run.
-        If `run_name` is set, use it as-is; otherwise generate a timestamp.
+        """Create a unique subdirectory under ``export_dir`` for this run.
         Raises FileExistsError if the directory already exists, to prevent
         accidental overwrite of a previous run."""
-        name = self.run_name or 'run_' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        run_dir = Path(self.export_to) / name
+        name = self.run_name or datetime.now().strftime('%Y-%m-%dT%H%M%S')
+        run_dir = Path(self.export_dir) / name
         run_dir.mkdir(parents=True, exist_ok=False)
         return run_dir
 
-    def run(self, show_progress=True):
+    def run(self, dataset: pd.DataFrame = None, show_progress=True):
+        """Run the topic modelling pipeline.
+
+        Parameters
+        ----------
+        dataset : pd.DataFrame, optional
+            Reviewed-included dataset. If None, loaded from ``doc_dataset``
+            (set via config or auto-detected by Config.load).
+        """
         run_dir = self._make_run_dir()
 
-        dataset = pd.read_csv(self.doc_dataset)
+        if dataset is None:
+            if not self.doc_dataset:
+                raise ValueError(
+                    "No dataset provided: pass a DataFrame to run() or set "
+                    "doc_dataset in the topic_model section of your config."
+                )
+            dataset = pd.read_csv(self.doc_dataset)
         cleans_docs = self._clean_dataset(dataset, show_progress=show_progress)
+        print(
+            f"[TopicModel] {len(dataset)} documents in dataset → "
+            f"{len(cleans_docs)} survived preprocessing."
+        )
         embeddings = self.bertopic_model.embedding_model.encode(
             cleans_docs, show_progress_bar=show_progress,
         )

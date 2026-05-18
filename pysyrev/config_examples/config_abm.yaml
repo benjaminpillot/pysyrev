@@ -7,16 +7,16 @@ bib:
   # (source: api). Pick one. Switch to `source: api` once your API key
   # is active and update the query below.
   wos:
-    source: file   # 'file' or 'api'
+    source: file   # 'file' or 'api' or leave blank if not to be included
 #    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
-    file: /home/benjamin/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
+    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
     api:
       api_key: #${WOS_API_KEY}                                # resolved from .env
       query: 'ALL = (agent-based (model* OR simulation) AND (energ* OR electric* OR net-zero OR carbon OR renewable OR green OR clean OR transition OR sustainab*)) AND PY=2015-2024'
       cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
-#    source: file   # 'file' or 'api'
-    source: #file
+#    source: file   # 'file' or 'api' or leave blank if not to be included
+    source: file
     file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
     api:
       api_key: #${OPENALEX_API_KEY}
@@ -44,8 +44,9 @@ bib:
 
   # --- Extraction / filtering parameters ---
   extract:
-    doc_type: [article, review]  # leave empty to keep all document types
-  #   year: 1900                   # min publication year (inclusive)
+#    include_doc_type: [article, review]  # leave empty to keep all document types
+    # exclude_doc_type: [peer review]      # types to remove (fuzzy); takes priority over include_doc_type
+    year: 2020                   # min publication year (inclusive)
   #   nb_citations: 0              # min citation count (inclusive)
     language: english              # str, list of str, or null/empty (default: null = keep all languages)
   #   scorer: partial_token_sort_ratio
@@ -61,18 +62,31 @@ bib:
   #   scorer: token_set_ratio
 
   # --- Output ---
-  # Full bibliography dataset, used as input for the review stage.
-#  export_to: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/bib_dataset.csv
-  export_to: /home/benjamin/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/bib_dataset.csv
+  # Each run is stored in its own sub-directory under export_dir.
+  # The review section will automatically pick up the most recent run.
+  export:
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/BIB_RESULTS/
+    run_name:   # leave blank for auto-timestamp, or set e.g. "may_2026_wos_oa"
 
 
-review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
-  # `env:` moved to the root of the file (used to be here).
-  export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/
-  run_name :  # optional — if set, output files are reviewed_dataset_<run_name>.csv
-              #            if empty, output files are reviewed_dataset.csv (default)
+review: # LLM-based review
+  #
+  # doc_dataset: leave blank to auto-detect the most recent bib run in bib.export.export_dir.
+  doc_dataset:
+  # Each review run is stored in its own sub-directory under export_dir.
+  # Downstream sections (bib_network, topic_model) auto-detect the most recent run.
+  export:
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/
+    run_name:   # leave blank for auto-timestamp, or set e.g. "test_run_1"
+    cache_dir:  # leave blank to place inside the run directory
   batch_size : 100
   api_pause : 30  # time.sleep(api_pause) in order to limit nb of API requests per min during reviewing process
+  max_retries : 2              # Max retries on API error, for all reviewers. Overridable per reviewer.
+  max_concurrent_requests : 5  # Max simultaneous API calls for all reviewers.
+                                # Keep low for Anthropic (5-10); null = default (10). 30 is possible for OpenAI.
+                                # Overridable per reviewer.
+  items_per_call : 5           # Articles sent per API call. Higher values reduce the number of calls
+                                # (backstory sent once per batch). Overridable per reviewer.
   text_inputs : [title, abstract, keywords]
 #  input_description : article title/abstract/keywords
   inclusion_criteria : The scope of the study MUST include
@@ -87,8 +101,8 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
                       3. The study belongs to another very distant
                       scientific field, such as geology, zoology,
                       biology, medicine, biomedical studies, etc.
-  sampling : True  # If True, sample at random the dataset (for test purposes)
-  sample_size : 50  # If sampling is True, size of the corresponding random sample to withdraw from the dataset
+  sample_size : 10  # Leave blank if the whole dataset must be processed. Otherwise,
+                    # size of the corresponding random sample to withdraw from the dataset
   decision_rule : majority   # majority, mean
   workflow :    # Workflow consists in as many rounds as defined by the
                 # user. Apart the first round, all rounds apply if and only
@@ -103,14 +117,14 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
   reviewers :
     - name : Reviewer#1
       reasoning : brief  # brief, cot (see LatteReview)
-      model_id : gpt-4o-mini  # Model identifier
+      model_id : claude-haiku-4-5  # Model identifier
       host :
-      provider : litellm  # values : litellm, open-ai, ollama
-                          # See LatteReview doc for providers
-                          # https://github.com/PouriaRouzrokh/LatteReview
+      provider : anthropic  # values : litellm, open-ai, ollama, anthropic
       max_tokens : 200
-      temperature : 0.9  # temperature parameter is not available for all models
+      temperature : 0.7  # temperature parameter is not available for all models
       reasoning_effort :
+      max_retries :                # Leave blank to use the section-level value above.
+      max_concurrent_requests :    # Leave blank to use the section-level value above.
       backstory : Reviewer#1 is a research scientist with strong expertise
                   in Energy System Modelling for addressing issues related
                   to Energy Transition and net-zero scenarios. Reviewer#1
@@ -132,9 +146,9 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
 
     - name : Reviewer#2
       reasoning : brief
-      model_id : gpt-4o-mini
+      model_id : claude-haiku-4-5
       host :
-      provider : litellm
+      provider : anthropic
       max_tokens : 200
       temperature : 0.1
       reasoning_effort :
@@ -159,9 +173,9 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
 
     - name : Reviewer#3
       reasoning :
-      model_id : gpt-4o-mini
+      model_id : claude-sonnet-4-5 # gpt-4o-mini
       host :
-      provider : litellm
+      provider : anthropic
       max_tokens : 200
       temperature :
       reasoning_effort : medium
@@ -181,6 +195,8 @@ review: # LLM-based review (see https://github.com/PouriaRouzrokh/LatteReview)
 
 
 bib_network:
+  doc_dataset:  # leave blank to use the last review run in export_dir
+
   coupling_network:
     use_resolved: true
     use_unresolved: true
@@ -191,14 +207,22 @@ bib_network:
     use_unresolved: true
     min_cocitations: 1
 
+  export:
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/BIB_NETWORK_RESULTS/
+    run_name:   # leave blank for auto-timestamp
+
 
 topic_model:
-  # doc_dataset: filtered dataset produced by the review stage (required).
-  doc_dataset : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/included_articles.csv
-  export_to : /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
-  run_name: # Leave empty for auto-timestamp file name
+  # doc_dataset: leave blank to auto-detect the most recent review run.
+  # Set an explicit path to target a specific run or an external CSV.
+  doc_dataset: ~/Documents/PRO/ABM_LITERATURE_REVIEW/NOTEBOOKS/merged_wos_openalex_with_abstract_no_duplicate.csv
+  export:
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
+    run_name:   # leave blank for auto-timestamp
   # Distance : euclidean, chebyshev ; default = euclidean
   distance: chebyshev
+
+  # ----
 
   # ---- Coherence scorer -----------------------------
   # Dict of 2 scorers among: c_v, c_npmi, u_mass

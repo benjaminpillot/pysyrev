@@ -135,12 +135,13 @@ def check_bib_dataset(dataset):
 
 
 def extract_documents(dataset,
-                      doc_type,
+                      include_doc_type,
                       language,
                       year,
                       nb_citations,
                       scorer,
-                      score_cutoff):
+                      score_cutoff,
+                      exclude_doc_type=None):
     """
     Extract documents matching one or more document types and (optionally) one
     or more languages, filtered by minimum year and citation count.
@@ -149,9 +150,9 @@ def extract_documents(dataset,
     ----------
     dataset : pd.DataFrame
         Must contain `document_type`, `language`, `year`, `cited_by`.
-    doc_type : str or iterable of str
+    include_doc_type : str or iterable of str or None
         Document type queries (fuzzy-matched against unique values of
-        `dataset.document_type`).
+        `dataset.document_type`). None means no inclusion filter.
     language : str or iterable of str or None
         Language queries (fuzzy-matched against unique values of
         `dataset.language`). If None or empty, no language filter is applied.
@@ -163,6 +164,9 @@ def extract_documents(dataset,
         rapidfuzz scorer (e.g. fuzz.WRatio, fuzz.token_set_ratio).
     score_cutoff : int or float
         Minimum score to accept a fuzzy match (0-100).
+    exclude_doc_type : str or iterable of str or None
+        Document type queries to exclude (fuzzy-matched). Applied after
+        inclusion; exclusion takes priority when a type matches both lists.
 
     Returns
     -------
@@ -203,24 +207,29 @@ def extract_documents(dataset,
     # Numeric filters first — they're cheap and usually very selective.
     filtered = dataset[(dataset.year >= year) & (dataset.cited_by >= nb_citations)]
 
-    # Document type filter: fuzzy on unique values, then .isin.
-    doc_type_queries = _as_list(doc_type)
+    mask = pd.Series(True, index=filtered.index)
+
     unique_types = filtered['document_type'].dropna().unique()
-    accepted_types = _resolve_categories(
-        doc_type_queries, unique_types
-    )
-    if not accepted_types:
-        return filtered.iloc[0:0]  # empty result with correct schema
-    mask = filtered['document_type'].isin(accepted_types)
+
+    # Inclusion filter (optional): keep only matched types.
+    if include_doc_type is not None:
+        accepted_types = _resolve_categories(_as_list(include_doc_type), unique_types)
+        if not accepted_types:
+            return filtered.iloc[0:0]  # empty result with correct schema
+        mask &= filtered['document_type'].isin(accepted_types)
+
+    # Exclusion filter (optional): remove matched types; takes priority over inclusion.
+    if exclude_doc_type is not None:
+        rejected_types = _resolve_categories(_as_list(exclude_doc_type), unique_types)
+        if rejected_types:
+            mask &= ~filtered['document_type'].isin(rejected_types)
 
     # Language filter (optional): same trick.
     if language is not None:
         language_queries = _as_list(language)
         if language_queries:
             unique_langs = filtered['language'].dropna().unique()
-            accepted_langs = _resolve_categories(
-                language_queries, unique_langs
-            )
+            accepted_langs = _resolve_categories(language_queries, unique_langs)
             if not accepted_langs:
                 return filtered.iloc[0:0]
             mask &= filtered['language'].isin(accepted_langs)
@@ -228,7 +237,7 @@ def extract_documents(dataset,
     result = filtered[mask]
 
     # Defensive de-duplication: if the user accidentally passed near-synonyms
-    # in doc_type or language, a document could have been selected via two
+    # in include_doc_type or language, a document could have been selected via two
     # different queries. With .isin() this cannot happen anymore (a row is
     # either in or out), but we keep a drop_duplicates on the full row just
     # in case upstream produced duplicates.

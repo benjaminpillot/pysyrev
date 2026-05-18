@@ -84,17 +84,18 @@ class BibDataset:
 
         return self
 
-    def extract_documents(self, document_type, year=1900,
+    def extract_documents(self, include_document_type=None, year=1900,
                           nb_citations=0,
                           language="english",
                           scorer=fuzz.partial_token_sort_ratio,
-                          score_cutoff=90):
+                          score_cutoff=90,
+                          exclude_document_type=None):
         """ Create sub bib dataset through metadata selection
 
         Parameters
         ----------
-        document_type: str or list[str]
-            list of valid document types (article, review, etc.)
+        include_document_type: str or list[str] or None
+            document types to include (fuzzy-matched); None keeps all
         year: int or float
             min publication year
         nb_citations: int or float
@@ -103,6 +104,8 @@ class BibDataset:
             None means no language filter (keep all)
         scorer: callable
         score_cutoff: int
+        exclude_document_type: str or list[str] or None
+            document types to exclude (fuzzy-matched); takes priority over inclusion
 
         Returns
         -------
@@ -110,12 +113,13 @@ class BibDataset:
         """
         return self._propagate_to(
             self.__class__(bib_dataset=extract_documents(self._bib_dataset,
-                                                         document_type,
+                                                         include_document_type,
                                                          language,
                                                          year,
                                                          nb_citations,
                                                          scorer,
-                                                         score_cutoff))
+                                                         score_cutoff,
+                                                         exclude_doc_type=exclude_document_type))
         )
 
     def flag_shared_unresolved_references(self):
@@ -304,7 +308,7 @@ class BibDataset:
     def from_config(cls, config: BibConfig) -> 'BibDataset':
         """Build a BibDataset from all sources declared in a BibConfig.
 
-        Pipeline: load sources → merge → clean → extract (if doc_type set)
+        Pipeline: load sources → merge → clean → extract (if include_doc_type set)
         → resolve references (if enabled).  All parameters are driven by the
         config; see CleanConfig, ExtractConfig, MergeConfig, and
         ResolveReferencesConfig for defaults.
@@ -375,18 +379,19 @@ class BibDataset:
                 merged = merged.flag_shared_unresolved_references()
 
         cfg_extract = config.extract
-        if cfg_extract.doc_type:
-            merged = merged.extract_documents(
-                cfg_extract.doc_type,
-                year         = cfg_extract.year,
-                nb_citations = cfg_extract.nb_citations,
-                language     = cfg_extract.language,
-                scorer       = _SCORER_MAP[cfg_extract.scorer],
-                score_cutoff = cfg_extract.score_cutoff,
-            )
+        merged = merged.extract_documents(
+            cfg_extract.include_doc_type,
+            year                  = cfg_extract.year,
+            nb_citations          = cfg_extract.nb_citations,
+            language              = cfg_extract.language,
+            scorer                = _SCORER_MAP[cfg_extract.scorer],
+            score_cutoff          = cfg_extract.score_cutoff,
+            exclude_document_type = cfg_extract.exclude_doc_type,
+        )
 
-        if config.export_to:
-            merged.to_csv(config.export_to)
+        if config.export:
+            config.export.resolve()
+            merged.to_csv(config.export.dataset)
 
         return merged
 
