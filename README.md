@@ -6,6 +6,7 @@
 
 [![tests](https://github.com/benjaminpillot/pysyrev/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpillot/pysyrev/actions/workflows/tests.yml)
 [![docs](https://readthedocs.org/projects/pysyrev/badge/?version=latest)](https://pysyrev.readthedocs.io/en/latest/)
+[![PyPI](https://img.shields.io/pypi/v/pysyrev)](https://pypi.org/project/pysyrev/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![python](https://img.shields.io/badge/python-≥3.10-blue)](https://www.python.org/)
 
@@ -44,22 +45,24 @@ All sections are optional — only the stages declared in the config file are ex
 
 > **Prerequisite:** Python ≥ 3.10.
 
+### From PyPI
+
 ```bash
-# 1. Clone the repository
-git clone <repo-url>
-cd pysyrev
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Install pysyrev itself (editable mode recommended for development)
-pip install -e .
+pip install pysyrev
 ```
 
-To enable Plotly figure embedding in PDF reports, install the optional extras:
+To enable Plotly figure embedding in PDF reports:
 
 ```bash
-pip install -e ".[plotly]"
+pip install "pysyrev[plotly]"
+```
+
+### From source
+
+```bash
+git clone <repo-url>
+cd pysyrev
+pip install -e .
 ```
 
 ## Documentation
