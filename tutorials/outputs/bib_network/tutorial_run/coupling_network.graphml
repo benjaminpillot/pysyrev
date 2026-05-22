@@ -1,0 +1,477 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="d7" for="edge" attr.name="shared_refs" attr.type="string" />
+  <key id="d6" for="edge" attr.name="weight" attr.type="long" />
+  <key id="d5" for="node" attr.name="doi" attr.type="double" />
+  <key id="d4" for="node" attr.name="journal" attr.type="double" />
+  <key id="d3" for="node" attr.name="doi" attr.type="string" />
+  <key id="d2" for="node" attr.name="journal" attr.type="string" />
+  <key id="d1" for="node" attr.name="year" attr.type="double" />
+  <key id="d0" for="node" attr.name="title" attr.type="string" />
+  <graph edgedefault="undirected">
+    <node id="WOS:001392012500001">
+      <data key="d0">Stories, simulations and narratives: Collaboratively exploring food   security and agricultural innovation in sub-Saharan Africa</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">AGRICULTURAL SYSTEMS</data>
+      <data key="d3">10.1016/j.agsy.2024.104241</data>
+    </node>
+    <node id="WOS:001030373500003">
+      <data key="d0">Analyzing the Industry Structure and Dynamics of Commodity Exchange   between Russia, China, the USA and the EU under Trade Restrictions</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">ECONOMIC AND SOCIAL CHANGES-FACTS TRENDS FORECAST</data>
+      <data key="d3">10.15838/esc.2023.3.87.3</data>
+    </node>
+    <node id="WOS:000995960300001">
+      <data key="d0">On the applicability of various levels of detail for occupant behavior   representation and modeling in building performance simulation</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">BUILDING SIMULATION</data>
+      <data key="d3">10.1007/s12273-023-1034-0</data>
+    </node>
+    <node id="WOS:000842128400001">
+      <data key="d0">Allocating synthetic population to a finer spatial scale: An integer   quadratic programming formulation</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">ENVIRONMENT AND PLANNING B-URBAN ANALYTICS AND CITY SCIENCE</data>
+      <data key="d3">10.1177/23998083221120019</data>
+    </node>
+    <node id="WOS:001714713100001">
+      <data key="d0">The importance of exploration: model predictions for ecosystem services   and forager fitness</data>
+      <data key="d1">2026.0</data>
+      <data key="d2">THEORETICAL ECOLOGY</data>
+      <data key="d3">10.1007/s12080-026-00635-0</data>
+    </node>
+    <node id="WOS:001266865200001">
+      <data key="d0">Complex adaptive systems-based framework for modeling the health impacts   of climate change</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">JOURNAL OF CLIMATE CHANGE AND HEALTH</data>
+      <data key="d3">10.1016/j.joclim.2023.100292</data>
+    </node>
+    <node id="WOS:001681438000001">
+      <data key="d0">Logistics for Building Circular, Biobased, and Modular: Environmental   Impacts in Amsterdam</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">JOURNAL OF CIRCULAR ECONOMY</data>
+      <data key="d3">10.55845/XJPF2170</data>
+    </node>
+    <node id="WOS:001277009300001">
+      <data key="d0">Multi-Agent Reinforcement Learning Optimization Framework for On-Grid   Electric Vehicle Charging from Base Transceiver Stations Using Renewable   Energy and Storage Systems</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">ENERGIES</data>
+      <data key="d3">10.3390/en17143592</data>
+    </node>
+    <node id="WOS:000956311300001">
+      <data key="d0">The circular economy mitigates the material rebound due to investments   in renewable energy</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">JOURNAL OF CLEANER PRODUCTION</data>
+      <data key="d3">10.1016/j.jclepro.2023.136753</data>
+    </node>
+    <node id="WOS:001094843100001">
+      <data key="d0">Assessment methodology for dynamic occupancy adaptive HVAC control in   subway stations integrating passenger flow simulation into building   energy modeling</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">ENERGY AND BUILDINGS</data>
+      <data key="d3">10.1016/j.enbuild.2023.113667</data>
+    </node>
+    <node id="WOS:001116583900001">
+      <data key="d0">Dynamics of Fibril Collagen Remodeling by Tumor Cells: A Model of   Tumor-Associated Collagen Signatures</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">CELLS</data>
+      <data key="d3">10.3390/cells12232688</data>
+    </node>
+    <node id="WOS:001460923600011">
+      <data key="d0">Multi-Method Simulation and Optimisation for Maximising Benefits in   Renewable Energy Communities: A Real-World Case Study from Italy</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">BALTIC JOURNAL OF MODERN COMPUTING</data>
+      <data key="d3">10.22364/bjmc.2025.13.1.11</data>
+    </node>
+    <node id="WOS:000998834900001">
+      <data key="d0">Effects of individual strategies for resource access on collaboratively   maintained irrigation infrastructure</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">SYSTEMS ENGINEERING</data>
+      <data key="d3">10.1002/sys.21701</data>
+    </node>
+    <node id="WOS:001210032200001">
+      <data key="d0">Conformity and Mass Media Influence in the Sznajd Model on Regular   Lattices</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">ENTROPY</data>
+      <data key="d3">10.3390/e26040307</data>
+    </node>
+    <node id="WOS:001632314900001">
+      <data key="d0">The Cultural Multiplier of Climate Policy</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">ENVIRONMENTAL \&amp; RESOURCE ECONOMICS</data>
+      <data key="d3">10.1007/s10640-025-01048-z</data>
+    </node>
+    <node id="WOS:001678339200002">
+      <data key="d0">A hybrid agent based on reinforcement learning and fuzzy computing using   q-rung orthopair fuzzy information for electricity purchasing   negotiation in smart grids</data>
+      <data key="d1">2026.0</data>
+      <data key="d2">APPLIED SOFT COMPUTING</data>
+      <data key="d3">10.1016/j.asoc.2026.114683</data>
+    </node>
+    <node id="WOS:001637731400001">
+      <data key="d0">Why more social interactions lead to more polarization in societies</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">PROCEEDINGS OF THE NATIONAL ACADEMY OF SCIENCES OF THE UNITED STATES OF   AMERICA</data>
+      <data key="d3">10.1073/pnas.2517530122</data>
+    </node>
+    <node id="WOS:001184368000001">
+      <data key="d0">The comparison of land cover change and erosion-deposition patterns   during the Early Bronze Age-I (ca. 5100-4700 cal. BP) in Eastern and   Southwestern Anatolia</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">JOURNAL OF ARCHAEOLOGICAL SCIENCE-REPORTS</data>
+      <data key="d3">10.1016/j.jasrep.2024.104435</data>
+    </node>
+    <node id="WOS:001359635600001">
+      <data key="d0">Life history traits of the target pest and transmission routes of the   biocide are critical for the success of the boosted Sterile Insect   Technique</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">CURRENT RESEARCH IN INSECT SCIENCE</data>
+      <data key="d3">10.1016/j.cris.2024.100101</data>
+    </node>
+    <node id="WOS:001663864700001">
+      <data key="d0">Design of polymer boron crosslinking agents based on scale effects and   study of the crosslinking mechanism of guar gum at ultra-low   concentrations</data>
+      <data key="d1">2026.0</data>
+      <data key="d2">INTERNATIONAL JOURNAL OF BIOLOGICAL MACROMOLECULES</data>
+      <data key="d3">10.1016/j.ijbiomac.2026.150086</data>
+    </node>
+    <node id="WOS:001333684900001">
+      <data key="d0">Evaluating the sensitivity and robustness of occupancy models for   building energy simulation during design</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">BUILDING AND ENVIRONMENT</data>
+      <data key="d3">10.1016/j.buildenv.2024.111739</data>
+    </node>
+    <node id="WOS:000924883100001">
+      <data key="d0">Enhancing the predictability of ecology in a changing world: A call for   an organism-based approach</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">FRONTIERS IN APPLIED MATHEMATICS AND STATISTICS</data>
+      <data key="d3">10.3389/fams.2023.1046185</data>
+    </node>
+    <node id="WOS:001014380000001">
+      <data key="d0">Modeling the effect of acquired resistance on cancer therapy outcomes</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">COMPUTERS IN BIOLOGY AND MEDICINE</data>
+      <data key="d3">10.1016/j.compbiomed.2023.107035</data>
+    </node>
+    <node id="WOS:001289249000007">
+      <data key="d0">Modeling the Policy of Tax Incentives for Sustainable Development of the   Region: The Case of the Far Eastern Federal District of Russia</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">JOURNAL OF TAX REFORM</data>
+      <data key="d3">10.15826/jtr.2024.10.2.171</data>
+    </node>
+    <node id="WOS:001203351200001">
+      <data key="d0">Complex system analysis of the implications of hydrogen fuel cell trucks   in China's road freight transportation</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">INTERNATIONAL JOURNAL OF HYDROGEN ENERGY</data>
+      <data key="d3">10.1016/j.ijhydene.2024.02.231</data>
+    </node>
+    <node id="WOS:001146005600001">
+      <data key="d0">The diffusion path of distributed photovoltaic power generation   technology driven by individual behavior</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">ENERGY REPORTS</data>
+      <data key="d3">10.1016/j.egyr.2023.12.009</data>
+    </node>
+    <node id="WOS:001097887000015">
+      <data key="d0">China's sustainable carbon neutral supply chain management: a reference   to global emission reduction</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">ENVIRONMENTAL SCIENCE AND POLLUTION RESEARCH</data>
+      <data key="d3">10.1007/s11356-023-30551-3</data>
+    </node>
+    <node id="WOS:001182050700001">
+      <data key="d0">Smart city solutions: Comparative analysis of waste management models in   IoT-enabled environments using multiagent simulation</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">SUSTAINABLE CITIES AND SOCIETY</data>
+      <data key="d3">10.1016/j.scs.2024.105247</data>
+    </node>
+    <node id="WOS:001332970400001">
+      <data key="d0">Evaluation of the Impacts of On-Demand Bus Services Using Traffic   Simulation</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">SUSTAINABILITY</data>
+      <data key="d3">10.3390/su16198477</data>
+    </node>
+    <node id="https://openalex.org/W4319027837">
+      <data key="d0">Evaluating Peer-to-Peer Electricity Markets across the U.S. Using an Agent-Based Modeling Approach</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Advances in Environmental and Engineering Research</data>
+      <data key="d3">https://doi.org/10.21926/aeer.2301017</data>
+    </node>
+    <node id="https://openalex.org/W4394932397">
+      <data key="d0">Spatial Agent-Based Modelling and Simulation to Evaluate on Public Policies for Energy Transition</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">International Sustainable Energy Conference - Proceedings</data>
+      <data key="d3">https://doi.org/10.52825/isec.v1i.1170</data>
+    </node>
+    <node id="https://openalex.org/W4402746902">
+      <data key="d0">Implementation of Green Behavior in Educational Building Through Human-based Retrofits Based on Agent-Based Modeling (ABM)</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">IOP Conference Series Earth and Environmental Science</data>
+      <data key="d3">https://doi.org/10.1088/1755-1315/1395/1/012023</data>
+    </node>
+    <node id="https://openalex.org/W4390203930">
+      <data key="d0">Agent-based Modeling of Sustainable Forestry Activities</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Artificial Societies</data>
+      <data key="d3">https://doi.org/10.18254/s207751800028426-7</data>
+    </node>
+    <node id="https://openalex.org/W4413118977">
+      <data key="d0">Agentic AI for Sustainable Development: Leveraging Large Language Model-Enhanced Agent-Based Modeling for Complex Policy Strategies</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Emerging Media</data>
+      <data key="d3">https://doi.org/10.1177/27523543251365678</data>
+    </node>
+    <node id="https://openalex.org/W4396659574">
+      <data key="d0">Identifying the influence of land logistic driver cognitive energy impact on supply chain performance through agent-based simulation</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">Eastern-European Journal of Enterprise Technologies</data>
+      <data key="d3">https://doi.org/10.15587/1729-4061.2024.302286</data>
+    </node>
+    <node id="https://openalex.org/W4411123207">
+      <data key="d0">A Framework of Hybrid System Dynamics and Agent Based Model With Cooperative Game Theory for Sustainable Coffee Supply Chain</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Journal of Applied Engineering and Technological Science (JAETS)</data>
+      <data key="d3">https://doi.org/10.37385/jaets.v6i2.7007</data>
+    </node>
+    <node id="https://openalex.org/W4376648348">
+      <data key="d0">Agent Based Modeling for Sustainable Urban Farming Incorporating Renewable Solar Energy and Impact on Food Security</data>
+      <data key="d1">2023.0</data>
+      <data key="d4">nan</data>
+      <data key="d3">https://doi.org/10.46254/an12.20220695</data>
+    </node>
+    <node id="https://openalex.org/W4408200794">
+      <data key="d0">Agent-Based Modelling in the Operation of a Farm Equipped with Renewable Energy Sources and Electric Motors</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Materials Science and Welding Technologies</data>
+      <data key="d3">https://doi.org/10.32730/mswt.2024.68.6.4</data>
+    </node>
+    <node id="https://openalex.org/W4406657001">
+      <data key="d0">City information models for optimal EV charging and energy-resilient renaissance</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Nexus</data>
+      <data key="d3">https://doi.org/10.1016/j.ynexs.2025.100056</data>
+    </node>
+    <node id="https://openalex.org/W4366087575">
+      <data key="d0">FAME-Core: An open Framework for distributedAgent-based Modelling of Energy systems</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">The Journal of Open Source Software</data>
+      <data key="d3">https://doi.org/10.21105/joss.05087</data>
+    </node>
+    <node id="https://openalex.org/W4383682000">
+      <data key="d0">Lighting energy load prediction framework using agent-based simulation and artificial neural network models</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Computing in construction</data>
+      <data key="d3">https://doi.org/10.35490/ec3.2023.163</data>
+    </node>
+    <node id="https://openalex.org/W4408515953">
+      <data key="d0">CanAdopt—coupling agent-based and energy systems models for decarbonisation pathway analysis</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Environmental Research Energy</data>
+      <data key="d3">https://doi.org/10.1088/2753-3751/adc136</data>
+    </node>
+    <node id="https://openalex.org/W4413425374">
+      <data key="d0">Modeling Sustainability: Insights from an Agent-Based Approach to Sustainable Urban Community Development</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Socioeconomic Analytics</data>
+      <data key="d3">https://doi.org/10.29327/2565368.3.1-3</data>
+    </node>
+    <node id="https://openalex.org/W4416255323">
+      <data key="d0">Simulating biomass chains for agricultural and bioeconomy transitions: The agent-based model, BioChains</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Agritrop (Cirad)</data>
+      <data key="d5">nan</data>
+    </node>
+    <node id="https://openalex.org/W10067045">
+      <data key="d0">Agent Based Modeling of Electronic Markets To Analyze the Sustainability of Mutual Cooperation</data>
+      <data key="d1">2023.0</data>
+      <data key="d4">nan</data>
+      <data key="d3">https://doi.org/10.7275/299855</data>
+    </node>
+    <node id="https://openalex.org/W4411815528">
+      <data key="d0">Agent-Based Simulation of Integrated Process and Energy Supply Chains: A Case Study on Biofuel Production</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Systems and Control Transactions</data>
+      <data key="d3">https://doi.org/10.69997/sct.101731</data>
+    </node>
+    <node id="https://openalex.org/W4385662853">
+      <data key="d0">An agent-based model for sustainable agricultural development in the Upper Mekong Delta of Vietnam</data>
+      <data key="d1">2023.0</data>
+      <data key="d4">nan</data>
+      <data key="d3">https://doi.org/10.36334/modsim.2023.le570</data>
+    </node>
+    <node id="https://openalex.org/W4390048379">
+      <data key="d0">Green Urban Scenarios: A Framework for Digital Twin Representation and Simulation for Urban Forests and Their Impact Analysis</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Arboriculture &amp; Urban Forestry</data>
+      <data key="d3">https://doi.org/10.48044/jauf.2023.029</data>
+    </node>
+    <node id="https://openalex.org/W4415172581">
+      <data key="d0">Green choices in rural settings: analyzing community adoption of eco-friendly shopping alternatives through agent-based modeling</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Frontiers in Social Psychology</data>
+      <data key="d3">https://doi.org/10.3389/frsps.2025.1536958</data>
+    </node>
+    <node id="https://openalex.org/W4382237148">
+      <data key="d0">A dynamical system model to analyze the low carbon transition in energy-economic system</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Journal of Economy and Technology</data>
+      <data key="d3">https://doi.org/10.1016/j.ject.2023.04.001</data>
+    </node>
+    <node id="https://openalex.org/W4407652692">
+      <data key="d0">Optimizing load frequency control in isolated island city microgrids: a deep graph reinforcement learning approach with data enhancement across extensive scenarios</data>
+      <data key="d1">2025.0</data>
+      <data key="d2">Frontiers in Energy Research</data>
+      <data key="d3">https://doi.org/10.3389/fenrg.2024.1384995</data>
+    </node>
+    <node id="https://openalex.org/W4320729124">
+      <data key="d0">Comparing Control Intervention Scenarios for Raccoon Rabies in Southern Ontario between 2015 and 2025</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Viruses</data>
+      <data key="d3">https://doi.org/10.3390/v15020528</data>
+    </node>
+    <node id="https://openalex.org/W4390539445">
+      <data key="d0">Exploring the Use of Artificial Intelligence in Agent-Based Modeling Applications: A Bibliometric Study</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">Algorithms</data>
+      <data key="d3">https://doi.org/10.3390/a17010021</data>
+    </node>
+    <node id="https://openalex.org/W4318570551">
+      <data key="d0">An Intelligent ABM-based Framework for Developing Pandemic-Resilient Urban Spaces in Post-COVID Smart Cities</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Procedia Computer Science</data>
+      <data key="d3">https://doi.org/10.1016/j.procs.2023.01.205</data>
+    </node>
+    <node id="https://openalex.org/W4404704944">
+      <data key="d0">Decentralized Energy Systems and the Circular Economy: Business Models for Sustainable Energy Transitions</data>
+      <data key="d1">2024.0</data>
+      <data key="d2">Advanced International Journal of Multidisciplinary Research</data>
+      <data key="d3">https://doi.org/10.62127/aijmr.2024.v02i06.1115</data>
+    </node>
+    <node id="https://openalex.org/W4396697924">
+      <data key="d0">Modeling Tax Incentives for Sustainable Development of Territories</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Bulletin of Baikal State University</data>
+      <data key="d3">https://doi.org/10.17150/2500-2759.2023.33</data>
+    </node>
+    <node id="https://openalex.org/W4388562692">
+      <data key="d0">Emotions and courtship help bonded pairs cooperate, but emotional agents are vulnerable to deceit</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Proceedings of the National Academy of Sciences</data>
+      <data key="d3">https://doi.org/10.1073/pnas.2308911120</data>
+    </node>
+    <node id="https://openalex.org/W4388428546">
+      <data key="d0">The Impact of Consolidating On-Demand Food Delivery on Sustainability: A Simulation Study</data>
+      <data key="d1">2023.0</data>
+      <data key="d2">Logi</data>
+      <data key="d3">https://doi.org/10.2478/logi-2023-0026</data>
+    </node>
+    <edge source="WOS:000995960300001" target="WOS:001333684900001">
+      <data key="d6">8</data>
+      <data key="d7">R:WOS:000397363000005; R:WOS:000416556800003; R:WOS:000797777600006; U:Dong B, 2022, SCI DATA, V9, DOI 10.1038/s41597-022-01475-3.; U:Licina VF, 2018, BUILD ENVIRON, V142, P502, DOI 10.1016/j.buildenv.2018.06.022.; U:Mandavi A, 2016, ENERG BUILDINGS, V117, P313, DOI 10.1016/j.enbuild.2015.09.065.; U:Tahmasebi F, 2017, J BUILD PERFORM SIMU, V10, P625, DOI 10.1080/19401493.2015.1117528.; U:Yan D, 2015, ENERG BUILDINGS, V107, P264, DOI 10.1016/j.enbuild.2015.08.032.</data>
+    </edge>
+    <edge source="WOS:000995960300001" target="WOS:001714713100001">
+      <data key="d6">1</data>
+      <data key="d7">U:Grimm V, 2010, ECOL MODEL, V221, P2760, DOI 10.1016/j.ecolmodel.2010.08.019.</data>
+    </edge>
+    <edge source="WOS:000995960300001" target="WOS:001359635600001">
+      <data key="d6">1</data>
+      <data key="d7">U:Grimm V, 2010, ECOL MODEL, V221, P2760, DOI 10.1016/j.ecolmodel.2010.08.019.</data>
+    </edge>
+    <edge source="WOS:000995960300001" target="WOS:000924883100001">
+      <data key="d6">1</data>
+      <data key="d7">U:Grimm V, 2010, ECOL MODEL, V221, P2760, DOI 10.1016/j.ecolmodel.2010.08.019.</data>
+    </edge>
+    <edge source="WOS:001714713100001" target="WOS:001359635600001">
+      <data key="d6">2</data>
+      <data key="d7">U:Grimm V, 2006, ECOL MODEL, V198, P115, DOI 10.1016/j.ecolmodel.2006.04.023.; U:Grimm V, 2010, ECOL MODEL, V221, P2760, DOI 10.1016/j.ecolmodel.2010.08.019.</data>
+    </edge>
+    <edge source="WOS:001714713100001" target="WOS:000924883100001">
+      <data key="d6">2</data>
+      <data key="d7">U:Grimm V, 2006, ECOL MODEL, V198, P115, DOI 10.1016/j.ecolmodel.2006.04.023.; U:Grimm V, 2010, ECOL MODEL, V221, P2760, DOI 10.1016/j.ecolmodel.2010.08.019.</data>
+    </edge>
+    <edge source="WOS:001714713100001" target="WOS:000956311300001">
+      <data key="d6">1</data>
+      <data key="d7">U:Grimm V, 2006, ECOL MODEL, V198, P115, DOI 10.1016/j.ecolmodel.2006.04.023.</data>
+    </edge>
+    <edge source="WOS:001681438000001" target="WOS:000956311300001">
+      <data key="d6">2</data>
+      <data key="d7">R:WOS:000668484000007; U:Kirchherr J, 2017, RESOUR CONSERV RECY, V127, P221, DOI [10.33002/nr2581.6853.070207, 10.1016/j.resconrec.2017.09.005].</data>
+    </edge>
+    <edge source="WOS:000956311300001" target="WOS:001359635600001">
+      <data key="d6">1</data>
+      <data key="d7">U:Grimm V, 2006, ECOL MODEL, V198, P115, DOI 10.1016/j.ecolmodel.2006.04.023.</data>
+    </edge>
+    <edge source="WOS:000956311300001" target="WOS:000924883100001">
+      <data key="d6">1</data>
+      <data key="d7">U:Grimm V, 2006, ECOL MODEL, V198, P115, DOI 10.1016/j.ecolmodel.2006.04.023.</data>
+    </edge>
+    <edge source="WOS:001094843100001" target="WOS:001097887000015">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:001071462900001</data>
+    </edge>
+    <edge source="WOS:001210032200001" target="WOS:001637731400001">
+      <data key="d6">1</data>
+      <data key="d7">U:Deffuant G, 2000, APPLICATIONS OF SIMULATION TO SOCIAL SCIENCES, P87, DOI 10.1142/S0219525900000078.</data>
+    </edge>
+    <edge source="WOS:001632314900001" target="WOS:001637731400001">
+      <data key="d6">1</data>
+      <data key="d7">U:Watts DJ, 1998, NATURE, V393, P440, DOI 10.1038/30918.</data>
+    </edge>
+    <edge source="WOS:001678339200002" target="WOS:001097887000015">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000829110900004</data>
+    </edge>
+    <edge source="WOS:001637731400001" target="WOS:001146005600001">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000475860700005</data>
+    </edge>
+    <edge source="WOS:001359635600001" target="WOS:000924883100001">
+      <data key="d6">2</data>
+      <data key="d7">U:Grimm V, 2006, ECOL MODEL, V198, P115, DOI 10.1016/j.ecolmodel.2006.04.023.; U:Grimm V, 2010, ECOL MODEL, V221, P2760, DOI 10.1016/j.ecolmodel.2010.08.019.</data>
+    </edge>
+    <edge source="WOS:001289249000007" target="WOS:001182050700001">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000878511600001</data>
+    </edge>
+    <edge source="WOS:001203351200001" target="WOS:001097887000015">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000876937700007</data>
+    </edge>
+    <edge source="WOS:001332970400001" target="https://openalex.org/W4319027837">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000426865600127</data>
+    </edge>
+    <edge source="https://openalex.org/W4319027837" target="https://openalex.org/W4406657001">
+      <data key="d6">1</data>
+      <data key="d7">U:https://openalex.org/W2793859162</data>
+    </edge>
+    <edge source="https://openalex.org/W4319027837" target="https://openalex.org/W4366087575">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000370456000015</data>
+    </edge>
+    <edge source="https://openalex.org/W4319027837" target="https://openalex.org/W4394932397">
+      <data key="d6">1</data>
+      <data key="d7">R:WOS:000460444100006</data>
+    </edge>
+    <edge source="https://openalex.org/W4394932397" target="https://openalex.org/W4408515953">
+      <data key="d6">1</data>
+      <data key="d7">U:https://openalex.org/W2099697766</data>
+    </edge>
+    <edge source="https://openalex.org/W4394932397" target="https://openalex.org/W4415172581">
+      <data key="d6">1</data>
+      <data key="d7">U:https://openalex.org/W2099697766</data>
+    </edge>
+    <edge source="https://openalex.org/W4390203930" target="https://openalex.org/W4390048379">
+      <data key="d6">1</data>
+      <data key="d7">U:https://openalex.org/W2889011686</data>
+    </edge>
+    <edge source="https://openalex.org/W4366087575" target="https://openalex.org/W4408515953">
+      <data key="d6">3</data>
+      <data key="d7">R:WOS:000559120900001; U:https://openalex.org/W2327966733; U:https://openalex.org/W4366087509</data>
+    </edge>
+    <edge source="https://openalex.org/W4408515953" target="https://openalex.org/W4415172581">
+      <data key="d6">4</data>
+      <data key="d7">R:WOS:000356741300014; R:WOS:000863346100001; U:https://openalex.org/W1995834875; U:https://openalex.org/W2099697766</data>
+    </edge>
+    <edge source="https://openalex.org/W10067045" target="https://openalex.org/W4388562692">
+      <data key="d6">1</data>
+      <data key="d7">U:https://openalex.org/W2062663664</data>
+    </edge>
+    <edge source="https://openalex.org/W4415172581" target="https://openalex.org/W4390539445">
+      <data key="d6">1</data>
+      <data key="d7">U:https://openalex.org/W2150704630</data>
+    </edge>
+  </graph>
+</graphml>
