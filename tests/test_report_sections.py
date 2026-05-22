@@ -62,7 +62,7 @@ def _subsections(section):
 class TestBuildTopicsSection:
 
     def _run(self, topic_info, sections_cfg=None, topic_labels=None, nb_topics=3, n=1):
-        cfg = sections_cfg or TopicsSectionConfig(nr_repr_docs=3)
+        cfg = sections_cfg or TopicsSectionConfig(n_repr_docs_per_topic=3)
 
         class _FakeSections:
             topics = cfg
@@ -103,9 +103,9 @@ class TestBuildTopicsSection:
         sub_titles = [s["title"] for s in _subsections(sec)]
         assert any("Agent-Based Models" in t for t in sub_titles)
 
-    def test_nr_repr_docs_limits_table_rows(self, tiny_topic_info):
-        # nr_repr_docs=2 → each per-topic doc table has at most 2 rows
-        sec = self._run(tiny_topic_info, sections_cfg=TopicsSectionConfig(nr_repr_docs=2))
+    def test_n_repr_docs_per_topic_limits_table_rows(self, tiny_topic_info):
+        # n_repr_docs_per_topic=2 → each per-topic doc table has at most 2 rows
+        sec = self._run(tiny_topic_info, sections_cfg=TopicsSectionConfig(n_repr_docs_per_topic=2))
         for sub in _subsections(sec):
             doc_tables = _blocks_of_type(sub, "table")
             for t in doc_tables:
@@ -250,13 +250,13 @@ class TestBuildTemporalSection:
 class TestBuildTopicCharacteristicsSection:
 
     def test_returns_section_dict(self, tiny_bertopic_results):
-        cfg = TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5)
+        cfg = TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5)
         sec = _build_topic_characteristics_section(tiny_bertopic_results, None, cfg, 4)
         assert isinstance(sec, dict) and "blocks" in sec
 
     def test_always_has_docs_subsection(self, tiny_bertopic_results):
         br = tiny_bertopic_results.drop(columns=["cited_by"])
-        cfg = TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5)
+        cfg = TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5)
         sec = _build_topic_characteristics_section(br, None, cfg, 4)
         sub_titles = [s["title"].lower() for s in _subsections(sec)]
         assert any("doc" in t for t in sub_titles)
@@ -264,19 +264,19 @@ class TestBuildTopicCharacteristicsSection:
     def test_citation_subsections_present_when_cited_by_available(
         self, tiny_bertopic_results
     ):
-        cfg = TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5)
+        cfg = TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5)
         sec = _build_topic_characteristics_section(tiny_bertopic_results, None, cfg, 4)
         assert len(_subsections(sec)) >= 3   # docs + citation + top-N global
 
     def test_citation_subsections_absent_without_cited_by(self, tiny_bertopic_results):
         br = tiny_bertopic_results.drop(columns=["cited_by"])
-        cfg = TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5)
+        cfg = TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5)
         sec = _build_topic_characteristics_section(br, None, cfg, 4)
         assert len(_subsections(sec)) == 1   # docs only
 
     def test_uses_topic_labels_in_bar_charts(self, tiny_bertopic_results):
         labels = {0: "TopicA", 1: "TopicB", 2: "TopicC"}
-        cfg = TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5)
+        cfg = TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5)
         sec = _build_topic_characteristics_section(tiny_bertopic_results, labels, cfg, 4)
         # First subsection figure x-axis should use label names
         sub = _subsections(sec)[0]

@@ -176,7 +176,7 @@ def report_cfg():
                 variants=["absolute", "cumulative", "normalized", "weighted"]
             ),
             topic_characteristics=TopicCharacteristicsConfig(
-                top_n_per_topic=3, top_n_global=10
+                n_top_cited_per_topic=3, n_top_cited_global=10
             ),
             topic_similarity=TopicSimilarityConfig(clustering=True, dendrogram=True),
             paper_selection=PaperSelectionConfig(
