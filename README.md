@@ -58,7 +58,8 @@ To enable Plotly figure embedding in PDF reports, install the optional extras:
 pip install -e ".[plotly]"
 ```
 
----
+## Documentation
+Documentation is available from [here](https://pysyrev.readthedocs.io/en/latest/)
 
 ## Quick start
 
