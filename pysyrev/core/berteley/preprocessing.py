@@ -110,14 +110,19 @@ def expand_contractions(doc: str) -> str:
 # =============================================================================
 
 def preprocess(docs: List[str], allow_abbrev: bool = True,
-               show_progress: bool = False) -> List[str]:
+               show_progress: bool = False,
+               return_indices: bool = False):
     """Run the full preprocessing pipeline on a list of raw documents.
 
     Steps: HTML stripping → contraction expansion → lowercasing →
     punctuation removal → whitespace normalization → lemmatization →
     stopword removal → short-document filtering (≤ 10 tokens dropped).
+
+    When return_indices=True, returns (cleaned_docs, surviving_indices) where
+    surviving_indices maps each output doc back to its position in docs.
     """
     cleaned = docs.copy()
+    indices = list(range(len(docs)))
 
     steps = [
         ('Removing HTML tags',        remove_html,                                   None),
@@ -137,6 +142,10 @@ def preprocess(docs: List[str], allow_abbrev: bool = True,
         if func is not None:
             cleaned = [func(d) for d in cleaned]
         if filt is not None:
-            cleaned = [d for d in cleaned if filt(d)]
+            surviving = [(i, d) for i, d in zip(indices, cleaned) if filt(d)]
+            indices  = [i for i, _ in surviving]
+            cleaned  = [d for _, d in surviving]
 
+    if return_indices:
+        return cleaned, indices
     return cleaned

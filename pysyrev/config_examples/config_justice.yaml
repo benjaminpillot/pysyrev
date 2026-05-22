@@ -1,6 +1,6 @@
 # Path to the .env file. Loaded at the very top of Config.load, so any
 # ${VAR} reference further down in this file is resolved against it.
-env: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/.env
+env: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/.env
 
 bib:
   # WoS source: either a local file (source: file) or the Expanded API
@@ -9,14 +9,14 @@ bib:
   wos:
     source: file   # 'file' or 'api' or leave blank if not to be included
 #    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
-    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
+    file: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/REVIEW/WOS/savedrecs_all.bib
     api:
       api_key: #${WOS_API_KEY}                                # resolved from .env
-      query: 'ALL = (agent-based (model* OR simulation) AND (energ* OR electric* OR net-zero OR carbon OR renewable OR green OR clean OR transition OR sustainab*)) AND PY=2015-2024'
+      query:
       cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
 #    source: file   # 'file' or 'api' or leave blank if not to be included
-    source: file
+    source: # file
     file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
     api:
       api_key: #${OPENALEX_API_KEY}
@@ -65,7 +65,7 @@ bib:
   # Each run is stored in its own sub-directory under export_dir.
   # The review section will automatically pick up the most recent run.
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/BIB_RESULTS/
+    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/BIB_RESULTS/
     run_name:   # leave blank for auto-timestamp, or set e.g. "may_2026_wos_oa"
 
 
@@ -76,7 +76,7 @@ review: # LLM-based review
   # Each review run is stored in its own sub-directory under export_dir.
   # Downstream sections (bib_network, topic_model) auto-detect the most recent run.
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/AI_REVIEW_RESULTS/
+    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/AI_REVIEW_RESULTS/
     run_name:   # leave blank for auto-timestamp, or set e.g. "test_run_1"
     cache_dir:  # leave blank to place inside the run directory
   batch_size : 50
@@ -85,22 +85,19 @@ review: # LLM-based review
   max_concurrent_requests : 10  # Max simultaneous API calls for all reviewers.
                                 # Keep low for Anthropic (5-10); null = default (10). 30 is possible for OpenAI.
                                 # Overridable per reviewer.
-  items_per_call : 20           # Articles sent per API call. Higher values reduce the number of calls
+  items_per_call : 40           # Articles sent per API call. Higher values reduce the number of calls
                                 # (backstory sent once per batch). Overridable per reviewer.
   text_inputs : [title, abstract, keywords]
 #  input_description : article title/abstract/keywords
   inclusion_criteria : The scope of the study MUST include
-                       the use or development of agent-based models
-                       or agent-based simulations FOR addressing
-                       energy transition issues.
+                       the integration of justice aspects within
+                       models or modeling approaches 
+                       FOR addressing energy transition issues.
   exclusion_criteria : 1. The scope of the study DOES NOT include
-                      agent-based modelling or energy transition issues;
-                      2. The focus of the study is on multi-agent systems,
-                      intelligent agents or software agents for solving
-                      specific problems such as control strategies;
-                      3. The study belongs to another very distant
-                      scientific field, such as geology, zoology,
-                      biology, medicine, biomedical studies, etc.
+                      energy transition issues;
+                      2. The scope of the study DOES NOT include models
+                      or modeling approaches
+                      3. The scope of the study DOES NOT include justice aspects
   sample_size : 200  # Leave blank if the whole dataset must be processed. Otherwise,
                     # size of the corresponding random sample to withdraw from the dataset
   decision_rule : majority   # majority, mean
@@ -121,7 +118,7 @@ review: # LLM-based review
       host :
       provider : anthropic  # values : litellm, open-ai, ollama, anthropic
       max_tokens : 200
-      temperature : 0.7  # temperature parameter is not available for all models
+      temperature : 0.65  # temperature parameter is not available for all models
       reasoning_effort :
       max_retries :                # Leave blank to use the section-level value above.
       max_concurrent_requests :    # Leave blank to use the section-level value above.
@@ -150,25 +147,32 @@ review: # LLM-based review
       host :
       provider : anthropic
       max_tokens : 200
-      temperature : 0.1
+      temperature : 0.15
       reasoning_effort :
-      backstory : Reviewer#2 is a seasoned researcher with a PhD in computer
-                  science, specializing in agent-based modeling (ABM) and
-                  agent-based simulation techniques. Reviewer#2 helps in
-                  designing, analyzing, and troubleshooting complex ABMs,
-                  drawing from extensive academic and applied research experience.
-                  It can help with model formulation, selection of simulation
-                  platforms, parameter tuning, validation techniques, and results
-                  interpretation. It also assists with writing and reviewing
-                  research papers, grant proposals, and academic presentations
-                  involving ABM. Reviewer#2 is collaborative, exploratory, and
+      backstory : Reviewer#2 is a seasoned researcher with a PhD in social
+                  sciences, specializing in social sciences for energy research.
+                  Reviewer#2 is an international expert on climate change, 
+                  sustainability and just transition public policy issues. His 
+                  work all has a principal focus on achieving a sustainable and 
+                  just transition to a low-carbon economy, and combines a mix of 
+                  governance, management, policy and economics. His work is based
+                  around 5 key energy justice principles, i.e. distributive, procedural,
+                  restorative, recognition and cosmopolitan. His work on energy 
+                  justice has feature in the world’s top journals such as Nature, 
+                  Nature Energy, Renewable and Sustainable Energy Reviews, 
+                  Energy Policy, Applied Energy and many more. He has presented his
+                  work on energy justice across the world, has written policy 
+                  documents, held conferences and contributed to project 
+                  development in different countries across the world.
+                  It also assists with writing and reviewing research papers, 
+                  grant proposals, and academic presentations involving energy 
+                  justice. Reviewer#2 is collaborative, exploratory, and
                   methodical in its reasoning. It ensures technical accuracy while
                   maintaining a tone that invites discussion, experimentation, and
                   iteration. Reviewer#2 shares relevant methodologies and frameworks
                   but remains open to alternative approaches and creative exploration.
-                  It can switch between high-level theoretical discussions and practical
-                  coding support. It avoids rigid judgment, encourages open-ended
-                  inquiry, and flags assumptions that require clarification or validation.
+                  It avoids rigid judgment, encourages open-ended inquiry, and flags 
+                  assumptions that require clarification or validation.
       additional_context :
 
     - name : Reviewer#3
@@ -208,7 +212,7 @@ bib_network:
     min_cocitations: 1
 
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/BIB_NETWORK_RESULTS/
+    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/BIB_NETWORK_RESULTS/
     run_name:   # leave blank for auto-timestamp
 
 
@@ -217,7 +221,7 @@ topic_model:
   # Set an explicit path to target a specific run or an external CSV.
   doc_dataset:  # ~/Documents/PRO/ABM_LITERATURE_REVIEW/NOTEBOOKS/merged_wos_openalex_with_abstract_no_duplicate.csv
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
+    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/TOPIC_MODELING/
     run_name:   # leave blank for auto-timestamp
   # Distance : euclidean, chebyshev ; default = euclidean
   distance: chebyshev
@@ -301,7 +305,7 @@ topic_report:
 #   model_index: 0
 #
 #   # Directory where the PDF and annex files will be written.
-   export_to: /path/to/PYSYREV/REPORT/
+   export_to: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/REPORT/
 #
 #   # run_dir: leave blank to auto-detect the latest topic_model run.
 #   # run_dir: /path/to/TOPIC_MODELING/run_YYYY-MM-DD_HH-MM-SS/

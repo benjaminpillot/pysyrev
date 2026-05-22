@@ -610,7 +610,7 @@ async def _label_all_topics(topic_info, config) -> dict:
 
     system_prompt = config.system_prompt or _DEFAULT_LABELER_SYSTEM_PROMPT
     semaphore     = asyncio.Semaphore(config.max_concurrent_requests)
-    nr_docs       = config.nr_repr_docs
+    nr_docs       = config.n_repr_docs_for_labeling
 
     # Only use semantically useful repr_doc columns: title, abstract, author keywords.
     repr_doc_cols = [c for c in topic_info.columns if c.startswith("repr_doc_")]

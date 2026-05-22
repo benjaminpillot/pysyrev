@@ -10,7 +10,7 @@ coordinates the core functions and holds instance-level lazy-loaded state.
 
 Typical usage
 -------------
-    cfg    = TopicReportFileConfig.load("config_report.yaml")
+    cfg    = Config.load("config.yaml")
     report = TopicReport.from_config(cfg)
     report.generate_report()
 """
@@ -23,7 +23,7 @@ from typing import Union
 
 import pandas as pd
 
-from pysyrev.core.config import TopicReportFileConfig
+from pysyrev.core.config import Config, ReportConfig
 from pysyrev.core.llm import label_topics
 from pysyrev.core.report import PDFReportEngine
 from pysyrev.core.report_data import (
@@ -52,14 +52,22 @@ class TopicReport:
 
     # ---- bridge from configuration ----------------------------------------
 
+    bib_network_config: object           = None  # BibNetworkReportConfig or None
+
     @classmethod
-    def from_config(cls, config: TopicReportFileConfig) -> 'TopicReport':
+    def from_config(cls, config: Config) -> 'TopicReport':
+        if config.topic_report is None:
+            raise ValueError(
+                "Config has no 'topic_report' section. "
+                "Add it to your YAML to enable report generation."
+            )
         return cls(
-            run_dir        = config.topic_report.run_dir,
-            report_config  = config.report,
-            model_index    = config.topic_report.model_index,
-            export_to      = config.topic_report.export_to,
-            labeler_config = config.llm,
+            run_dir            = config.topic_report.run_dir,
+            report_config      = config.report or ReportConfig(),
+            model_index        = config.topic_report.model_index,
+            export_to          = config.topic_report.export_to,
+            labeler_config     = config.llm,
+            bib_network_config = config.bib_network_graphs,
         )
 
     # ---- internals --------------------------------------------------------
@@ -144,8 +152,11 @@ class TopicReport:
             self.model_index,
             self.best_results,
             self.topic_info,
+            self.bertopic_results,
             self.report_config,
-            topic_labels=topic_labels,
+            bib_network_config = self.bib_network_config,
+            topic_labels       = topic_labels,
+            export_to          = str(Path(output_file).parent),
         )
         PDFReportEngine().generate(report_data, output_file)
         return output_file

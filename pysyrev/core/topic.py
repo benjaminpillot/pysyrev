@@ -9,26 +9,31 @@ from tqdm import tqdm
 
 
 def _compute_distance(distance, *values):
-    norm = [(n - np.min(n)) / (np.max(n) - np.min(n)) for n in values]
+    norm = []
+    for n in values:
+        r = np.max(n) - np.min(n)
+        # When all values are identical the metric doesn't discriminate: treat as ideal (norm=1).
+        norm.append((n - np.min(n)) / r if r > 0 else np.ones_like(n, dtype=float))
 
-    # Distance to ideal
     if distance == "euclidean":
-        return np.sqrt(np.sum([(1 - norm_n) ** 2 for norm_n in norm]))
-        # return np.sqrt((1 - norm[0]) ** 2 + (1 - norm[1]) ** 2 + (1 - norm[2]) ** 2)
+        # Use Python sum (not np.sum) to accumulate arrays element-wise across metrics.
+        # np.sum on a list of arrays collapses to a scalar, giving the same distance for every model.
+        return np.sqrt(sum((1 - norm_n) ** 2 for norm_n in norm))
     else:  # Chebyshev
         return np.maximum.reduce([1 - norm_n for norm_n in norm])
 
 
-def clean_dataset(dataset, allow_abbrev, show_progress):
+_META_COLS = ["id", "year", "cited_by", "document_type", "title", "doi"]
 
+
+def clean_dataset(dataset, allow_abbrev, show_progress):
     abstract_corpus = np.asarray(dataset["abstract"])
     title_corpus = np.asarray(dataset["title"])
-
     raw_documents = [". ".join(ds) for ds in zip(*[title_corpus, abstract_corpus])]
-
     return berteley_preprocess(raw_documents,
                                allow_abbrev=allow_abbrev,
-                               show_progress=show_progress)
+                               show_progress=show_progress,
+                               return_indices=True)
 
 
 def topic_modeling(dataset,
@@ -48,7 +53,8 @@ def topic_modeling(dataset,
                    ranking_scorer,
                    purity_scorer,
                    keep_n_results,
-                   show_progress):
+                   show_progress,
+                   surviving_indices=None):
 
     # cluster_sel_method = bertopic_model.hdbscan_model.clusterselection_method
 
@@ -209,8 +215,16 @@ def topic_modeling(dataset,
                                  "ID": range(len(documents)),
                                  "Topic": model.topics_})
 
-        bertopic_results = pd.concat([out_docs,
-                                      topic_distribution_df], axis=1)
+        meta_parts = []
+        if surviving_indices is not None:
+            meta_df = dataset.iloc[surviving_indices].reset_index(drop=True)
+            available = [c for c in _META_COLS if c in meta_df.columns]
+            if available:
+                meta_parts.append(meta_df[available].reset_index(drop=True))
+
+        bertopic_results = pd.concat(
+            [out_docs, topic_distribution_df] + meta_parts, axis=1
+        )
         bertopic_results.to_csv(out_file["bertopic_results"],
                                 index=False)
 

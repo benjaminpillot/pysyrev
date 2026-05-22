@@ -239,8 +239,19 @@ def build_resized_image(path: str, max_width: float, max_height: float):
 
 
 def build_table(data: List[List[Any]], theme: ReportTheme,
-                col_widths=None, header_background: Optional[str] = None):
-    table = Table(data, colWidths=col_widths, hAlign="LEFT")
+                col_widths=None, header_background: Optional[str] = None,
+                cell_style=None):
+    # Wrap data-row strings in Paragraph so long words (e.g. DOIs) wrap properly.
+    processed = []
+    for i, row in enumerate(data):
+        if i == 0 or cell_style is None:
+            processed.append(list(row))
+        else:
+            processed.append([
+                Paragraph(str(cell), cell_style) if isinstance(cell, str) else cell
+                for cell in row
+            ])
+    table = Table(processed, colWidths=col_widths, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND",   (0, 0), (-1,  0), colors.HexColor(header_background or theme.table_header_bg)),
         ("TEXTCOLOR",    (0, 0), (-1,  0), colors.white),
@@ -471,8 +482,11 @@ class PDFReportEngine:
         ]
 
     def _render_link(self, block):
-        label = block.get("label", block["url"])
-        text = f'<link href="{block["url"]}" color="{self.theme.link}">{label}</link>'
+        url = block["url"]
+        label = block.get("label", url)
+        if not any(url.startswith(s) for s in ("http://", "https://", "mailto:", "ftp://", "#")):
+            url = Path(url).resolve().as_uri()
+        text = f'<link href="{url}" color="{self.theme.link}">{label}</link>'
         return [Paragraph(text, self.styles["Link"])]
 
     def _render_image(self, block):
@@ -521,6 +535,7 @@ class PDFReportEngine:
             theme=self.theme,
             col_widths=col_widths,
             header_background=block.get("header_background"),
+            cell_style=self.styles["Small"],
         ))
         if block.get("caption"):
             story.append(Paragraph(block["caption"], self.styles["Caption"]))

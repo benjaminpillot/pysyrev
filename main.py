@@ -31,9 +31,9 @@ import pandas as pd
 #                            "/merged_wos_openalex_with_abstract_no_duplicate.csv")
 #
 config = Config.load("pysyrev/config_examples/config_abm.yaml")
-# bib = BibDataset.from_config(config.bib)
-topic_model = TopicModel.from_config(config.topic_model)
-topic_model.run()
+bib = BibDataset.from_config(config.bib)
+# topic_model = TopicModel.from_config(config.topic_model)
+# topic_model.run()
 # reviewers = config.review.reviewers
 # workflow = config.review.workflow
 # text_inputs = config.review.text_inputs

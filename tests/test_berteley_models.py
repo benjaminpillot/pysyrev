@@ -83,12 +83,15 @@ class TestInitializeModelNgramRange:
 @pytest.mark.integration
 class TestFitIntegration:
     def test_fit_returns_expected_structure(self, tiny_corpus):
+        from umap import UMAP
         from pysyrev.core.berteley.models import fit
         topics, probs, topic_sizes, topic_model, topic_words, metrics = fit(
             tiny_corpus,
             embedding_model="specter2",
             n_gram_range="unigram",
             coherence_scorer="u_mass",
+            min_topic_size=2,
+            umap_model=UMAP(n_neighbors=5, n_components=3, min_dist=0.0, random_state=42),
         )
         assert isinstance(topics, list)
         assert len(topics) == len(tiny_corpus)
@@ -97,12 +100,15 @@ class TestFitIntegration:
         assert "Diversity" in metrics
 
     def test_calculate_metrics_keys(self, tiny_corpus):
+        from umap import UMAP
         from pysyrev.core.berteley.models import fit, _calculate_metrics
         _, _, _, topic_model, _, _ = fit(
             tiny_corpus,
             embedding_model="specter2",
             n_gram_range="unigram",
             coherence_scorer="u_mass",
+            min_topic_size=2,
+            umap_model=UMAP(n_neighbors=5, n_components=3, min_dist=0.0, random_state=42),
         )
         metrics = _calculate_metrics(tiny_corpus, topic_model, topic_model.topics_, "u_mass")
         assert set(metrics.keys()) == {"Coherence", "Diversity"}

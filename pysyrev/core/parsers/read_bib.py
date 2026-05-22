@@ -1,18 +1,18 @@
 """
-read_bib.py — lecture de fichiers bibliographiques Scopus / WoS / PubMed.
+read_bib.py — bibliographic file reader for Scopus / WoS / PubMed.
 
-Version autonome, sans classe, refondue depuis pbx_custom.py (pyBibX).
+Stand-alone, class-free module refactored from pbx_custom.py (pyBibX).
 
-API publique :
-    data, entries, log = read_bib('mon_fichier.bib', db='scopus', del_duplicated=True)
+Public API:
+    data, entries, log = read_bib('file.bib', db='scopus', del_duplicated=True)
 
-    data     : pd.DataFrame (colonnes triées alphabétiquement, valeurs manquantes
-               laissées en NaN).
-    entries  : liste des colonnes avant le remplissage sanity-check.
-    log      : liste de chaînes décrivant ce qui a été trouvé (nb de docs, types,
-               doublons...).
+    data     : pd.DataFrame (columns sorted alphabetically, missing values as NaN).
+    entries  : list of columns present before the sanity-check fill.
+    log      : list of strings describing what was found (doc count, types, duplicates…).
 
-Dépendances : numpy, pandas, lib standard uniquement.
+`path` may also be a directory — all matching files are concatenated automatically.
+
+Dependencies: numpy, pandas, standard library only.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ import pandas as pd
 
 
 # =============================================================================
-# Constantes
+# Constants
 # =============================================================================
 
-# Traduction des codes de langue PubMed (champ LA) vers le nom anglais.
+# PubMed language codes (LA field) mapped to their English name.
 LANGUAGE_NAMES = {
     'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
     'arm': 'Armenian', 'aze': 'Azerbaijani', 'bos': 'Bosnian',
@@ -52,7 +52,7 @@ LANGUAGE_NAMES = {
     'wel': 'Welsh',
 }
 
-# Colonnes attendues par le pipeline ; les absentes sont créées avec NaN.
+# Columns expected by the pipeline; missing ones are created as NaN.
 SANITY_CHECK_COLUMNS = [
     'abbrev_source_title', 'abstract', 'address', 'affiliation', 'art_number',
     'author', 'author_keywords', 'chemicals_cas', 'coden',
@@ -64,7 +64,7 @@ SANITY_CHECK_COLUMNS = [
     'volume', 'year',
 ]
 
-# Renommage des colonnes brutes Scopus CSV -> schéma interne.
+# Raw Scopus CSV column names → internal schema.
 SCOPUS_CSV_RENAMES = {
     'abbreviated source title':      'abbrev_source_title',
     'document type':                 'document_type',
@@ -82,7 +82,7 @@ SCOPUS_CSV_RENAMES = {
     'pubmed id':                     'pubmed_id',
 }
 
-# Renommage des clés BibTeX WoS -> schéma interne.
+# WoS BibTeX keys → internal schema.
 WOS_LHS_RENAMES = {
     'affiliation':      'affiliation_',
     'affiliations':     'affiliation',
@@ -97,8 +97,8 @@ WOS_LHS_RENAMES = {
     'unique-id':        'id',
 }
 
-# Renommage des clés PubMed -> schéma interne.
-# Les clés 'dp' (tronquée 4 chars) et 'la' (traduite) sont traitées à part.
+# PubMed keys → internal schema.
+# Keys 'dp' (truncated to 4 chars) and 'la' (translated) are handled separately.
 PUBMED_LHS_RENAMES = {
     'ab':   'abstract',
     'ad':   'affiliation',
@@ -123,8 +123,8 @@ PUBMED_LHS_RENAMES = {
     'vi':   'volume',
 }
 
-# Normalisation des types de documents vers le vocabulaire Scopus (50 appels
-# .replace() successifs dans l'original -> un seul dict ici).
+# Document type normalisation to the Scopus vocabulary (50 successive
+# .replace() calls in the original → a single dict here).
 DOCUMENT_TYPE_MAP = {
     # WoS -> Scopus
     'Article; Early Access':           'Article in Press',
@@ -186,53 +186,54 @@ DOCUMENT_TYPE_MAP = {
     'Scientific Integrity Review':                              'Review',
 }
 
-# Préfixes PubMed (6 caractères) où plusieurs occurrences successives d'un même
-# champ doivent être agrégées sur une seule ligne. (préfixe -> séparateur)
+# PubMed prefixes (6 chars) where successive occurrences of the same field
+# must be merged onto one line. Maps prefix → separator.
 PUBMED_MULTIVALUE_PREFIXES = {
     'FAU - ': '; ',
     'AU  - ': ' and ',
     'AUID- ': '; ',
     'AD  - ': '',
-    'PT  - ': None,   # PT : pas d'agrégation, juste marqué consommé
+    'PT  - ': None,   # PT: no aggregation, just marked as consumed
 }
 
 
 # =============================================================================
-# Helpers — nettoyage de texte
+# Helpers — text cleaning
 # =============================================================================
 
 def _clean_titles(titles):
-    """
-    Nettoie une liste de titres pour la détection de doublons.
+    """Clean a list of titles for duplicate detection.
 
-    Équivalent à l'appel original :
+    Equivalent to the original call:
         clear_text(titles, stop_words=[], lowercase=True, rmv_accents=True,
                    rmv_special_chars=True, rmv_numbers=True, rmv_custom_words=[])
 
-    Beaucoup plus court que l'original, car on n'a pas besoin du chargement
-    des fichiers de stopwords (appelé ici avec stop_words=[]).
+    Much shorter than the original because stopword file loading is not needed
+    (called here with stop_words=[]).
     """
     out = []
     for raw in titles:
-        t = str(raw).lower().replace('’', "'")                 # lowercase
-        t = re.sub(r"[^a-zA-Z0-9']+", ' ', t)                       # special chars -> espace
+        t = str(raw).lower().replace('’', "'")                  # lowercase
+        t = re.sub(r"[^a-zA-Z0-9']+", ' ', t)                       # special chars → space
         t = unicodedata.normalize('NFD', t).encode('ascii', 'ignore').decode('utf-8')  # accents
-        t = re.sub(r'[0-9]', ' ', t)                                # chiffres
-        t = ' '.join(t.split())                                     # espaces multiples
+        t = re.sub(r'[0-9]', ' ', t)                                 # digits
+        t = ' '.join(t.split())                                      # multiple spaces
         out.append(t)
     return out
 
 
 # =============================================================================
-# Helpers — closures originales sorties au niveau module.
+# Helpers — module-level functions
 # =============================================================================
 
 def _assign_authors_to_affiliations(authors_str, affiliations_str):
-    """Associe chaque auteur à son affiliation par index (PubMed).
-    Si affiliations_str est NaN on propage NaN ; si authors_str est NaN on
-    renvoie les affiliations telles quelles."""
+    """Map each author to their affiliation by index (PubMed).
+
+    Propagates NaN when affiliations_str is NaN; returns affiliations as-is
+    when authors_str is NaN.
+    """
     if not isinstance(affiliations_str, str):
-        return affiliations_str  # propage NaN
+        return affiliations_str  # propagate NaN
     affiliations = [a.strip() for a in affiliations_str.split(';')]
     if not isinstance(authors_str, str):
         return '; '.join(affiliations)
@@ -260,14 +261,16 @@ def _get_corresponding_authors_and_affiliations(corr_address):
 
 
 def _map_authors_to_affiliations(row):
-    """Associe auteurs et affiliations Scopus, en isolant le corresponding author.
-    Propage NaN si l'affiliation est absente."""
+    """Map Scopus authors to affiliations, isolating the corresponding author.
+
+    Propagates NaN when the affiliation column is absent.
+    """
     authors_str = row['author']
     affiliations_str = row['affiliation']
     corr_addr = row['correspondence_address1']
 
     if not isinstance(affiliations_str, str):
-        return affiliations_str  # propage NaN
+        return affiliations_str  # propagate NaN
 
     authors = re.split(r'\s+and\s+|;', authors_str) if isinstance(authors_str, str) else []
     affiliations = [a.strip() for a in affiliations_str.split(';')]
@@ -287,11 +290,11 @@ def _map_authors_to_affiliations(row):
 
 
 # =============================================================================
-# Helpers — parsing selon la source.
+# Helpers — source-specific parsing
 # =============================================================================
 
 def _read_scopus_csv(path):
-    """Lit un export CSV Scopus. Renvoie (data, doc_count)."""
+    """Read a Scopus CSV export. Returns (data, doc_count)."""
     try:
         data = pd.read_csv(path, encoding='utf8', dtype=str)
     except UnicodeDecodeError:
@@ -308,8 +311,8 @@ def _read_scopus_csv(path):
 
     for col in SANITY_CHECK_COLUMNS:
         if col not in data.columns:
-            # dtype=object explicite : sinon une colonne 100% NaN devient float64
-            # et refuse .str.replace plus loin.
+            # explicit dtype=object: otherwise a 100%-NaN column becomes float64
+            # and would reject .str.replace calls downstream.
             data[col] = pd.Series(np.nan, index=data.index, dtype=object)
 
     data = data.reindex(sorted(data.columns), axis=1)
@@ -320,7 +323,7 @@ def _read_scopus_csv(path):
 
 
 def _preprocess_wos_lines(f_list):
-    """Fusionne les continuations de ligne WoS (préfixe '   ')."""
+    """Merge WoS line continuations (lines starting with '   ')."""
     merged = []
     for line in f_list:
         if line[:3] != '   ':
@@ -329,18 +332,18 @@ def _preprocess_wos_lines(f_list):
         if merged[-1].find('Cited-References') == -1:
             merged[-1] = merged[-1] + line
         else:
-            # Dans les Cited-References on remplace les ';' par ',' pour
-            # préserver le ';' comme séparateur de références.
+            # Inside Cited-References, replace ';' with ',' to preserve
+            # ';' as the reference separator.
             merged[-1] = merged[-1] + ';' + line.replace(';', ',')
     return merged
 
 
 def _preprocess_pubmed_lines(f_list):
-    """
-    Agrège les lignes multi-champs PubMed. Pour les préfixes de
-    PUBMED_MULTIVALUE_PREFIXES, on scanne en avant les occurrences successives
-    et on les concatène avec leur séparateur respectif ; les lignes consommées
-    sont marquées en passant leur préfixe en minuscules.
+    """Aggregate multi-field PubMed lines.
+
+    For prefixes in PUBMED_MULTIVALUE_PREFIXES, successive occurrences are
+    scanned ahead and concatenated with their respective separator; consumed
+    lines are marked by lower-casing their prefix.
     """
     out = []
     for i, line in enumerate(f_list):
@@ -350,7 +353,7 @@ def _preprocess_pubmed_lines(f_list):
         is_multi = low in ('fau - ', 'au  - ', 'auid- ', 'ad  - ')
         is_pt = low == 'pt  - '
 
-        # Continuation indentée.
+        # Indented continuation line.
         if prefix == '      ':
             out[-1] += line[6:]
             continue
@@ -363,7 +366,7 @@ def _preprocess_pubmed_lines(f_list):
             out[-1] += '; ' + line[6:]
             continue
 
-        # Préfixe multi-valeurs : agrégation en avant.
+        # Multi-value prefix: aggregate forward.
         if prefix in PUBMED_MULTIVALUE_PREFIXES:
             sep = PUBMED_MULTIVALUE_PREFIXES[prefix]
             out.append(line)
@@ -375,10 +378,10 @@ def _preprocess_pubmed_lines(f_list):
                 if f_list[j][:6].lower() == low:
                     if sep is not None:
                         out[-1] += sep + f_list[j][6:]
-                    # Marquage : passer le préfixe en minuscules.
+                    # Mark as consumed: lower-case the prefix.
                     f_list[j] = f_list[j][:6].lower() + f_list[j][6:]
 
-    # Normalisation des délimiteurs '-' entre préfixe et valeur en '='.
+    # Normalise '-' delimiters between prefix and value to '='.
     for i, line in enumerate(out):
         if len(line) > 4 and line[4] == '-':
             out[i] = line[:4] + '=' + line[5:]
@@ -388,15 +391,14 @@ def _preprocess_pubmed_lines(f_list):
 
 
 def _parse_bibtex_like(f_list, db):
-    """
-    Parse un flux BibTeX-like (Scopus .bib, WoS .bib prétraité, PubMed .nbib
-    prétraité). Renvoie (lhs, rhs, doc_count). Marqueur 'doc_start' séparant
-    les enregistrements.
+    """Parse a BibTeX-like stream (Scopus .bib, pre-processed WoS .bib,
+    pre-processed PubMed .nbib). Returns (lhs, rhs, doc_count).
+    'doc_start' is the sentinel separating records.
     """
     lhs, rhs = [], []
     doc = 0
     for line in f_list:
-        # Début d'enregistrement : '@xxx' (BibTeX) ou 'PMID' (PubMed).
+        # Record start: '@xxx' (BibTeX) or 'PMID' (PubMed).
         if line.find('@') == 0 or line[:4].lower() == 'pmid':
             lhs.append('doc_start')
             rhs.append('doc_start')
@@ -425,7 +427,7 @@ def _parse_bibtex_like(f_list, db):
 
 
 def _apply_lhs_renames(lhs, rhs, db):
-    """Renomme les clés parsées vers le schéma interne. Modifie lhs/rhs en place."""
+    """Rename parsed keys to the internal schema. Modifies lhs/rhs in place."""
     if db == 'scopus':
         has_abbrev = 'abbrev_source_title' in lhs
         for i, k in enumerate(lhs):
@@ -459,13 +461,12 @@ def _apply_lhs_renames(lhs, rhs, db):
 
 
 def _build_dataframe_from_kv(lhs, rhs, doc):
-    """
-    Construit le DataFrame à partir des listes clés/valeurs.
+    """Build the DataFrame from key/value lists.
 
-    ANCIEN : pd.DataFrame vide + data.iloc[count, col] = rhs[i] dans une boucle.
-             Très lent (O(N) appels iloc avec overhead pandas).
-    NOUVEAU : dict-of-lists rempli en Python pur, puis une seule construction
-              de DataFrame. Typiquement 50× à 200× plus rapide sur gros fichiers.
+    OLD: empty pd.DataFrame + data.iloc[count, col] = rhs[i] in a loop —
+         very slow (O(N) iloc calls with pandas overhead).
+    NEW: dict-of-lists filled in pure Python, then a single DataFrame
+         construction. Typically 50× to 200× faster on large files.
     """
     labels = set(lhs) - {'doc_start'}
     labels.update(SANITY_CHECK_COLUMNS)
@@ -480,19 +481,18 @@ def _build_dataframe_from_kv(lhs, rhs, doc):
         else:
             columns[key][count] = val
 
-    # dtype=object : indispensable pour que les colonnes 100% NaN restent
-    # compatibles avec l'accesseur .str plus loin.
+    # dtype=object: required so that 100%-NaN columns remain compatible
+    # with .str accessor calls downstream.
     return pd.DataFrame(columns, dtype=object)
 
 
 # =============================================================================
-# Helpers — post-traitements.
+# Helpers — post-processing
 # =============================================================================
 
 def _deduplicate(data, doc, log):
-    """
-    Doublon = DOI dupliqué (hors NaN) OU titre nettoyé dupliqué.
-    Version vectorisée par masques booléens.
+    """Duplicate = duplicated DOI (excluding NaN) OR duplicated cleaned title.
+    Vectorised implementation using boolean masks.
     """
     dup_doi = data['doi'].duplicated() & data['doi'].notna()
 
@@ -510,9 +510,9 @@ def _deduplicate(data, doc, log):
 
 
 def _report_document_types(data, log):
-    """Ajoute au log le décompte par type de document (Counter, 1 passe).
-    Les NaN sont comptés sous le libellé 'UNKNOWN' uniquement dans le log,
-    pas dans les données."""
+    """Append a per-type document count to the log (Counter, single pass).
+    NaN values are counted under 'UNKNOWN' in the log only, not in the data.
+    """
     types = data['document_type'].fillna('UNKNOWN').tolist()
     counts = Counter(types)
     log.append('')
@@ -521,7 +521,7 @@ def _report_document_types(data, log):
 
 
 def _fix_wos_affiliations(data):
-    """Nettoyage des affiliations WoS (préserve les points derrière une majuscule)."""
+    """Clean WoS affiliations (preserves dots following an uppercase letter)."""
     s = data['affiliation_'].str.replace(r'(?<=[A-Z])\.', '#', regex=True)
     s = s.str.replace(';', ',', regex=False)
     s = s.str.replace('.', ';', regex=False)
@@ -532,7 +532,7 @@ def _fix_wos_affiliations(data):
 
 
 def _rebuild_affiliation_from_affiliation_(data):
-    """Reconstitue 'affiliation' à partir de 'affiliation_' (cas WoS dégradé)."""
+    """Rebuild 'affiliation' from 'affiliation_' (degraded WoS case)."""
     mask = data['affiliation'].isna() & data['affiliation_'].notna()
     for i in data.index[mask]:
         s = data.loc[i, 'affiliation_']
@@ -544,37 +544,90 @@ def _rebuild_affiliation_from_affiliation_(data):
     return data
 
 
+# File extensions accepted per database when reading a directory.
+_DIR_EXTENSIONS = {
+    'wos':    ('.bib',),
+    'scopus': ('.bib', '.csv'),
+    'pubmed': ('.nbib', '.txt'),
+}
+
+
+def _read_bib_dir(dirpath, db, del_duplicated):
+    """Read all matching bib files in *dirpath* and return a single concatenated result.
+
+    Deduplication (DOI / cleaned title) is applied once on the merged records,
+    not file by file.
+    """
+    exts = _DIR_EXTENSIONS.get(db, ('.bib',))
+    files = sorted(
+        entry.path for entry in os.scandir(dirpath)
+        if entry.is_file() and os.path.splitext(entry.name)[1].lower() in exts
+    )
+    if not files:
+        ext_str = '/'.join(exts)
+        raise ValueError(
+            f"No {ext_str} files found in directory: {dirpath}"
+        )
+
+    frames = []
+    for fpath in files:
+        df, _, _ = read_bib(fpath, db=db, del_duplicated=False)
+        frames.append(df)
+
+    data = pd.concat(frames, ignore_index=True)
+    log = []
+    doc = len(data)
+
+    if del_duplicated and 'doi' in data.columns:
+        data = _deduplicate(data, doc, log)
+    else:
+        log.append(f'A Total of {doc} Documents were Found')
+
+    if 'document_type' in data.columns:
+        _report_document_types(data, log)
+
+    entries = list(data.columns)
+    return data, entries, log
+
+
 # =============================================================================
-# API publique.
+# Public API
 # =============================================================================
 
 def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list[str], list[str]]:
-    """
-    Lit un fichier bibliographique Scopus / WoS / PubMed.
+    """Read a Scopus / WoS / PubMed bibliographic file.
 
     Parameters
     ----------
     path : str
-        Chemin vers le fichier (.csv, .bib, .nbib).
+        Path to a file (.csv, .bib, .nbib) **or to a directory**.
+        When a directory is given, all files whose extension matches the
+        expected format (`.bib` for WoS/Scopus, `.nbib`/`.txt` for PubMed)
+        are read and concatenated; deduplication is applied once on the
+        combined result.
     db : {'scopus', 'wos', 'pubmed'}
-        Base de données source.
+        Source database.
     del_duplicated : bool, default True
-        Si True, retire les doublons (DOI identique ou titre nettoyé identique).
+        If True, remove duplicates (identical DOI or cleaned title).
 
     Returns
     -------
     data : pd.DataFrame
-        Colonnes triées alphabétiquement, valeurs manquantes en NaN.
+        Columns sorted alphabetically; missing values left as NaN.
     entries : list[str]
-        Colonnes présentes avant le remplissage sanity-check.
+        Columns present before the sanity-check fill.
     log : list[str]
-        Messages descriptifs (comptes de docs, de types, de doublons).
+        Descriptive messages (document counts, types, duplicates).
     """
     db = db.lower()
+
+    if os.path.isdir(path):
+        return _read_bib_dir(path, db=db, del_duplicated=del_duplicated)
+
     log = []
     file_ext = os.path.splitext(path)[1].lower()
 
-    # --- 1. Lecture & parsing selon la source. -------------------------------
+    # --- 1. Read & parse according to the source. ----------------------------
     if db == 'scopus' and file_ext == '.csv':
         data, doc = _read_scopus_csv(path)
     else:
@@ -592,32 +645,32 @@ def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list
 
     entries = list(data.columns)
 
-    # --- 2. Normalisation des types de documents. ----------------------------
+    # --- 2. Normalise document types. ----------------------------------------
     data['document_type'] = data['document_type'].replace(DOCUMENT_TYPE_MAP)
 
-    # --- 3. Déduplication. ---------------------------------------------------
+    # --- 3. Deduplication. ---------------------------------------------------
     if del_duplicated and 'doi' in entries:
         data = _deduplicate(data, doc, log)
     else:
         log.append(f'A Total of {doc} Documents were Found')
 
-    # --- 4. WoS : 'type' prime sur 'document_type' si présent. ---------------
+    # --- 4. WoS: 'type' overrides 'document_type' when present. -------------
     if db == 'wos' and 'type' in entries:
         data['document_type'] = data['type']
 
     if 'document_type' in entries:
         _report_document_types(data, log)
 
-    # --- 5. Post-traitements communs. ----------------------------------------
-    # .str.replace propage NaN, contrairement à .apply(lambda x: x.replace(...))
-    # qui crasherait sur NaN.
+    # --- 5. Common post-processing. ------------------------------------------
+    # .str.replace propagates NaN, unlike .apply(lambda x: x.replace(...))
+    # which would crash on NaN.
     data['keywords'] = data['keywords'].str.replace(',', ';', regex=False)
     data['author_keywords'] = data['author_keywords'].str.replace(',', ';', regex=False)
 
     if db == 'wos':
         if 'affiliation_' not in data.columns:
             data['affiliation_'] = pd.Series(np.nan, index=data.index, dtype=object)
-        # Year manquante -> 4 premiers caractères de 'da'.
+        # Missing year: fall back to the first 4 chars of 'da'.
         mask = data['year'].isna()
         if mask.any() and 'da' in data.columns:
             data.loc[mask, 'year'] = data.loc[mask, 'da'].str[:4]
@@ -630,7 +683,7 @@ def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list
         data.loc[mask, 'affiliation'] = data.loc[mask, 'affiliations']
 
     if db == 'scopus':
-        # 'Corresponding Author ' + NaN -> NaN (pandas propage).
+        # 'Corresponding Author ' + NaN → NaN (pandas propagates NaN).
         data['correspondence_address1'] = (
             'Corresponding Author ' + data['correspondence_address1']
         )
@@ -659,7 +712,7 @@ def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list
             data['journal'], data['abbrev_source_title'],
         )
 
-    # 'UNKN'/'unkn' provenant des exports sont considérés comme manquants.
+    # 'UNKN'/'unkn' from exports are treated as missing values.
     data = data.replace(['UNKN', 'unkn'], np.nan)
 
     for col in ('year', 'cited_by'):
@@ -670,13 +723,13 @@ def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list
 
 
 # =============================================================================
-# Command line usage : python read_bib.py <fichier> [db]
+# Command-line usage: python read_bib.py <file> [db]
 # =============================================================================
 
 if __name__ == '__main__':
     import sys
     if len(sys.argv) < 2:
-        print('Usage: python read_bib.py <fichier> [scopus|wos|pubmed]')
+        print('Usage: python read_bib.py <file> [scopus|wos|pubmed]')
         sys.exit(1)
     path_ = sys.argv[1]
     db_ = sys.argv[2] if len(sys.argv) > 2 else 'scopus'
@@ -684,4 +737,4 @@ if __name__ == '__main__':
     for line in log_:
         print(line)
     print(f'\nDataFrame shape: {data_.shape}')
-    print(f'Colonnes : {list(data_.columns)}')
+    print(f'Columns: {list(data_.columns)}')

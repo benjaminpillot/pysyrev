@@ -133,64 +133,68 @@ class TopicModel:
     ranking_scorer:       str
     purity_scorer:        str
     run_name:             Union[None, str]
+    overwrite:            bool = False
 
     # ---- bridge from configuration --------------------------------------
 
     @classmethod
-    def from_config(cls,
-                    config: TopicModelConfig) -> 'TopicModel':
-        """
-        Build a TopicModel from a parsed TopicModelConfig.
-
-        """
+    def from_config(cls, config: 'Config') -> 'TopicModel':
+        """Build a TopicModel from a full Config object."""
+        from pysyrev.core.config import Config
+        tc = config.topic_model
         ctfidf_model = ClassTfidfTransformer(
-            bm25_weighting        = config.ctfidf.bm25_weighting,
-            reduce_frequent_words = config.ctfidf.reduce_frequent_words,
+            bm25_weighting        = tc.ctfidf.bm25_weighting,
+            reduce_frequent_words = tc.ctfidf.reduce_frequent_words,
         )
         umap_model = UmapModel(
-            min_dist     = config.umap.min_dist,
-            metric       = config.umap.metric,
-            low_memory   = config.umap.low_memory,
-            random_state = config.umap.random_state,
+            min_dist     = tc.umap.min_dist,
+            metric       = tc.umap.metric,
+            low_memory   = tc.umap.low_memory,
+            random_state = tc.umap.random_state,
         )
         hdbscan_model = HdbscanModel(
-            metric                   = config.hdbscan.metric,
-            cluster_selection_method = config.hdbscan.cluster_selection_method,
-            prediction_data          = config.hdbscan.prediction_data,
+            metric                   = tc.hdbscan.metric,
+            cluster_selection_method = tc.hdbscan.cluster_selection_method,
+            prediction_data          = tc.hdbscan.prediction_data,
         )
         bertopic_model = BertopicModel(
             hdbscan_model           = hdbscan_model,
             umap_model              = umap_model,
             ctfidf_model            = ctfidf_model,
-            transformer_model       = config.bertopic.transformer_model,
-            calculate_probabilities = config.bertopic.calculate_probabilities,
-            n_gram_range            = config.bertopic.n_gram_range,
-            language                = config.bertopic.language,
+            transformer_model       = tc.bertopic.transformer_model,
+            calculate_probabilities = tc.bertopic.calculate_probabilities,
+            n_gram_range            = tc.bertopic.n_gram_range,
+            language                = tc.bertopic.language,
         )
         topic_distribution = TopicDistribution(
-            window         = config.topic_distribution.window,
-            stride         = config.topic_distribution.stride,
-            min_similarity = config.topic_distribution.min_similarity,
-            batch_size     = config.topic_distribution.batch_size,
+            window         = tc.topic_distribution.window,
+            stride         = tc.topic_distribution.stride,
+            min_similarity = tc.topic_distribution.min_similarity,
+            batch_size     = tc.topic_distribution.batch_size,
         )
+        report_nr = (
+            config.report.sections.topics.n_repr_docs_per_topic
+            if config.report is not None else 5
+        )
+        llm_nr = config.llm.n_repr_docs_for_labeling if config.llm is not None else 3
         return cls(
-            doc_dataset          = config.doc_dataset,
-            allow_abbrev         = config.berteley.allow_abbrev,
-            distance             = config.distance,
+            doc_dataset          = tc.doc_dataset,
+            allow_abbrev         = tc.berteley.allow_abbrev,
+            distance             = tc.distance,
             bertopic_model       = bertopic_model,
             topic_distribution   = topic_distribution,
-            nr_repr_docs         = config.bertopic.nr_repr_docs,
-            export_dir           = config.export.export_dir,
-            n_neighbors          = config.umap.n_neighbors,
-            n_components         = config.umap.n_components,
-            min_topic_size_range = config.hdbscan.min_topic_size_range,
-            min_sample_range     = config.hdbscan.min_sample_range,
-            topic_size_step      = config.hdbscan.topic_size_step,
-            min_sample_step      = config.hdbscan.min_sample_step,
-            keep_n_results       = config.keep_n_results,
-            ranking_scorer       = config.coherence_scorer.ranking,
-            purity_scorer        = config.coherence_scorer.purity,
-            run_name             = config.export.run_name,
+            nr_repr_docs         = max(report_nr, llm_nr),
+            export_dir           = tc.export.export_dir,
+            n_neighbors          = tc.umap.n_neighbors,
+            n_components         = tc.umap.n_components,
+            min_topic_size_range = tc.hdbscan.min_topic_size_range,
+            min_sample_range     = tc.hdbscan.min_sample_range,
+            topic_size_step      = tc.hdbscan.topic_size_step,
+            min_sample_step      = tc.hdbscan.min_sample_step,
+            keep_n_results       = tc.keep_n_results,
+            ranking_scorer       = tc.coherence_scorer.ranking,
+            purity_scorer        = tc.coherence_scorer.purity,
+            run_name             = tc.export.run_name,
         )
 
     # ---- runtime --------------------------------------------------------
@@ -200,11 +204,11 @@ class TopicModel:
 
     def _make_run_dir(self) -> Path:
         """Create a unique subdirectory under ``export_dir`` for this run.
-        Raises FileExistsError if the directory already exists, to prevent
-        accidental overwrite of a previous run."""
+        Raises FileExistsError if the directory already exists, unless
+        ``overwrite=True`` was set at construction time."""
         name = self.run_name or datetime.now().strftime('%Y-%m-%dT%H%M%S')
         run_dir = Path(self.export_dir) / name
-        run_dir.mkdir(parents=True, exist_ok=False)
+        run_dir.mkdir(parents=True, exist_ok=self.overwrite)
         return run_dir
 
     def run(self, dataset: pd.DataFrame = None, show_progress=True):
@@ -225,7 +229,7 @@ class TopicModel:
                     "doc_dataset in the topic_model section of your config."
                 )
             dataset = pd.read_csv(self.doc_dataset)
-        cleans_docs = self._clean_dataset(dataset, show_progress=show_progress)
+        cleans_docs, surviving_indices = self._clean_dataset(dataset, show_progress=show_progress)
         print(
             f"[TopicModel] {len(dataset)} documents in dataset → "
             f"{len(cleans_docs)} survived preprocessing."
@@ -252,4 +256,5 @@ class TopicModel:
             self.purity_scorer,
             self.keep_n_results,
             show_progress,
+            surviving_indices,
         )

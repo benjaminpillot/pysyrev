@@ -1,0 +1,50 @@
+# tutorial_config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Minimal config for the 01_full_pipeline.ipynb tutorial.
+# Uses the pre-screened bib_dataset from tests/data/ — no LLM API key needed.
+#
+# Run from the project root:
+#   python -m pysyrev tutorials/tutorial_config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+bib_network:
+  doc_dataset: tests/data/bib_dataset.csv
+  coupling_network:
+    use_resolved: true
+    use_unresolved: true
+    min_shared: 1
+  cocitation_network:
+    use_resolved: true
+    use_unresolved: true
+    min_cocitations: 1
+  export:
+    export_dir: tutorials/outputs/bib_network/
+    run_name: tutorial_run
+
+topic_model:
+  doc_dataset: tests/data/bib_dataset.csv
+  export:
+    export_dir: tutorials/outputs/topic_model/
+    run_name: tutorial_run
+  distance: euclidean
+  keep_n_results: 5
+  hdbscan:
+    min_topic_size_range: [4, 8]
+    min_sample_range: [2, 2]
+    topic_size_step: 2
+    min_sample_step: 1
+  umap:
+    n_neighbors: [5, 10]
+    n_components: [3, 5]
+  bertopic:
+    transformer_model: all-MiniLM-L6-v2   # lightweight; swap for allenai/specter2_base in production
+    n_gram_range: bigram
+
+topic_report:
+  model_index: 0
+  export_to: tutorials/outputs/report/
+
+report:
+  meta:
+    title: ABM Literature Review — Tutorial
+    author: pysyrev tutorial

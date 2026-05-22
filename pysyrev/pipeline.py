@@ -10,7 +10,7 @@ Usage
   pipeline = Pipeline.from_config("config.yaml")
   pipeline.run()
 
-  # Selected stages (in canonical order: bib → review → bib-network → topic-model)
+  # Selected stages (in canonical order: bib → review → bib-network → topic-model → topic-report)
   pipeline.run(stages=["bib", "review"])
 
   # Results are available as attributes
@@ -18,6 +18,7 @@ Usage
   pipeline.review.included_docs # pd.DataFrame
   pipeline.network              # BibNetwork
   pipeline.topic                # TopicModel
+  pipeline.report               # TopicReport
 
 Stage results persist on the instance between run() calls, so data is passed
 in memory when stages are chained:
@@ -37,8 +38,9 @@ if TYPE_CHECKING:
     from pysyrev.network import BibNetwork
     from pysyrev.review import LLMReview
     from pysyrev.topic_model import TopicModel
+    from pysyrev.topic_report import TopicReport
 
-ALL_STAGES = ['bib', 'review', 'bib-network', 'topic-model']
+ALL_STAGES = ['bib', 'review', 'bib-network', 'topic-model', 'topic-report']
 
 
 @dataclass
@@ -48,10 +50,11 @@ class Pipeline:
     Instantiate with :meth:`from_config`, then call :meth:`run`.
     """
     config:  'Config'
-    bib:     Optional['BibDataset'] = field(default=None, init=False)
-    review:  Optional['LLMReview']  = field(default=None, init=False)
-    network: Optional['BibNetwork'] = field(default=None, init=False)
-    topic:   Optional['TopicModel'] = field(default=None, init=False)
+    bib:     Optional['BibDataset']  = field(default=None, init=False)
+    review:  Optional['LLMReview']   = field(default=None, init=False)
+    network: Optional['BibNetwork']  = field(default=None, init=False)
+    topic:   Optional['TopicModel']  = field(default=None, init=False)
+    report:  Optional['TopicReport'] = field(default=None, init=False)
 
     @classmethod
     def from_config(cls, config: Union[str, 'Config']) -> 'Pipeline':
@@ -67,10 +70,12 @@ class Pipeline:
         Parameters
         ----------
         stages : list of str, optional
-            Subset of stages to run. Defaults to all four stages in order.
-            Valid values: 'bib', 'review', 'bib-network', 'topic-model'.
+            Subset of stages to run. Defaults to all configured stages in order.
+            Valid values: 'bib', 'review', 'bib-network', 'topic-model', 'topic-report'.
             Stages are always executed in canonical order regardless of the
             order they appear in the list.
+            When None, only stages that have a corresponding section in the
+            config are executed.
 
         Returns
         -------
@@ -78,7 +83,7 @@ class Pipeline:
             The Pipeline instance (for chaining).
         """
         if stages is None:
-            stages = ALL_STAGES
+            stages = self._configured_stages()
 
         unknown = set(stages) - set(ALL_STAGES)
         if unknown:
@@ -108,8 +113,24 @@ class Pipeline:
 
         if 'topic-model' in ordered:
             from pysyrev.topic_model import TopicModel
-            self.topic = TopicModel.from_config(self.config.topic_model)
+            self.topic = TopicModel.from_config(self.config)
             dataset = self.review.included_docs if self.review is not None else None
             self.topic.run(dataset)
 
+        if 'topic-report' in ordered:
+            from pysyrev.topic_report import TopicReport
+            self.report = TopicReport.from_config(self.config)
+            self.report.generate_report()
+
         return self
+
+    def _configured_stages(self) -> List[str]:
+        """Return stages that have a section in the config, in canonical order."""
+        present = {
+            'bib':          self.config.bib          is not None,
+            'review':       self.config.review        is not None,
+            'bib-network':  self.config.bib_network   is not None,
+            'topic-model':  self.config.topic_model   is not None,
+            'topic-report': self.config.topic_report  is not None,
+        }
+        return [s for s in ALL_STAGES if present[s]]

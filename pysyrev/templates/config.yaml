@@ -4,15 +4,26 @@
 # Copy this file, fill in the required fields, and uncomment the optional
 # sections you need.  Default values are shown next to commented-out keys.
 #
+# All sections are optional — only the sections present are executed.
+# The canonical stage order is:
+#   bib → review → bib-network → topic-model → topic-report
+#
 # Sections:
 #   bib          — bibliography collection and preparation
 #   review       — LLM-based title/abstract screening
 #   bib_network  — bibliographic coupling and co-citation graphs
 #   topic_model  — BERTopic-based topic modelling
+#   topic_report — PDF report generation (model selection)
+#   llm          — LLM topic labelling (optional, used with topic_report)
+#   report       — PDF layout and section parameters
 #
 # Usage:
 #   from pysyrev.core.config import Config
-#   config = Config.load("config_template.yaml")
+#   config = Config.load("my_config.yaml")
+#
+#   # Run all configured stages:
+#   from pysyrev import Pipeline
+#   Pipeline.from_config("my_config.yaml").run()
 # =============================================================================
 
 # Optional: path to a .env file.  Any ${VAR} reference in this file is
@@ -31,7 +42,7 @@ bib:
 
   wos:
     source: file                    # 'file' | 'api'
-    file: /path/to/savedrecs.bib    # required when source: file
+    file: /path/to/savedrecs.bib    # file path or directory of .bib files (WoS exports by chunks)
     # api:                          # required when source: api
     #   api_key: ${WOS_API_KEY}
     #   query: 'ALL=(your query) AND PY=2015-2024'
@@ -220,9 +231,8 @@ bib_network:
   # ---- Output ------------------------------------------------------------
   # Each run is stored in its own sub-directory: <export_dir>/<run_name>/.
   # Two GraphML files are written: coupling_network.graphml and
-  # cocitation_network.graphml.  These paths can be referenced in the report
-  # config (report.yaml) under bib_network.coupling_graph / cocitation_graph,
-  # or left blank there for auto-detection via the 'config' pointer.
+  # cocitation_network.graphml.  When topic_report is configured, the latest
+  # run is auto-detected and the graphs are included in the report automatically.
   # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS).
   export:
     export_dir: /path/to/output/bib_network_results/
@@ -278,7 +288,6 @@ topic_model:
   #   transformer_model: allenai/specter2_base
   #   n_gram_range: bigram            # unigram | bigram
   #   language: english
-  #   nr_repr_docs: 50                # representative documents per topic
   #   calculate_probabilities: true
 
   # ---- Berteley pre-processing (defaults shown) --------------------------
@@ -296,3 +305,70 @@ topic_model:
   #   stride: 1
   #   min_similarity: 0.1
   #   batch_size: 1000
+
+
+# =============================================================================
+# topic_report  (optional)
+# =============================================================================
+# When present, a PDF report is generated after the topic-model stage.
+# Remove this section entirely to skip report generation.
+#
+# topic_report:
+#   model_index: 0          # index in best_results.csv (0 = best ranked model)
+#   export_to: /path/to/output/report/
+#   # run_dir:              # blank → auto-detect the latest topic_model run
+
+
+# =============================================================================
+# llm  (optional — used with topic_report)
+# =============================================================================
+# When present, an LLM generates human-readable labels for each topic.
+# Remove this section to skip LLM labelling.
+#
+# llm:
+#   provider: anthropic       # anthropic | openai | litellm | ollama
+#   model_id: claude-haiku-4-5-20251001
+#   host:                     # blank for hosted APIs
+#   max_tokens: 200
+#   temperature: 0.3
+#   n_repr_docs_for_labeling: 3   # representative documents per topic sent to the LLM to generate topic labels
+#   # max_retries: 2
+#   # max_concurrent_requests: 5
+#   # system_prompt:          # override the default system prompt
+
+
+# =============================================================================
+# report  (optional — used with topic_report)
+# =============================================================================
+# PDF layout and section parameters.  Defaults are used for any omitted key.
+# Remove this section to use all defaults.
+#
+# report:
+#   meta:
+#     title: Bibliographic report — Pysyrev
+#     subtitle:
+#     author: Report generated with the pysyrev engine (v0.1)
+#     date_format: "%d/%m/%Y"
+#     version: 1.0.0
+#     summary: >
+#       This document has been automatically generated.
+#
+#   sections:
+#     topics:
+#       n_repr_docs_per_topic: 5   # representative documents (closest to topic centroid) shown per topic
+#     bib_network:
+#       enabled: auto             # auto | true | false
+#     temporal:
+#       variants: [absolute, cumulative, normalized, weighted]
+#     topic_characteristics:
+#       n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
+#       n_top_cited_global: 50     # N most-cited papers globally used for topic distribution
+#     topic_similarity:
+#       clustering: true          # reorder heatmap by hierarchical clustering
+#       dendrogram: true
+#     paper_selection:
+#       min_year: 2020
+#       proportion_per_topic: 0.15
+#       selection_by: citations          # citations | random
+#       export_annex: true
+#       annex_format: csv         # csv | txt

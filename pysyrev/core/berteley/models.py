@@ -115,11 +115,18 @@ def _calculate_topic_sizes(topics: List[int]) -> dict:
 
 def _calculate_metrics(texts: List[str], topic_model: BERTopic,
                        topics: List[int], coherence_scorer: str) -> dict:
-    """Compute Topic Coherence and Topic Diversity."""
+    """Compute Topic Coherence and Topic Diversity.
+
+    Returns NaN/0 when all documents were assigned to the outlier topic (-1),
+    i.e. when BERTopic found no real clusters.
+    """
     topic_dict  = topic_model.topic_representations_
     topic_words = {k: [x[0] for x in topic_dict[k]] for k in topic_dict}
     word_list   = list(topic_words.values())
     word_list.pop(0)  # remove the outlier topic (-1)
+
+    if not word_list:
+        return {'Coherence': float('nan'), 'Diversity': 0.0}
 
     coherence_score = _calculate_coherence(topic_model, texts, topics, coherence_scorer)
     diversity_score = TopicDiversity(topk=10).score({'topics': word_list})

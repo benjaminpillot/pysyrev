@@ -333,7 +333,6 @@ class BertopicConfig(ConfigField):
     transformer_model:       str  = 'allenai/specter2_base'
     n_gram_range:            str  = 'bigram'
     language:                str  = 'english'
-    nr_repr_docs:            int  = 50
     calculate_probabilities: bool = True
 
 
@@ -546,6 +545,87 @@ class TopicModelConfig(ConfigField):
 
 
 @dataclass
+class TopicsSectionConfig(ConfigField):
+    n_repr_docs_per_topic: int = 5
+
+
+@dataclass
+class BibNetworkSectionConfig(ConfigField):
+    enabled: str = "auto"   # "auto" | "true" | "false"
+
+
+@dataclass
+class TemporalSectionConfig(ConfigField):
+    variants: List[str] = field(default_factory=lambda: [
+        "absolute", "cumulative", "normalized", "weighted"
+    ])
+
+
+@dataclass
+class TopicCharacteristicsConfig(ConfigField):
+    n_top_cited_per_topic: int = 5
+    n_top_cited_global:    int = 50
+
+
+@dataclass
+class TopicSimilarityConfig(ConfigField):
+    clustering: bool = True
+    dendrogram: bool = True
+
+
+@dataclass
+class PaperSelectionConfig(ConfigField):
+    min_year:             int   = 2000
+    proportion_per_topic: float = 0.15
+    selection_by:         str   = "citations"  # "citations" | "random"
+    export_annex:         bool  = True
+    annex_format:         str   = "csv"   # "csv" | "txt"
+
+
+@dataclass
+class ReportSectionsConfig(ConfigField):
+    topics:                TopicsSectionConfig       = None
+    bib_network:           BibNetworkSectionConfig   = None
+    temporal:              TemporalSectionConfig     = None
+    topic_characteristics: TopicCharacteristicsConfig = None
+    topic_similarity:      TopicSimilarityConfig     = None
+    paper_selection:       PaperSelectionConfig      = None
+    extra:                 Union[None, List[dict]]   = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.topics, dict):
+            self.topics = TopicsSectionConfig(**self.topics)
+        elif self.topics is None:
+            self.topics = TopicsSectionConfig()
+
+        if isinstance(self.bib_network, dict):
+            self.bib_network = BibNetworkSectionConfig(**self.bib_network)
+        elif self.bib_network is None:
+            self.bib_network = BibNetworkSectionConfig()
+
+        if isinstance(self.temporal, dict):
+            self.temporal = TemporalSectionConfig(**self.temporal)
+        elif self.temporal is None:
+            self.temporal = TemporalSectionConfig()
+
+        if isinstance(self.topic_characteristics, dict):
+            self.topic_characteristics = TopicCharacteristicsConfig(**self.topic_characteristics)
+        elif self.topic_characteristics is None:
+            self.topic_characteristics = TopicCharacteristicsConfig()
+
+        if isinstance(self.topic_similarity, dict):
+            self.topic_similarity = TopicSimilarityConfig(**self.topic_similarity)
+        elif self.topic_similarity is None:
+            self.topic_similarity = TopicSimilarityConfig()
+
+        if isinstance(self.paper_selection, dict):
+            self.paper_selection = PaperSelectionConfig(**self.paper_selection)
+        elif self.paper_selection is None:
+            self.paper_selection = PaperSelectionConfig()
+
+
+@dataclass
 class ReportMetaConfig(ConfigField):
     title:       str              = "Bibliographic report — Pysyrev"
     subtitle:    Union[None, str] = None
@@ -557,8 +637,8 @@ class ReportMetaConfig(ConfigField):
 
 @dataclass
 class ReportConfig(ConfigField):
-    meta:     Union[None, ReportMetaConfig] = None
-    sections: Union[None, List[dict]]       = None
+    meta:     Union[None, ReportMetaConfig]     = None
+    sections: Union[None, ReportSectionsConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -566,6 +646,10 @@ class ReportConfig(ConfigField):
             self.meta = ReportMetaConfig(**self.meta)
         elif self.meta is None:
             self.meta = ReportMetaConfig()
+        if isinstance(self.sections, dict):
+            self.sections = ReportSectionsConfig(**self.sections)
+        elif self.sections is None:
+            self.sections = ReportSectionsConfig()
 
 
 @dataclass
@@ -578,14 +662,14 @@ class TopicLabelerConfig(ConfigField):
     temperature:             float            = 0.3
     max_retries:             int              = 2
     max_concurrent_requests: int              = 5
-    nr_repr_docs:            int              = 3
+    n_repr_docs_for_labeling: int             = 3
     system_prompt:           Union[None, str] = None
 
 
 @dataclass
 class TopicReportConfig(ConfigField):
     """Model-selection parameters for the topic-report stage."""
-    run_dir:     str = None  # resolved by TopicReportFileConfig.load()
+    run_dir:     str = None  # auto-detected by Config.load() from topic_model.export.export_dir when blank
     model_index: int = 0
     export_to:   str = None
 
@@ -603,126 +687,42 @@ class BibNetworkReportConfig(ConfigField):
 
 
 @dataclass
-class TopicReportFileConfig:
-    """Root config for a report YAML file. Analogous to Config for the main pipeline.
-
-    Five independent top-level sections:
-      - config:       path to the main pysyrev config (used to auto-detect the latest
-                      topic_model run when topic_report.run_dir is left blank, and the
-                      latest bib_network run when bib_network paths are blank)
-      - topic_report: which run and which model to use
-      - bib_network:  optional — coupling / co-citation graph files to include
-      - llm:          optional LLM labeler to generate human-readable topic names
-      - report:       PDF layout (metadata, optional extra sections)
-    """
-    topic_report: TopicReportConfig
-    report:       ReportConfig
-    llm:          Union[None, TopicLabelerConfig]      = None
-    bib_network:  Union[None, BibNetworkReportConfig]  = None
-    env:          Union[None, str]                     = None
-    config:       Union[None, str]                     = None
-
-    @classmethod
-    def load(cls, config_file):
-        with open(config_file, 'r') as f:
-            raw = yaml.safe_load(f)
-
-        env_path = raw.get('env')
-        if env_path:
-            load_dotenv(env_path)
-
-        resolved = _resolve_env_vars(raw)
-
-        main_raw = None
-
-        def _load_main_raw():
-            nonlocal main_raw
-            if main_raw is not None:
-                return main_raw
-            main_config_path = resolved.get('config')
-            if not main_config_path:
-                return None
-            with open(main_config_path, 'r') as f:
-                main_raw = yaml.safe_load(f)
-            return main_raw
-
-        # ---- topic_report: auto-detect latest run when run_dir is blank ----
-        tr_raw = dict(resolved.get('topic_report', {}))
-        if not tr_raw.get('run_dir'):
-            main = _load_main_raw()
-            if not main:
-                raise ValueError(
-                    "topic_report.run_dir is blank: set 'config' (path to the main "
-                    "pysyrev config) so that the latest topic_model run can be "
-                    "detected automatically."
-                )
-            export_dir = (main.get('topic_model') or {}).get('export', {}).get('export_dir')
-            if not export_dir:
-                raise ValueError(
-                    f"topic_model.export.export_dir is not set in the main config."
-                )
-            latest = _find_latest_dir(export_dir)
-            if latest is None:
-                raise FileNotFoundError(
-                    f"No topic_model run directories found in {export_dir!r}."
-                )
-            tr_raw['run_dir'] = latest
-
-        # ---- bib_network: auto-detect graph paths when blank ---------------
-        bn_raw = dict(resolved.get('bib_network') or {})
-        if not bn_raw.get('coupling_graph') or not bn_raw.get('cocitation_graph'):
-            main = _load_main_raw()
-            if main:
-                bn_export_dir = (
-                    (main.get('bib_network') or {})
-                    .get('export', {})
-                    .get('export_dir')
-                )
-                if bn_export_dir:
-                    latest_dir = _find_latest_dir(bn_export_dir)
-                    if latest_dir:
-                        if not bn_raw.get('coupling_graph'):
-                            candidate = os.path.join(latest_dir, 'coupling_network.graphml')
-                            if os.path.isfile(candidate):
-                                bn_raw['coupling_graph'] = candidate
-                        if not bn_raw.get('cocitation_graph'):
-                            candidate = os.path.join(latest_dir, 'cocitation_network.graphml')
-                            if os.path.isfile(candidate):
-                                bn_raw['cocitation_graph'] = candidate
-
-        llm_raw = resolved.get('llm')
-        return cls(
-            env          = resolved.get('env'),
-            config       = resolved.get('config'),
-            topic_report = TopicReportConfig(**tr_raw),
-            report       = ReportConfig(**resolved.get('report', {})),
-            llm          = TopicLabelerConfig(**llm_raw) if llm_raw else None,
-            bib_network  = BibNetworkReportConfig(**bn_raw) if bn_raw else None,
-        )
-
-
-@dataclass
 class Config:
-    """Root configuration object."""
-    bib:         BibConfig
-    review:      ReviewConfig
-    bib_network: BibNetworkConfig
-    topic_model: TopicModelConfig
-    env:         Union[None, str] = None  # path to .env file (loaded before ${VAR} resolution)
+    """Root configuration object.
+
+    All sections are optional — only the sections present in the YAML are
+    executed. The canonical stage order is:
+    ``bib → review → bib-network → topic-model → topic-report``.
+
+    ``Config.load()`` propagates outputs between stages automatically when
+    ``doc_dataset`` / ``run_dir`` are left blank, so a full-pipeline YAML
+    requires no explicit cross-section paths.
+    """
+    env:                Union[None, str]                    = None
+    bib:                Union[None, BibConfig]              = None
+    review:             Union[None, ReviewConfig]           = None
+    bib_network:        Union[None, BibNetworkConfig]       = None
+    topic_model:        Union[None, TopicModelConfig]       = None
+    topic_report:       Union[None, TopicReportConfig]      = None
+    report:             Union[None, ReportConfig]           = None
+    llm:                Union[None, TopicLabelerConfig]     = None
+    # Auto-populated during load() — not a user-facing YAML key.
+    bib_network_graphs: Union[None, BibNetworkReportConfig] = None
 
     @classmethod
     def load(cls, config_file):
-        """
-        Load a YAML config file. Steps:
-          1. Read the YAML as raw dict.
-          2. If `env:` (root-level) points to a .env file, load it so its
-             variables become available in os.environ.
-          3. Resolve all ${VAR} references throughout the structure.
-          4. Auto-fill blank doc_dataset fields from the latest review run.
-          5. Build typed dataclasses.
+        """Load a YAML config file.
+
+        Steps:
+          1. Read the YAML.
+          2. Load the .env file referenced by the root-level ``env:`` key (if any).
+          3. Resolve all ``${VAR}`` references.
+          4. Propagate outputs between stages when ``doc_dataset`` / ``run_dir``
+             are left blank (auto-detection of the latest run in each export_dir).
+          5. Build typed dataclasses for every section present.
         """
         with open(config_file, 'r') as file:
-            raw = yaml.safe_load(file)
+            raw = yaml.safe_load(file) or {}
 
         env_path = raw.get('env')
         if env_path:
@@ -730,16 +730,15 @@ class Config:
 
         resolved = _resolve_env_vars(raw)
 
-        # Step 4: propagate the latest output of each stage to the next one
-        # when doc_dataset is left blank (standalone re-run use case).
-        #   bib.export.export_dir      → review.doc_dataset
-        #   review.export.export_dir   → bib_network.doc_dataset
-        #                              → topic_model.doc_dataset
+        # ── Propagate outputs between stages when doc_dataset is blank ────────
+        #   bib.export.export_dir    → review.doc_dataset
+        #   review.export.export_dir → bib_network.doc_dataset
+        #                            → topic_model.doc_dataset
         bib_export_dir    = (resolved.get('bib') or {}).get('export', {}).get('export_dir')
         review_export_dir = (resolved.get('review') or {}).get('export', {}).get('export_dir')
-        review_data       = resolved.get('review', {})
-        bib_network_data  = resolved.get('bib_network', {})
-        topic_model_data  = resolved.get('topic_model', {})
+        review_data      = dict(resolved.get('review') or {})
+        bib_network_data = dict(resolved.get('bib_network') or {})
+        topic_model_data = dict(resolved.get('topic_model') or {})
 
         if bib_export_dir and not review_data.get('doc_dataset'):
             latest = _find_latest_file(bib_export_dir, 'bib_dataset.csv')
@@ -754,10 +753,42 @@ class Config:
                 if not topic_model_data.get('doc_dataset'):
                     topic_model_data['doc_dataset'] = latest
 
+        # ── Auto-detect topic_report.run_dir from latest topic_model run ─────
+        topic_report_data = dict(resolved.get('topic_report') or {})
+        if topic_report_data and not topic_report_data.get('run_dir'):
+            tm_export_dir = (
+                topic_model_data.get('export', {}).get('export_dir')
+                or (resolved.get('topic_model') or {}).get('export', {}).get('export_dir')
+            )
+            if tm_export_dir:
+                latest = _find_latest_dir(tm_export_dir)
+                if latest:
+                    topic_report_data['run_dir'] = latest
+
+        # ── Auto-detect bib_network graph paths for the report ────────────────
+        bib_network_graphs = None
+        bn_export_dir = (
+            bib_network_data.get('export', {}).get('export_dir')
+            or (resolved.get('bib_network') or {}).get('export', {}).get('export_dir')
+        )
+        if bn_export_dir:
+            latest_dir = _find_latest_dir(bn_export_dir)
+            if latest_dir:
+                coupling   = os.path.join(latest_dir, 'coupling_network.graphml')
+                cocitation = os.path.join(latest_dir, 'cocitation_network.graphml')
+                bib_network_graphs = BibNetworkReportConfig(
+                    coupling_graph   = coupling   if os.path.isfile(coupling)   else None,
+                    cocitation_graph = cocitation if os.path.isfile(cocitation) else None,
+                )
+
         return cls(
-            env         = resolved.get('env'),
-            bib         = BibConfig(**resolved['bib']),
-            review      = ReviewConfig(**review_data),
-            bib_network = BibNetworkConfig(**bib_network_data),
-            topic_model = TopicModelConfig(**topic_model_data),
+            env                = resolved.get('env'),
+            bib                = BibConfig(**resolved['bib'])            if resolved.get('bib')          else None,
+            review             = ReviewConfig(**review_data)             if review_data                   else None,
+            bib_network        = BibNetworkConfig(**bib_network_data)    if bib_network_data              else None,
+            topic_model        = TopicModelConfig(**topic_model_data)    if topic_model_data              else None,
+            topic_report       = TopicReportConfig(**topic_report_data)  if topic_report_data             else None,
+            report             = ReportConfig(**resolved['report'])      if resolved.get('report')        else None,
+            llm                = TopicLabelerConfig(**resolved['llm'])   if resolved.get('llm')           else None,
+            bib_network_graphs = bib_network_graphs,
         )
