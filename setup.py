@@ -35,7 +35,7 @@ setup(
         "hdbscan>=0.8",
         "umap-learn>=0.5",
         "sentence-transformers>=2.0",
-        "gensim>=4.0",
+        "gensim>=4.3.0",
         "octis>=1.0",
         "nltk>=3.8",
         "spacy>=3.0",
