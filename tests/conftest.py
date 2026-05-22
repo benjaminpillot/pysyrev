@@ -170,7 +170,7 @@ def report_cfg():
             version="0.0",
         ),
         sections=ReportSectionsConfig(
-            topics=TopicsSectionConfig(nr_repr_docs=3),
+            topics=TopicsSectionConfig(n_repr_docs_per_topic=3),
             bib_network=BibNetworkSectionConfig(enabled="auto"),
             temporal=TemporalSectionConfig(
                 variants=["absolute", "cumulative", "normalized", "weighted"]
