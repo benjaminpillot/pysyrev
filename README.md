@@ -1,5 +1,10 @@
 # pysyrev
 
+[![tests](https://github.com/benjaminpillot/pysyrev/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpillot/pysyrev/actions/workflows/tests.yml)
+[![docs](https://readthedocs.org/projects/pysyrev/badge/?version=latest)](https://pysyrev.readthedocs.io/en/latest/)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![python](https://img.shields.io/badge/python-≥3.10-blue)](https://www.python.org/)
+
 **pysyrev** (PYthon SYstematic REView) is an automated, LLM-assisted PRISMA workflow for systematic literature reviews. It covers the full pipeline — from raw bibliographic records to screened, deduplicated, and thematically structured corpora — and produces a PDF report at the end.
 
 ![image](docs/espace-dev-ird.png)
