@@ -152,13 +152,6 @@ See the `tutorials/` folder for step-by-step Jupyter notebooks and annotated con
 
 ---
 
----
-
-<div align="center">
-  <img src="docs/espace-dev-ird.png" alt="organizations" width="600"/>
-</div>
-
----
 
 ## Contributing
 
@@ -171,3 +164,11 @@ See the `tutorials/` folder for step-by-step Jupyter notebooks and annotated con
 ### Conceptualization and Coordination
 
 - Benjamin Pillot
+- 
+---
+
+<div align="center">
+  <img src="docs/espace-dev-ird.png" alt="organizations" width="600"/>
+</div>
+
+---
