@@ -9,7 +9,7 @@ Field names mirror the corresponding entries in config.py to keep the
 bridge between the two trivial.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Union
@@ -134,6 +134,7 @@ class TopicModel:
     purity_scorer:        str
     run_name:             Union[None, str]
     overwrite:            bool = False
+    _run_dir:             Union[None, str] = field(default=None, init=False, repr=False)
 
     # ---- bridge from configuration --------------------------------------
 
@@ -209,6 +210,7 @@ class TopicModel:
         name = self.run_name or datetime.now().strftime('%Y-%m-%dT%H%M%S')
         run_dir = Path(self.export_dir) / name
         run_dir.mkdir(parents=True, exist_ok=self.overwrite)
+        self._run_dir = str(run_dir)
         return run_dir
 
     def run(self, dataset: pd.DataFrame = None, show_progress=True):
@@ -219,6 +221,7 @@ class TopicModel:
         dataset : pd.DataFrame, optional
             Reviewed-included dataset. If None, loaded from ``doc_dataset``
             (set via config or auto-detected by Config.load).
+        show_progress : bool
         """
         run_dir = self._make_run_dir()
 
