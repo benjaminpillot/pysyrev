@@ -24,6 +24,7 @@ import litellm
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel
+from tqdm import tqdm as tqdm_sync
 from tqdm.asyncio import tqdm
 
 litellm.drop_params = True   # silently drop params unsupported by a provider
@@ -498,7 +499,8 @@ def process_per_batch(dataset, workflow_schema, batch_size, pause, subset_file_f
                for i in range(0, len(dataset), batch_size)]
 
     results = []
-    for idx, subset in enumerate(subsets):
+    for idx, subset in tqdm_sync(enumerate(subsets), total=len(subsets),
+                                 desc="Batch", unit="batch"):
         if subset_file_fn is not None:
             subset_file = subset_file_fn(idx)
             if not os.path.exists(subset_file):

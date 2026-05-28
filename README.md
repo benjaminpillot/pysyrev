@@ -73,22 +73,21 @@ Documentation is available from [here](https://pysyrev.readthedocs.io/en/latest/
 ### CLI
 
 ```bash
+# Check the installed version
+pysyrev --version
+
 # Run all configured stages (only stages present in the config are executed)
-python -m pysyrev config.yaml
+pysyrev config.yaml
 
 # Run a single stage
-python -m pysyrev config.yaml --stage bib
-python -m pysyrev config.yaml --stage review
-python -m pysyrev config.yaml --stage bib-network
-python -m pysyrev config.yaml --stage topic-model
-python -m pysyrev config.yaml --stage topic-report
-```
-
-If installed via `setup.py`, the `pysyrev` command is also available directly:
-
-```bash
+pysyrev config.yaml --stage bib
+pysyrev config.yaml --stage review
+pysyrev config.yaml --stage bib-network
+pysyrev config.yaml --stage topic-model
 pysyrev config.yaml --stage topic-report
 ```
+
+> If the `pysyrev` command is not available (e.g. editable install not yet registered), use `python -m pysyrev` as a drop-in replacement.
 
 ### Python API
 
@@ -125,7 +124,7 @@ topic_report:
 ```
 
 ```bash
-python -m pysyrev report_only.yaml
+pysyrev report_only.yaml
 ```
 
 ---
