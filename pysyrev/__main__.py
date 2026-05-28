@@ -22,8 +22,11 @@ topic-report).
 """
 
 import argparse
+import os
 
-from pysyrev import ALL_STAGES, Pipeline
+os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+
+from pysyrev import ALL_STAGES, Pipeline, __version__
 
 
 def _print_stage_result(stage, pipeline):
@@ -53,6 +56,7 @@ def main():
         prog='python -m pysyrev',
         description='Systematic literature review pipeline.',
     )
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('config', help='Path to the YAML pipeline config file.')
     parser.add_argument(
         '--stage',
