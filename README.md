@@ -21,7 +21,7 @@
 - **Multi-source ingestion** — Web of Science (file or REST API), OpenAlex (file or REST API), Scopus, PubMed
 - **Automatic deduplication** — fuzzy title matching across sources
 - **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…)
-- **Bibliographic network analysis** — bibliographic coupling and co-citation graphs exported as GraphML
+- **Bibliographic network analysis** — direct citation, bibliographic coupling, and co-citation graphs exported as GraphML
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
 
@@ -33,7 +33,7 @@
 |---|---|---|
 | Bibliography | `bib` | Fetch, clean, filter, deduplicate, and optionally resolve references |
 | LLM review | `review` | Screen documents against inclusion/exclusion criteria with one or more LLM reviewers |
-| Bibliographic network | `bib-network` | Build coupling and co-citation networks from the included corpus |
+| Bibliographic network | `bib-network` | Build direct citation, bibliographic coupling, and co-citation networks from the included corpus |
 | Topic modelling | `topic-model` | Cluster documents into topics using BERTopic; rank configurations by coherence |
 | Report | `topic-report` | Generate a PDF report from the selected topic model run |
 
@@ -81,32 +81,46 @@ pysyrev config.yaml
 
 # Run a single stage
 pysyrev config.yaml --stage bib
-pysyrev config.yaml --stage review
-pysyrev config.yaml --stage bib-network
-pysyrev config.yaml --stage topic-model
 pysyrev config.yaml --stage topic-report
+
+# Run multiple specific stages in one call (always executed in canonical order)
+pysyrev config.yaml --stage bib-network topic-model topic-report
+
+# Run from a given stage to the end (all configured stages from that point onwards)
+pysyrev config.yaml --from bib-network
+pysyrev config.yaml --from topic-report
+
+# Download full-text PDFs for a list of candidates (Unpaywall → OpenAlex → Elsevier TDM)
+pysyrev download candidates.csv output_folder/
+pysyrev download candidates.csv output_folder/ --config download_config.yaml
 ```
+
+Valid stage names: `bib` | `review` | `bib-network` | `topic-model` | `topic-report`.
+`--stage` and `--from` are mutually exclusive.
 
 > If the `pysyrev` command is not available (e.g. editable install not yet registered), use `python -m pysyrev` as a drop-in replacement.
 
 ### Python API
 
 ```python
-from pysyrev import Pipeline
+from pysyrev import Pipeline, ALL_STAGES
 
 # Full pipeline in one call — runs only the stages declared in the config
 pipeline = Pipeline.from_config("config.yaml")
 pipeline.run()
 
-# Or stage by stage — results persist on the instance between calls
-pipeline.run(stages=["bib"])
-pipeline.run(stages=["review"])        # uses pipeline.bib.dataset automatically
+# Run specific stages (always executed in canonical order)
+pipeline.run(stages=["bib", "review"])
 pipeline.run(stages=["topic-report"])  # generates the PDF report
+
+# Run from a given stage to the end
+start = ALL_STAGES.index("bib-network")
+pipeline.run(stages=ALL_STAGES[start:])
 
 # Access results
 df_all    = pipeline.bib.dataset          # pd.DataFrame — all collected documents
 df_kept   = pipeline.review.included_docs # pd.DataFrame — LLM-screened inclusions
-network   = pipeline.network              # BibNetwork
+network   = pipeline.network              # BibNetwork (citation, coupling, co-citation graphs)
 topic     = pipeline.topic                # TopicModel
 report    = pipeline.report               # TopicReport
 ```

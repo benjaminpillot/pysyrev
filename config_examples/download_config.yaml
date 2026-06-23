@@ -1,0 +1,71 @@
+# =============================================================================
+# pysyrev — standalone download configuration
+# =============================================================================
+# Load with:
+#   from pysyrev.core.config import DownloadConfig
+#   cfg = DownloadConfig.load("download_config.yaml")
+#
+# Or from the CLI (when implemented):
+#   pysyrev download --config download_config.yaml
+# =============================================================================
+
+# Path to the .env file.  Loaded first so every ${VAR} reference below
+# is resolved against it.  Remove or leave blank if you set env vars directly.
+env: /path/to/.env
+
+
+# ── Input ────────────────────────────────────────────────────────────────────
+# Path to the CSV file listing the papers to download.
+# Must contain at least a `doi` column.
+# Typical sources:
+#   - the paper_selection annex produced by topic-report
+#     (e.g. <topic_report_export>/paper_selection_annex.csv)
+#   - reviewed_included.csv from the review stage
+#   - any custom CSV with a `doi` column
+doc_dataset: /path/to/paper_selection_annex.csv
+
+
+# ── Output ───────────────────────────────────────────────────────────────────
+# Root directory for all download output.  Two items are written here:
+#   papers/          — downloaded files, named by sanitised DOI
+#   download_report.csv — one row per paper: doi | title | status | source | file_path
+output_dir: /path/to/downloaded_papers/
+
+
+# ── Global options ───────────────────────────────────────────────────────────
+# Default format for open-access downloads (Unpaywall / OpenAlex).
+# 'pdf'  — raw PDF file.
+# 'xml'  — structured full-text XML (recommended when the downstream step is
+#           an LLM: text is already extracted, sections are labelled, and file
+#           size is smaller than PDF).
+format: pdf
+
+# Maximum number of papers to attempt (useful for testing).
+# Leave blank to process the entire doc_dataset.
+max_papers:
+
+# Seconds to wait between HTTP requests.
+# Unpaywall's fair-use policy requires ≤ 1 request/second.
+request_delay: 1.0
+
+
+# ── Source: Unpaywall ────────────────────────────────────────────────────────
+# Unpaywall finds legal open-access versions of papers by DOI.
+# `email` is mandatory — it identifies your institution in Unpaywall's
+# logs and grants access to the higher-throughput pool.
+# Remove this block entirely to skip the Unpaywall step.
+unpaywall:
+  email: ${UNPAYWALL_EMAIL}    # or write your email directly here
+
+
+# ── Source: Elsevier TDM ─────────────────────────────────────────────────────
+# Elsevier's Text and Data Mining API gives full-text access to Elsevier
+# journals (ScienceDirect) under an institutional licence.
+# `api_key` is the key issued by Elsevier for your institution.
+# `format`:
+#   'xml' — structured full-text (recommended for LLM use).
+#   'pdf' — raw PDF.
+# Remove this block entirely to skip the Elsevier step.
+elsevier:
+  api_key: ${ELSEVIER_API_KEY}
+  format: xml                   # xml | pdf

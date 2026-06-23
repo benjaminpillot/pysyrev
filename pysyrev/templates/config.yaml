@@ -216,6 +216,11 @@ bib_network:
   # Set an explicit path to target a specific run or an external file.
   doc_dataset:
 
+  # ---- Direct citation (directed graph: A → B means A cites B) ----------
+  citation_network:
+    use_resolved: true
+    use_unresolved: false         # set true to include unresolved external references
+
   # ---- Bibliographic coupling --------------------------------------------
   coupling_network:
     use_resolved: true
@@ -230,9 +235,10 @@ bib_network:
 
   # ---- Output ------------------------------------------------------------
   # Each run is stored in its own sub-directory: <export_dir>/<run_name>/.
-  # Two GraphML files are written: coupling_network.graphml and
-  # cocitation_network.graphml.  When topic_report is configured, the latest
-  # run is auto-detected and the graphs are included in the report automatically.
+  # Three GraphML files are written: citation_network.graphml,
+  # coupling_network.graphml and cocitation_network.graphml.
+  # When topic_report is configured, the latest run is auto-detected and the
+  # graphs are included in the report automatically.
   # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS).
   export:
     export_dir: /path/to/output/bib_network_results/
@@ -358,6 +364,8 @@ topic_model:
 #       n_repr_docs_per_topic: 5   # representative documents (closest to topic centroid) shown per topic
 #     bib_network:
 #       enabled: auto             # auto | true | false
+#       corpus_only: true         # keep only corpus nodes in both graphs (default: true)
+#       exclude_outliers: true    # remove Topic=-1 nodes from all graphs (default: true)
 #     temporal:
 #       variants: [absolute, cumulative, normalized, weighted]
 #     topic_characteristics:
@@ -369,6 +377,6 @@ topic_model:
 #     paper_selection:
 #       min_year: 2020
 #       proportion_per_topic: 0.15
-#       selection_by: citations          # citations | random
+#       selection_by: citations          # citations | random | coupling | co_citation
 #       export_annex: true
 #       annex_format: csv         # csv | txt

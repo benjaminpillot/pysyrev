@@ -62,6 +62,16 @@ class TestCLIArguments:
         result = _run(str(cfg), "--stage", "invalid-stage")
         assert result.returncode != 0
 
+    def test_stage_and_from_are_mutually_exclusive(self, tmp_path):
+        cfg = _write_config(tmp_path, "# no sections\n")
+        result = _run(str(cfg), "--stage", "bib", "--from", "review")
+        assert result.returncode != 0
+
+    def test_invalid_from_stage_exits_nonzero(self, tmp_path):
+        cfg = _write_config(tmp_path, "# no sections\n")
+        result = _run(str(cfg), "--from", "invalid-stage")
+        assert result.returncode != 0
+
 
 # =============================================================================
 # Integration tests — real execution via subprocess
@@ -99,7 +109,7 @@ class TestCLITopicReport:
               export_to: {export_dir}
         """)
         _run(str(cfg), "--stage", "topic-report")
-        pdfs = list(export_dir.glob("*.pdf"))
+        pdfs = list(export_dir.glob("**/*.pdf"))
         assert len(pdfs) == 1
 
     def test_all_runs_only_configured_stages(self, tmp_path, topic_model_outputs):
@@ -119,3 +129,41 @@ class TestCLITopicReport:
         result = _run(str(cfg))
         assert result.returncode == 0
         assert "[topic-report]" not in result.stdout
+
+    def test_multi_stage_runs_both(self, tmp_path, topic_model_outputs):
+        """--stage with two values must run both stages."""
+        export_dir = tmp_path / "report"
+        cfg = _write_config(tmp_path, f"""\
+            topic_report:
+              model_index: 0
+              run_dir: {topic_model_outputs["run_dir"]}
+              export_to: {export_dir}
+        """)
+        result = _run(str(cfg), "--stage", "topic-report", "topic-report")
+        assert result.returncode == 0, result.stderr
+
+    def test_from_stage_runs_configured_stages(self, tmp_path, topic_model_outputs):
+        """--from topic-report must run topic-report when it is the only configured stage."""
+        export_dir = tmp_path / "report"
+        cfg = _write_config(tmp_path, f"""\
+            topic_report:
+              model_index: 0
+              run_dir: {topic_model_outputs["run_dir"]}
+              export_to: {export_dir}
+        """)
+        result = _run(str(cfg), "--from", "topic-report")
+        assert result.returncode == 0, result.stderr
+        assert "[topic-report] Done" in result.stdout
+
+    def test_from_stage_skips_earlier_unconfigured_stages(self, tmp_path, topic_model_outputs):
+        """--from bib-network must not attempt bib or review when absent from config."""
+        export_dir = tmp_path / "report"
+        cfg = _write_config(tmp_path, f"""\
+            topic_report:
+              model_index: 0
+              run_dir: {topic_model_outputs["run_dir"]}
+              export_to: {export_dir}
+        """)
+        result = _run(str(cfg), "--from", "bib-network")
+        assert result.returncode == 0, result.stderr
+        assert "[topic-report] Done" in result.stdout

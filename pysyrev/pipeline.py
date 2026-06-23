@@ -13,6 +13,10 @@ Usage
   # Selected stages (in canonical order: bib → review → bib-network → topic-model → topic-report)
   pipeline.run(stages=["bib", "review"])
 
+  # From a given stage to the end
+  start = ALL_STAGES.index("bib-network")
+  pipeline.run(stages=ALL_STAGES[start:])
+
   # Results are available as attributes
   pipeline.bib.dataset          # pd.DataFrame
   pipeline.review.included_docs # pd.DataFrame
@@ -116,11 +120,11 @@ class Pipeline:
             self.topic = TopicModel.from_config(self.config)
             dataset = self.review.included_docs if self.review is not None else None
             self.topic.run(dataset)
-            # Propagate the freshly created run_dir to topic_report when both
-            # stages run in the same invocation (Config.load can't detect it
-            # yet because the directory didn't exist at load time).
+            # Always propagate the freshly created run_dir to topic_report when
+            # both stages run together — Config.load may have auto-detected an
+            # older run that existed before this one was created.
             if (self.config.topic_report is not None
-                    and not self.config.topic_report.run_dir):
+                    and 'topic-report' in ordered):
                 self.config.topic_report.run_dir = self.topic._run_dir
 
         if 'topic-report' in ordered:

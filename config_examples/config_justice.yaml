@@ -16,7 +16,7 @@ bib:
       cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
 #    source: file   # 'file' or 'api' or leave blank if not to be included
-    source: # file
+    source:
     file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
     api:
       api_key: #${OPENALEX_API_KEY}
@@ -46,7 +46,7 @@ bib:
   extract:
     include_doc_type: [article, review]  # leave empty to keep all document types
     exclude_doc_type: [peer review]      # types to remove (fuzzy); takes priority over include_doc_type
-    year: 2020                   # min publication year (inclusive)
+    year: 2016                     # min publication year (inclusive)
   #   nb_citations: 0              # min citation count (inclusive)
     language: english              # str, list of str, or null/empty (default: null = keep all languages)
   #   scorer: partial_token_sort_ratio
@@ -85,7 +85,7 @@ review: # LLM-based review
   max_concurrent_requests : 10  # Max simultaneous API calls for all reviewers.
                                 # Keep low for Anthropic (5-10); null = default (10). 30 is possible for OpenAI.
                                 # Overridable per reviewer.
-  items_per_call : 25           # Articles sent per API call. Higher values reduce the number of calls
+  items_per_call : 30           # Articles sent per API call. Higher values reduce the number of calls
                                 # (backstory sent once per batch). Overridable per reviewer.
   text_inputs : [title, abstract, keywords]
 #  input_description : article title/abstract/keywords
@@ -98,7 +98,7 @@ review: # LLM-based review
                       2. The scope of the study DOES NOT include models
                       or modeling approaches
                       3. The scope of the study DOES NOT include justice aspects
-  sample_size : 200  # Leave blank if the whole dataset must be processed. Otherwise,
+  sample_size :     # Leave blank if the whole dataset must be processed. Otherwise,
                     # size of the corresponding random sample to withdraw from the dataset
   decision_rule : majority   # majority, mean
   workflow :    # Workflow consists in as many rounds as defined by the
@@ -201,6 +201,10 @@ review: # LLM-based review
 bib_network:
   doc_dataset:  # leave blank to use the last review run in export_dir
 
+  citation_network:
+    use_resolved: true
+    use_unresolved: false   # set true to include unresolved external references
+
   coupling_network:
     use_resolved: true
     use_unresolved: true
@@ -246,12 +250,12 @@ topic_model:
   # clustering procedures corresponding to n_neighbors,
   # n_components, topic size, and min sample values
   # default = 10
-  keep_n_results :
+  keep_n_results : 25
 
 # ---- HDBSCAN parameters -------------------------
   hdbscan:
-    min_topic_size_range : [4, 32]
-    min_sample_range : [2, 10]
+    min_topic_size_range : [4, 52]
+    min_sample_range : [2, 20]
     topic_size_step : 4
     min_sample_step : 2
 #    cluster_selection_method : leaf
@@ -260,7 +264,7 @@ topic_model:
 
 # ---- UMAP parameters ----------------------------
   umap:
-    n_neighbors : [5, 10]
+    n_neighbors : [5, 10, 15]
     n_components : [5, 10, 15]
 #    metric : cosine
 #    min_dist : 0.0
@@ -345,7 +349,9 @@ report:
      topics:
        n_repr_docs_per_topic: 5
 #     bib_network:
-#       enabled: auto      # auto | true | false
+#       enabled: auto            # auto | true | false
+#       corpus_only: true        # keep only corpus nodes in both graphs (default: true)
+#       exclude_outliers: true   # remove Topic=-1 nodes from both graphs (default: true)
 #     temporal:
 #       variants: [absolute, cumulative, normalized, weighted]
 #     topic_characteristics:
@@ -357,6 +363,6 @@ report:
      paper_selection:
        min_year: 2020
        proportion_per_topic: 0.15
-       selection_by: citations          # citations | random
+       selection_by: citations          # citations | random | coupling | co_citation
        export_annex: true
        annex_format: csv

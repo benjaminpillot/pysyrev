@@ -52,10 +52,10 @@ def _minimal_report_config() -> ReportConfig:
             version="0.0",
         ),
         sections=ReportSectionsConfig(
-            topics=TopicsSectionConfig(nr_repr_docs=2),
+            topics=TopicsSectionConfig(n_repr_docs_per_topic=2),
             bib_network=BibNetworkSectionConfig(enabled="auto"),
             temporal=TemporalSectionConfig(variants=["absolute"]),
-            topic_characteristics=TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5),
+            topic_characteristics=TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5),
             topic_similarity=TopicSimilarityConfig(clustering=False, dendrogram=False),
             paper_selection=PaperSelectionConfig(
                 min_year=2020,
@@ -228,9 +228,9 @@ class TestTopicReportIntegration:
                 version="0.0",
             ),
             sections=ReportSectionsConfig(
-                topics=TopicsSectionConfig(nr_repr_docs=2),
+                topics=TopicsSectionConfig(n_repr_docs_per_topic=2),
                 temporal=TemporalSectionConfig(variants=["absolute"]),
-                topic_characteristics=TopicCharacteristicsConfig(top_n_per_topic=2, top_n_global=5),
+                topic_characteristics=TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5),
                 topic_similarity=TopicSimilarityConfig(clustering=False, dendrogram=False),
                 paper_selection=PaperSelectionConfig(
                     min_year=2020,

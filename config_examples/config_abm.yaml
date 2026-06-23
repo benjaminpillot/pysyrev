@@ -197,6 +197,10 @@ review: # LLM-based review
 bib_network:
   doc_dataset:  # leave blank to use the last review run in export_dir
 
+  citation_network:
+    use_resolved: true
+    use_unresolved: false         # set true to include unresolved external references
+
   coupling_network:
     use_resolved: true
     use_unresolved: true
@@ -341,7 +345,9 @@ report:
      topics:
        n_repr_docs_per_topic: 5
 #     bib_network:
-#       enabled: auto      # auto | true | false
+#       enabled: auto            # auto | true | false
+#       corpus_only: true        # keep only corpus nodes in all graphs (default: true)
+#       exclude_outliers: true   # remove Topic=-1 nodes from all graphs (default: true)
 #     temporal:
 #       variants: [absolute, cumulative, normalized, weighted]
 #     topic_characteristics:
@@ -353,6 +359,6 @@ report:
      paper_selection:
        min_year: 2020
        proportion_per_topic: 0.15
-       selection_by: citations          # citations | random
+       selection_by: citations          # citations | random | coupling | co_citation
        export_annex: true
        annex_format: csv

@@ -3,13 +3,21 @@ import pandas as pd
 
 from pysyrev.bibdata import BibDataset
 from pysyrev.core.config import BibNetworkConfig, BibNetworkExportConfig
-from pysyrev.core.network import build_coupling_graph, build_cocitation_graph
+from pysyrev.core.network import (
+    build_coupling_graph,
+    build_cocitation_graph,
+    build_citation_graph,
+)
 
 
 class BibNetwork:
     """Network analysis built from a BibDataset.
 
-    Two graph types are available:
+    Three graph types are available:
+
+    Citation — directed graph where A → B means corpus document A cites B.
+        Nodes are corpus docs plus (optionally) external references.
+        See build_citation_network().
 
     Bibliographic coupling — documents as nodes, linked when they share
         common references. See build_coupling_network().
@@ -19,26 +27,61 @@ class BibNetwork:
         that exist in the corpus are marked node_type='internal'; unresolved
         external references are node_type='external'. See build_cocitation_network().
 
-    Both graphs can coexist on the same BibNetwork instance.
-
     Usage
     -----
     net = BibNetwork(bib_dataset)
+    net.build_citation_network()
     net.build_coupling_network()
     net.build_cocitation_network()
+    G_citation  = net.citation_graph
     G_coupling  = net.coupling_graph
     G_cocit     = net.cocitation_graph
     """
 
-    _coupling_config = None
+    _citation_config   = None
+    _coupling_config   = None
     _cocitation_config = None
-    _export_config = None
-    _doc_dataset = None
-    _coupling_graph = None
-    _cocitation_graph = None
+    _export_config     = None
+    _doc_dataset       = None
+    _citation_graph    = None
+    _coupling_graph    = None
+    _cocitation_graph  = None
 
     def __init__(self, bib_dataset=None):
         self._dataset = bib_dataset
+
+    # ------------------------------------------------------------------ #
+    # Direct citation                                                       #
+    # ------------------------------------------------------------------ #
+
+    def build_citation_network(
+        self,
+        use_resolved:   bool = True,
+        use_unresolved: bool = True,
+    ) -> 'BibNetwork':
+        """Build (or rebuild) the directed citation graph.
+
+        Parameters
+        ----------
+        use_resolved : bool
+            Include resolved internal reference IDs.
+        use_unresolved : bool
+            Include unresolved raw reference strings.
+        """
+        self._citation_graph = build_citation_graph(
+            self._dataset.dataset,
+            use_resolved=use_resolved,
+            use_unresolved=use_unresolved,
+        )
+        return self
+
+    @property
+    def citation_graph(self):
+        if self._citation_graph is None:
+            raise ValueError(
+                "Citation graph not built yet — call build_citation_network() first."
+            )
+        return self._citation_graph
 
     # ------------------------------------------------------------------ #
     # Bibliographic coupling                                               #
@@ -121,6 +164,7 @@ class BibNetwork:
     def from_config(cls, config: BibNetworkConfig) -> 'BibNetwork':
         instance = cls()
         instance._doc_dataset       = config.doc_dataset
+        instance._citation_config   = config.citation_network
         instance._coupling_config   = config.coupling_network
         instance._cocitation_config = config.cocitation_network
         instance._export_config     = config.export
@@ -129,7 +173,7 @@ class BibNetwork:
     # ------ runtime ---------------------------------------------------
 
     def run(self, dataset: pd.DataFrame = None) -> 'BibNetwork':
-        """Build coupling and co-citation graphs.
+        """Build citation, coupling and co-citation graphs.
 
         Parameters
         ----------
@@ -147,6 +191,11 @@ class BibNetwork:
                 )
             self._dataset = BibDataset(bib_dataset=pd.read_csv(self._doc_dataset))
 
+        cfg = self._citation_config
+        self.build_citation_network(
+            use_resolved   = cfg.use_resolved   if cfg else True,
+            use_unresolved = cfg.use_unresolved if cfg else True,
+        )
         cfg = self._coupling_config
         self.build_coupling_network(
             use_resolved   = cfg.use_resolved   if cfg else True,
@@ -162,7 +211,7 @@ class BibNetwork:
         return self
 
     def save(self, export_config: BibNetworkExportConfig = None) -> 'BibNetwork':
-        """Export coupling and co-citation graphs to GraphML files.
+        """Export citation, coupling and co-citation graphs to GraphML files.
 
         GraphML is compatible with Gephi, Cytoscape, and networkx.
         ``shared_refs`` edge sets are serialised as semicolon-separated strings.
@@ -176,6 +225,9 @@ class BibNetwork:
             )
         cfg.resolve()
 
+        if self._citation_graph is not None:
+            nx.write_graphml(self._citation_graph, cfg.citation_graph)
+
         if self._coupling_graph is not None:
             graph = self._coupling_graph.copy()
             for _, _, data in graph.edges(data=True):
@@ -188,10 +240,17 @@ class BibNetwork:
 
         return self
 
-
     # ------------------------------------------------------------------ #
     # Generic stats                                                        #
     # ------------------------------------------------------------------ #
+
+    @property
+    def n_citation_nodes(self) -> int:
+        return self._citation_graph.number_of_nodes() if self._citation_graph is not None else 0
+
+    @property
+    def n_citation_edges(self) -> int:
+        return self._citation_graph.number_of_edges() if self._citation_graph is not None else 0
 
     @property
     def n_coupling_nodes(self) -> int:

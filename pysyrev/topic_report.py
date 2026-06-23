@@ -136,9 +136,8 @@ class TopicReport:
                     "Provide output_file or set export_to in the config."
                 )
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            output_file = os.path.join(
-                self.export_to, f"topic_report_{ts}.pdf"
-            )
+            run_subdir = os.path.join(self.export_to, f"report_{ts}")
+            output_file = os.path.join(run_subdir, f"topic_report_{ts}.pdf")
 
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 

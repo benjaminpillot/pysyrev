@@ -419,6 +419,12 @@ class ReviewConfig(ConfigField):
 
 
 @dataclass
+class CitationNetworkConfig(ConfigField):
+    use_resolved:   bool = False
+    use_unresolved: bool = False
+
+
+@dataclass
 class CouplingNetworkConfig(ConfigField):
     use_resolved:   bool = False
     use_unresolved: bool = False
@@ -442,12 +448,14 @@ class BibNetworkExportConfig(ConfigField):
     """
     export_dir:       str
     run_name:         Union[None, str] = None
+    citation_graph:   Union[None, str] = None   # set by resolve()
     coupling_graph:   Union[None, str] = None   # set by resolve()
     cocitation_graph: Union[None, str] = None   # set by resolve()
 
     def resolve(self):
         """Create the run directory and set output file paths."""
         self.run_name, run_dir = _make_run_dir(self.export_dir, self.run_name)
+        self.citation_graph   = os.path.join(run_dir, 'citation_network.graphml')
         self.coupling_graph   = os.path.join(run_dir, 'coupling_network.graphml')
         self.cocitation_graph = os.path.join(run_dir, 'cocitation_network.graphml')
         return self
@@ -456,12 +464,18 @@ class BibNetworkExportConfig(ConfigField):
 @dataclass
 class BibNetworkConfig(ConfigField):
     doc_dataset:        str                                 = None
+    citation_network:   CitationNetworkConfig               = None
     coupling_network:   CouplingNetworkConfig               = None
     cocitation_network: CocitationNetworkConfig             = None
     export:             Union[None, BibNetworkExportConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
+        if isinstance(self.citation_network, dict):
+            self.citation_network = CitationNetworkConfig(**self.citation_network)
+        elif self.citation_network is None:
+            self.citation_network = CitationNetworkConfig()
+
         if isinstance(self.coupling_network, dict):
             self.coupling_network = CouplingNetworkConfig(**self.coupling_network)
         elif self.coupling_network is None:
@@ -551,7 +565,9 @@ class TopicsSectionConfig(ConfigField):
 
 @dataclass
 class BibNetworkSectionConfig(ConfigField):
-    enabled: str = "auto"   # "auto" | "true" | "false"
+    enabled:                 str  = "auto"   # "auto" | "true" | "false"
+    corpus_only:  bool = True     # co-citation: keep only nodes in corpus
+    exclude_outliers:        bool = True     # remove Topic=-1 nodes from both graphs
 
 
 @dataclass
@@ -577,7 +593,7 @@ class TopicSimilarityConfig(ConfigField):
 class PaperSelectionConfig(ConfigField):
     min_year:             int   = 2000
     proportion_per_topic: float = 0.15
-    selection_by:         str   = "citations"  # "citations" | "random"
+    selection_by:         str   = "citations"  # "citations" | "random" | "coupling" | "co_citation"
     export_annex:         bool  = True
     annex_format:         str   = "csv"   # "csv" | "txt"
 
@@ -678,12 +694,101 @@ class TopicReportConfig(ConfigField):
 class BibNetworkReportConfig(ConfigField):
     """Paths to the exported bib_network graphs for inclusion in the report.
 
-    Leave both paths blank and set 'config' at the root of the report YAML so
+    Leave all paths blank and set 'config' at the root of the report YAML so
     that the latest bib_network run is detected automatically from
     bib_network.export.export_dir in the main pipeline config.
     """
+    citation_graph:   Union[None, str] = None
     coupling_graph:   Union[None, str] = None
     cocitation_graph: Union[None, str] = None
+
+
+@dataclass
+class UnpaywallConfig(ConfigField):
+    """Unpaywall source for open-access PDF discovery.
+
+    `email` is required by Unpaywall's politeness policy and unlocks the
+    higher-throughput pool.  See https://unpaywall.org/products/api.
+    """
+    email: str
+
+
+@dataclass
+class ElsevierDownloadConfig(ConfigField):
+    """Elsevier TDM (Text and Data Mining) source.
+
+    Requires an institutional API key.  When `format` is ``xml``, the
+    full-text XML is retrieved (preferred for downstream LLM use because
+    the text is already structured).  Use ``pdf`` to retrieve the raw PDF.
+    See https://dev.elsevier.com/documentation/ArticleRetrievalAPI.wadl.
+    """
+    api_key: str
+    format:  str = 'xml'  # 'xml' | 'pdf'
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.format not in ('xml', 'pdf'):
+            raise ValueError(
+                f"elsevier.format must be 'xml' or 'pdf', got {self.format!r}"
+            )
+
+
+@dataclass
+class DownloadConfig(ConfigField):
+    """Standalone configuration for the PDF/full-text download module.
+
+    Loaded from a dedicated YAML file (separate from the main pipeline
+    config) via :meth:`DownloadConfig.load`.
+
+    Cascade order for each paper:
+      1. Unpaywall  — finds a legal open-access PDF by DOI.
+      2. OpenAlex   — uses ``open_access.oa_url`` already present in the
+                      input dataset when the bib stage has been run.
+      3. Elsevier   — TDM API, only when an ``elsevier.api_key`` is set.
+
+    Papers that cannot be retrieved are listed in ``download_report.csv``
+    with ``status = manual`` so the user knows what still needs attention.
+    """
+    doc_dataset:   str                              # path to input CSV (must have a `doi` column)
+    output_dir:    str                              # root directory for all download output
+    format:        str                = 'pdf'       # default format for OA sources: 'pdf' | 'xml'
+    max_papers:    Union[None, int]   = None        # cap the number of attempted downloads
+    request_delay: float              = 1.0         # seconds between HTTP requests (Unpaywall: ≤ 1 req/s)
+    unpaywall:     Union[None, UnpaywallConfig]      = None
+    elsevier:      Union[None, ElsevierDownloadConfig] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.format not in ('pdf', 'xml'):
+            raise ValueError(
+                f"download.format must be 'pdf' or 'xml', got {self.format!r}"
+            )
+        if isinstance(self.unpaywall, dict):
+            self.unpaywall = UnpaywallConfig(**self.unpaywall)
+        if isinstance(self.elsevier, dict):
+            self.elsevier = ElsevierDownloadConfig(**self.elsevier)
+        os.makedirs(os.path.join(self.output_dir, 'papers'), exist_ok=True)
+
+    @classmethod
+    def load(cls, config_file: str) -> 'DownloadConfig':
+        """Load a standalone download YAML config file.
+
+        Steps:
+          1. Read the YAML.
+          2. Load the .env file referenced by the root-level ``env:`` key (if any).
+          3. Resolve all ``${VAR}`` references.
+          4. Build the typed dataclass.
+        """
+        with open(config_file, 'r') as fh:
+            raw = yaml.safe_load(fh) or {}
+
+        env_path = raw.get('env')
+        if env_path:
+            load_dotenv(env_path)
+
+        resolved = _resolve_env_vars(raw)
+        resolved.pop('env', None)
+        return cls(**resolved)
 
 
 @dataclass
@@ -774,9 +879,11 @@ class Config:
         if bn_export_dir:
             latest_dir = _find_latest_dir(bn_export_dir)
             if latest_dir:
+                citation   = os.path.join(latest_dir, 'citation_network.graphml')
                 coupling   = os.path.join(latest_dir, 'coupling_network.graphml')
                 cocitation = os.path.join(latest_dir, 'cocitation_network.graphml')
                 bib_network_graphs = BibNetworkReportConfig(
+                    citation_graph   = citation   if os.path.isfile(citation)   else None,
                     coupling_graph   = coupling   if os.path.isfile(coupling)   else None,
                     cocitation_graph = cocitation if os.path.isfile(cocitation) else None,
                 )

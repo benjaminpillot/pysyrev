@@ -92,6 +92,64 @@ def build_coupling_graph(
     return G
 
 
+def build_citation_graph(
+    df:              pd.DataFrame,
+    use_resolved:    bool = True,
+    use_unresolved:  bool = True,
+) -> nx.DiGraph:
+    """Build a directed citation graph from a bib DataFrame.
+
+    Nodes  — corpus document IDs (node_type='internal', with title/year/journal/doi)
+             plus external references (node_type='external', prefixed with R: or U:).
+    Edges  — directed A → B meaning corpus document A cites reference B.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        BibDataset internal DataFrame.
+    use_resolved : bool
+        Include resolved internal reference IDs (column 'reference_ids').
+    use_unresolved : bool
+        Include unresolved raw reference strings (column 'unresolved_references').
+    """
+    if not use_resolved and not use_unresolved:
+        raise ValueError(
+            "At least one of use_resolved or use_unresolved must be True."
+        )
+
+    doc_refs     = _build_doc_refs(df, use_resolved, use_unresolved)
+    corpus_index = df.set_index(ID)
+
+    G = nx.DiGraph()
+
+    # Add all corpus docs as nodes
+    for _, row in df.iterrows():
+        attrs = {col: row[col] for col in _NODE_ATTRS if col in df.columns}
+        attrs['node_type'] = 'internal'
+        G.add_node(row[ID], **attrs)
+
+    # Add directed edges: corpus doc → cited reference
+    for doc_id, refs in doc_refs.items():
+        for key in refs:
+            if key.startswith('R:'):
+                ref_id = key[2:]
+                if ref_id in corpus_index.index:
+                    # Corpus → corpus: target node already exists (no prefix)
+                    G.add_edge(doc_id, ref_id)
+                else:
+                    # Corpus → resolved-but-external
+                    if key not in G:
+                        G.add_node(key, node_type='external')
+                    G.add_edge(doc_id, key)
+            else:
+                # Corpus → unresolved external reference
+                if key not in G:
+                    G.add_node(key, label=key[2:], node_type='external')
+                G.add_edge(doc_id, key)
+
+    return G
+
+
 def build_cocitation_graph(
     df:              pd.DataFrame,
     use_resolved:    bool = True,

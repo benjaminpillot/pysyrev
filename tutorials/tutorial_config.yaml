@@ -9,6 +9,9 @@
 
 bib_network:
   doc_dataset: tests/data/bib_dataset.csv
+  citation_network:
+    use_resolved: true
+    use_unresolved: false
   coupling_network:
     use_resolved: true
     use_unresolved: true
