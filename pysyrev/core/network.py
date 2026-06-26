@@ -70,6 +70,7 @@ def build_coupling_graph(
 
     for _, row in df.iterrows():
         attrs = {col: row[col] for col in _NODE_ATTRS if col in df.columns}
+        attrs['node_type'] = 'internal'
         G.add_node(row[ID], **attrs)
 
     for (u, v), shared in edge_shared.items():

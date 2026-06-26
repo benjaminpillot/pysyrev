@@ -100,7 +100,10 @@ def _topic_cols(bertopic_results: pd.DataFrame):
 
 def _make_network_figure(G, title: str, max_nodes: int = None,
                          topic_map: dict = None, topic_label_map: dict = None,
-                         directed: bool = False):
+                         directed: bool = False,
+                         node_size_min: float = 4.0,
+                         node_size_max: float = 26.0,
+                         node_size_exponent: float = 1.5):
     """Return a Plotly Figure representing a NetworkX graph.
 
     When *topic_map* ({node_id: topic_int}) is provided nodes are coloured by
@@ -108,8 +111,9 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
     degree.  Large graphs are subsampled to the top *max_nodes* nodes by degree
     before layout computation.
 
-    For directed graphs (*directed=True*) nodes are sized by in-degree and
-    arrowheads are drawn on edges when the graph has ≤ 300 edges.
+    For directed graphs (*directed=True*) nodes are sized by cited_by count
+    (log-scaled) and arrowheads are drawn on edges when the graph has ≤ 300 edges.
+    For undirected graphs, nodes are sized by weighted degree (strength, log-scaled).
 
     Returns (figure, is_truncated).
     """
@@ -126,15 +130,23 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
     import networkx as nx
     pos = nx.spring_layout(G, seed=42)
 
-    # For directed graphs, size by in-degree (how often a node is cited);
-    # for undirected graphs, use total degree.
-    if directed:
-        degrees = dict(G.in_degree())
-    else:
-        degrees = dict(G.degree())
+    nodes = list(G.nodes())
 
-    nodes   = list(G.nodes())
-    max_deg = max((degrees[n] for n in nodes), default=1)
+    # For directed: size by cited_by count; for undirected: by weighted degree (strength).
+    if directed:
+        size_map = {
+            n: float(G.nodes[n].get("cited_by") or 0)
+            for n in nodes
+        }
+        size_label = "Citations"
+    else:
+        size_map   = dict(G.degree(weight="weight"))
+        size_label = "Strength"
+
+    _log_vals   = np.log1p([size_map[n] for n in nodes])
+    _log_max    = float(_log_vals.max()) or 1.0
+    _span       = node_size_max - node_size_min
+    node_size   = list(node_size_min + _span * (_log_vals / _log_max) ** node_size_exponent)
 
     # Edge traces
     edge_x, edge_y = [], []
@@ -170,7 +182,7 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
             val = attrs.get(attr_key)
             if val and str(val) not in ("-", "nan", "None"):
                 parts.append(f"{lbl}: {str(val)[:60]}")
-        parts.append(f"Degree: {degrees[n]}")
+        parts.append(f"{size_label}: {size_map[n]:.4g}")
         if topic_map is not None:
             t = topic_map.get(n)
             if t is not None and t != -1:
@@ -178,7 +190,6 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
         return "<br>".join(parts)
 
     hover_texts = [_hover(n) for n in nodes]
-    node_size   = [6 + 14 * (degrees[n] / max_deg) for n in nodes]
     palette     = plotly.colors.qualitative.D3  # 10 distinct colours
 
     # Node traces: one per topic (discrete legend) or single degree-coloured trace
@@ -219,10 +230,10 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
             showlegend=False,
             marker=dict(
                 size=node_size,
-                color=[degrees[n] for n in nodes],
+                color=[size_map[n] for n in nodes],
                 colorscale="Viridis",
                 showscale=True,
-                colorbar=dict(title="Degree", thickness=12),
+                colorbar=dict(title=size_label, thickness=12),
                 line=dict(width=0.5, color="white"),
             ),
         )]
@@ -406,8 +417,11 @@ def _build_bib_network_section(bib_network_config, section_n,
                 bertopic_results.loc[bertopic_results["Topic"] == -1, id_col]
             )
 
-    _corpus_only  = section_cfg.corpus_only if section_cfg is not None else True
-    _excl_outliers = section_cfg.exclude_outliers      if section_cfg is not None else True
+    _corpus_only        = section_cfg.corpus_only        if section_cfg is not None else True
+    _excl_outliers      = section_cfg.exclude_outliers   if section_cfg is not None else True
+    _node_size_min      = section_cfg.node_size_min      if section_cfg is not None else 4.0
+    _node_size_max      = section_cfg.node_size_max      if section_cfg is not None else 26.0
+    _node_size_exponent = section_cfg.node_size_exponent if section_cfg is not None else 1.5
 
     sub_blocks = []
     for path, label, max_nodes, node_col_header, is_directed in graphs:
@@ -465,26 +479,35 @@ def _build_bib_network_section(bib_network_config, section_n,
         else:
             topic_map = None
 
-        # Top 10 by in-degree (citation) or total degree (coupling/co-citation)
+        # Top 10 by cited_by (citation) or strength/weighted-degree (coupling/co-citation)
         if is_directed:
-            degree_seq = sorted(dict(G.in_degree()).items(), key=lambda x: x[1], reverse=True)
-            deg_header = "In-degree"
+            rank_map = {
+                n: float(G.nodes[n].get("cited_by") or 0)
+                for n in G.nodes()
+            }
+            deg_header = "Citations"
         else:
-            degree_seq = sorted(dict(G.degree()).items(), key=lambda x: x[1], reverse=True)
-            deg_header = "Degree"
+            rank_map   = dict(G.degree(weight="weight"))
+            deg_header = "Strength"
 
-        top_nodes = degree_seq[:10]
-        node_rows = []
+        degree_seq = sorted(rank_map.items(), key=lambda x: x[1], reverse=True)
+
+        has_topics = topic_map is not None
+        top_nodes  = degree_seq[:10]
+        node_rows  = []
         for node_id, deg in top_nodes:
             attrs    = G.nodes[node_id]
             display  = _node_display_label(node_id, attrs)
             node_doi = attrs.get("doi", "-")
-            row = [display, str(deg), str(node_doi)[:50]]
+            row = [display, f"{deg:.4g}", str(node_doi)[:50]]
             if is_cocitation:
                 row.append("Yes" if attrs.get("title") else "No")
+            if has_topics:
+                t = topic_map.get(node_id)
+                row.append(_topic_label(t, topic_labels) if t is not None and t != -1 else "-")
             node_rows.append(row)
 
-        avg_deg_label = "Average in-degree" if is_directed else "Average degree"
+        avg_deg_label = "Average citations" if is_directed else "Average strength"
         sub_content = [
             {
                 "type": "key_value",
@@ -500,9 +523,15 @@ def _build_bib_network_section(bib_network_config, section_n,
             if is_cocitation:
                 headers    = [node_col_header, deg_header, "DOI", "In corpus"]
                 col_widths = [8.5, 1.5, 4.5, 2.5]
+                if has_topics:
+                    headers.append("Topic")
+                    col_widths = [6.0, 1.5, 4.0, 2.0, 3.5]
             else:
                 headers    = [node_col_header, deg_header, "DOI"]
                 col_widths = [10.0, 2.0, 5.0]
+                if has_topics:
+                    headers.append("Topic")
+                    col_widths = [7.0, 2.0, 4.5, 3.5]
             sub_content.append({
                 "type":       "table",
                 "title":      "Top 10 most connected nodes",
@@ -518,11 +547,14 @@ def _build_bib_network_section(bib_network_config, section_n,
             topic_map=topic_map,
             topic_label_map=topic_labels,
             directed=is_directed,
+            node_size_min=_node_size_min,
+            node_size_max=_node_size_max,
+            node_size_exponent=_node_size_exponent,
         )
         if is_directed:
-            caption = "Node size scales with in-degree (number of times cited by other corpus documents)."
+            caption = "Node size scales with citation count (cited_by, log scale)."
         else:
-            caption = "Node size scales with degree."
+            caption = "Node size scales with coupling strength (weighted degree, log scale). Edge thickness scales with connection strength."
         if topic_map:
             caption += " Node colour indicates topic assignment."
         if is_truncated:
