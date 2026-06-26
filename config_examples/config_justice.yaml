@@ -203,16 +203,13 @@ bib_network:
 
   citation_network:
     use_resolved: true
-    use_unresolved: false   # set true to include unresolved external references
 
   coupling_network:
     use_resolved: true
-    use_unresolved: true
     min_shared: 1
 
   cocitation_network:
     use_resolved: true
-    use_unresolved: true
     min_cocitations: 1
 
   export:
@@ -313,6 +310,53 @@ topic_report:
 #
 #   # run_dir: leave blank to auto-detect the latest topic_model run.
 #   # run_dir: /path/to/TOPIC_MODELING/run_YYYY-MM-DD_HH-MM-SS/
+#
+#   # ---- PDF metadata (defaults shown) -------------------------------------
+#   meta:
+#     title:       Bibliographic report — Pysyrev
+#     subtitle:
+#     author:      Report generated with the pysyrev engine (v0.1)
+#     date_format: "%d/%m/%Y"
+#     version:     1.0.0
+#     summary: >
+#       This document has been automatically generated.
+#
+#   # ---- Section parameters ------------------------------------------------
+   sections:
+     topics:
+       n_repr_docs_per_topic: 5
+     bib_network:
+       enabled: auto            # auto | true | false
+       corpus_only: true        # keep only corpus nodes in all graphs; set false to show external refs
+       exclude_outliers: true   # remove Topic=-1 nodes from all graphs
+       node_size_exponent: 5.0
+       node_size_max: 35.0
+       node_size_min: 4.0
+#     temporal:
+#       variants: [absolute, cumulative, normalized, weighted]
+#     topic_characteristics:
+#       n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
+#       n_top_cited_global: 50     # N most-cited papers globally used for topic distribution
+#     topic_similarity:
+#       clustering: true
+#       dendrogram: true
+     paper_selection:
+       min_year: 2020
+       proportion_per_topic: 0.15
+       selection_by: citations          # citations | random | coupling | co_citation
+       export_annex: true
+       annex_format: csv
+
+
+# =============================================================================
+# vosviewer — VOSviewer JSON export (optional)
+# =============================================================================
+# When present, three JSON files compatible with app.vosviewer.com are written
+# into the same directory as the bib_network GraphML exports.
+# Topic clusters are derived automatically from topic-model results.
+#
+vosviewer:
+    max_nodes: 500
 
 
 # =============================================================================
@@ -328,41 +372,3 @@ llm:
    max_tokens: 200
    temperature: 0.3
    n_repr_docs_for_labeling: 10
-
-
-# =============================================================================
-# report — PDF layout and section parameters (optional)
-# =============================================================================
-# Defaults are used for any omitted sub-key.
-#
-report:
-#   meta:
-#     title:       Bibliographic report — Pysyrev
-#     subtitle:
-#     author:      Report generated with the pysyrev engine (v0.1)
-#     date_format: "%d/%m/%Y"
-#     version:     1.0.0
-#     summary: >
-#       This document has been automatically generated.
-#
-   sections:
-     topics:
-       n_repr_docs_per_topic: 5
-#     bib_network:
-#       enabled: auto            # auto | true | false
-#       corpus_only: true        # keep only corpus nodes in both graphs (default: true)
-#       exclude_outliers: true   # remove Topic=-1 nodes from both graphs (default: true)
-#     temporal:
-#       variants: [absolute, cumulative, normalized, weighted]
-#     topic_characteristics:
-#       n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
-#       n_top_cited_global: 50     # N most-cited papers globally used for topic distribution
-#     topic_similarity:
-#       clustering: true
-#       dendrogram: true
-     paper_selection:
-       min_year: 2020
-       proportion_per_topic: 0.15
-       selection_by: citations          # citations | random | coupling | co_citation
-       export_annex: true
-       annex_format: csv

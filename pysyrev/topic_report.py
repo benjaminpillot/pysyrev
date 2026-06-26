@@ -23,7 +23,7 @@ from typing import Union
 
 import pandas as pd
 
-from pysyrev.core.config import Config, ReportConfig
+from pysyrev.core.config import Config
 from pysyrev.core.llm import label_topics
 from pysyrev.core.report import PDFReportEngine
 from pysyrev.core.report_data import (
@@ -33,6 +33,7 @@ from pysyrev.core.report_data import (
     load_bertopic_results,
     build_report_data,
 )
+from pysyrev.core.topic_labels import load_cached_labels, save_labels
 
 
 @dataclass
@@ -63,7 +64,7 @@ class TopicReport:
             )
         return cls(
             run_dir            = config.topic_report.run_dir,
-            report_config      = config.report or ReportConfig(),
+            report_config      = config.topic_report,
             model_index        = config.topic_report.model_index,
             export_to          = config.topic_report.export_to,
             labeler_config     = config.llm,
@@ -143,8 +144,15 @@ class TopicReport:
 
         topic_labels = None
         if self.labeler_config is not None:
-            print("Generating human-readable topic labels via LLM…")
-            topic_labels = label_topics(self.topic_info, self.labeler_config)
+            file_prefix = self._file_prefix()
+            cached = load_cached_labels(self.run_dir, file_prefix)
+            if cached is not None:
+                topic_labels = cached
+            else:
+                print("Generating human-readable topic labels via LLM…")
+                topic_labels = label_topics(self.topic_info, self.labeler_config)
+                path = save_labels(self.run_dir, file_prefix, topic_labels)
+                print(f"Topic labels saved to: {path}")
 
         report_data = build_report_data(
             self.run_dir,

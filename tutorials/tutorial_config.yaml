@@ -11,14 +11,11 @@ bib_network:
   doc_dataset: tests/data/bib_dataset.csv
   citation_network:
     use_resolved: true
-    use_unresolved: false
   coupling_network:
     use_resolved: true
-    use_unresolved: true
     min_shared: 1
   cocitation_network:
     use_resolved: true
-    use_unresolved: true
     min_cocitations: 1
   export:
     export_dir: tutorials/outputs/bib_network/
@@ -46,8 +43,8 @@ topic_model:
 topic_report:
   model_index: 0
   export_to: tutorials/outputs/report/
-
-report:
   meta:
     title: ABM Literature Review — Tutorial
     author: pysyrev tutorial
+
+vosviewer: {}

@@ -498,8 +498,8 @@ class TestBuildReportData:
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
         coupling_graphml,
     ):
-        from pysyrev.core.config import ReportConfig, ReportSectionsConfig
-        cfg = ReportConfig(
+        from pysyrev.core.config import TopicReportConfig, ReportSectionsConfig
+        cfg = TopicReportConfig(
             meta=report_cfg.meta,
             sections=ReportSectionsConfig(
                 bib_network=BibNetworkSectionConfig(enabled="false"),
@@ -540,8 +540,8 @@ class TestBuildReportData:
 
     def test_extra_sections_appended_at_end(self, tiny_best_results, tiny_topic_info,
                                              tiny_bertopic_results, report_cfg):
-        from pysyrev.core.config import ReportConfig, ReportSectionsConfig
-        cfg = ReportConfig(
+        from pysyrev.core.config import TopicReportConfig, ReportSectionsConfig
+        cfg = TopicReportConfig(
             meta=report_cfg.meta,
             sections=ReportSectionsConfig(
                 extra=[{"title": "99. Custom appendix", "blocks": []}]

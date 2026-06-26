@@ -8,11 +8,11 @@ from pysyrev.core.config import (
     BibNetworkExportConfig,
     BibNetworkSectionConfig,
     PaperSelectionConfig,
-    ReportConfig,
     ReportMetaConfig,
     ReportSectionsConfig,
     TemporalSectionConfig,
     TopicCharacteristicsConfig,
+    TopicReportConfig,
     TopicsSectionConfig,
     TopicSimilarityConfig,
 )
@@ -161,8 +161,8 @@ def tiny_best_results():
 
 @pytest.fixture
 def report_cfg():
-    """ReportConfig with all sections enabled and sensible test defaults."""
-    return ReportConfig(
+    """TopicReportConfig with all sections enabled and sensible test defaults."""
+    return TopicReportConfig(
         meta=ReportMetaConfig(
             title="Unit-test report",
             author="pytest",

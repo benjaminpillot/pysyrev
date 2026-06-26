@@ -18,11 +18,11 @@ from pysyrev.core.config import (
     BibNetworkReportConfig,
     BibNetworkSectionConfig,
     PaperSelectionConfig,
-    ReportConfig,
     ReportMetaConfig,
     ReportSectionsConfig,
     TemporalSectionConfig,
     TopicCharacteristicsConfig,
+    TopicReportConfig,
     TopicsSectionConfig,
     TopicSimilarityConfig,
 )
@@ -43,8 +43,8 @@ def _bertopic_results_csv(run_dir: Path) -> Path:
     return next((run_dir / "bertopic_results").glob("*.csv"))
 
 
-def _minimal_report_config() -> ReportConfig:
-    return ReportConfig(
+def _minimal_report_config() -> TopicReportConfig:
+    return TopicReportConfig(
         meta=ReportMetaConfig(
             title="Integration test report",
             author="pytest",
@@ -101,6 +101,90 @@ class TestBibNetworkIntegration:
         node_data = dict(list(G.nodes(data=True))[:1])
         first = next(iter(node_data.values()))
         assert "title" in first
+
+    # ── save_vosviewer ───────────────────────────────────────────────────────
+
+    def test_vosviewer_files_created(self, bib_network_outputs, tmp_path):
+        from pysyrev.core.config import BibNetworkExportConfig
+        cfg = BibNetworkExportConfig(export_dir=str(tmp_path), run_name="vos_test")
+        bib_network_outputs["net"].save_vosviewer(cfg)
+        assert Path(cfg.citation_vos).exists()
+        assert Path(cfg.coupling_vos).exists()
+        assert Path(cfg.cocitation_vos).exists()
+
+    def test_vosviewer_json_structure(self, bib_network_outputs, tmp_path):
+        import json
+        from pysyrev.core.config import BibNetworkExportConfig
+        cfg = BibNetworkExportConfig(export_dir=str(tmp_path), run_name="vos_struct")
+        bib_network_outputs["net"].save_vosviewer(cfg)
+
+        data = json.loads(Path(cfg.coupling_vos).read_text())
+        net  = data["network"]
+        assert "items" in net and "links" in net and "clusters" in net
+        assert len(net["items"]) > 0
+        first = net["items"][0]
+        assert {"id", "label"} <= first.keys()
+
+    def test_vosviewer_with_topic_map(self, bib_network_outputs, tmp_path):
+        import json
+        from pysyrev.core.config import BibNetworkExportConfig
+
+        net = bib_network_outputs["net"]
+        node_ids = list(net.coupling_graph.nodes())
+        topic_map = {nid: (i % 3) for i, nid in enumerate(node_ids)}
+        topic_label_map = {0: "Topic A", 1: "Topic B", 2: "Topic C"}
+
+        cfg = BibNetworkExportConfig(export_dir=str(tmp_path), run_name="vos_topics")
+        net.save_vosviewer(cfg, topic_map=topic_map, topic_label_map=topic_label_map)
+
+        data    = json.loads(Path(cfg.coupling_vos).read_text())
+        items   = data["network"]["items"]
+        clusters = data["network"]["clusters"]
+
+        assert any("cluster" in it for it in items)
+        assert len(clusters) > 0
+        cluster_labels = {c["label"] for c in clusters}
+        assert cluster_labels <= {"Topic A", "Topic B", "Topic C"}
+
+    def test_vosviewer_topic_in_description(self, bib_network_outputs, tmp_path):
+        import json
+        from pysyrev.core.config import BibNetworkExportConfig
+
+        net = bib_network_outputs["net"]
+        node_ids = list(net.coupling_graph.nodes())
+        topic_map = {nid: 0 for nid in node_ids}
+        topic_label_map = {0: "Agent-based models"}
+
+        cfg = BibNetworkExportConfig(export_dir=str(tmp_path), run_name="vos_desc")
+        net.save_vosviewer(cfg, topic_map=topic_map, topic_label_map=topic_label_map)
+
+        data  = json.loads(Path(cfg.coupling_vos).read_text())
+        items = data["network"]["items"]
+        assert all(
+            "Topic: Agent-based models" in it.get("description", "")
+            for it in items if "cluster" in it
+        )
+
+    def test_vosviewer_cocitation_topic_mapping(self, bib_network_outputs, tmp_path):
+        """Topic map (plain paper IDs) is correctly remapped for co-citation R:-prefixed nodes."""
+        import json
+        from pysyrev.core.config import BibNetworkExportConfig
+
+        net = bib_network_outputs["net"]
+        # Build topic_map from plain IDs (as exposed to the user from bertopic results)
+        internal_ids = [
+            n[2:] for n in net.cocitation_graph.nodes()
+            if n.startswith("R:")
+        ]
+        topic_map = {pid: 1 for pid in internal_ids}
+        topic_label_map = {1: "Main topic"}
+
+        cfg = BibNetworkExportConfig(export_dir=str(tmp_path), run_name="vos_cocit")
+        net.save_vosviewer(cfg, topic_map=topic_map, topic_label_map=topic_label_map)
+
+        data  = json.loads(Path(cfg.cocitation_vos).read_text())
+        items = data["network"]["items"]
+        assert any("cluster" in it for it in items)
 
 
 # ── TopicModel ───────────────────────────────────────────────────────────────
@@ -220,7 +304,7 @@ class TestTopicReportIntegration:
         assert Path(result).stat().st_size > 1024
 
     def test_no_annex_when_disabled(self, tmp_path, topic_model_outputs):
-        cfg = ReportConfig(
+        cfg = TopicReportConfig(
             meta=ReportMetaConfig(
                 title="No-annex report",
                 author="pytest",

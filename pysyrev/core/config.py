@@ -420,22 +420,19 @@ class ReviewConfig(ConfigField):
 
 @dataclass
 class CitationNetworkConfig(ConfigField):
-    use_resolved:   bool = False
-    use_unresolved: bool = False
+    use_resolved: bool = False
 
 
 @dataclass
 class CouplingNetworkConfig(ConfigField):
-    use_resolved:   bool = False
-    use_unresolved: bool = False
-    min_shared:     int = 1
+    use_resolved: bool = False
+    min_shared:   int  = 1
 
 
 @dataclass
 class CocitationNetworkConfig(ConfigField):
     use_resolved:    bool = False
-    use_unresolved:  bool = False
-    min_cocitations: int = 1
+    min_cocitations: int  = 1
 
 
 @dataclass
@@ -446,18 +443,30 @@ class BibNetworkExportConfig(ConfigField):
     Leave ``run_name`` blank to auto-generate a timestamp.
     Call :meth:`resolve` to finalise the run directory and set file paths.
     """
-    export_dir:       str
-    run_name:         Union[None, str] = None
-    citation_graph:   Union[None, str] = None   # set by resolve()
-    coupling_graph:   Union[None, str] = None   # set by resolve()
-    cocitation_graph: Union[None, str] = None   # set by resolve()
+    export_dir:          str
+    run_name:            Union[None, str] = None
+    citation_graph:      Union[None, str] = None   # set by resolve()
+    coupling_graph:      Union[None, str] = None   # set by resolve()
+    cocitation_graph:    Union[None, str] = None   # set by resolve()
+    citation_html:       Union[None, str] = None   # set by resolve()
+    coupling_html:       Union[None, str] = None   # set by resolve()
+    cocitation_html:     Union[None, str] = None   # set by resolve()
+    citation_vos:        Union[None, str] = None   # set by resolve()
+    coupling_vos:        Union[None, str] = None   # set by resolve()
+    cocitation_vos:      Union[None, str] = None   # set by resolve()
 
     def resolve(self):
         """Create the run directory and set output file paths."""
         self.run_name, run_dir = _make_run_dir(self.export_dir, self.run_name)
-        self.citation_graph   = os.path.join(run_dir, 'citation_network.graphml')
-        self.coupling_graph   = os.path.join(run_dir, 'coupling_network.graphml')
-        self.cocitation_graph = os.path.join(run_dir, 'cocitation_network.graphml')
+        self.citation_graph    = os.path.join(run_dir, 'citation_network.graphml')
+        self.coupling_graph    = os.path.join(run_dir, 'coupling_network.graphml')
+        self.cocitation_graph  = os.path.join(run_dir, 'cocitation_network.graphml')
+        self.citation_html     = os.path.join(run_dir, 'citation_network.html')
+        self.coupling_html     = os.path.join(run_dir, 'coupling_network.html')
+        self.cocitation_html   = os.path.join(run_dir, 'cocitation_network.html')
+        self.citation_vos      = os.path.join(run_dir, 'citation_network_vos.json')
+        self.coupling_vos      = os.path.join(run_dir, 'coupling_network_vos.json')
+        self.cocitation_vos    = os.path.join(run_dir, 'cocitation_network_vos.json')
         return self
 
 
@@ -565,9 +574,12 @@ class TopicsSectionConfig(ConfigField):
 
 @dataclass
 class BibNetworkSectionConfig(ConfigField):
-    enabled:                 str  = "auto"   # "auto" | "true" | "false"
-    corpus_only:  bool = True     # co-citation: keep only nodes in corpus
-    exclude_outliers:        bool = True     # remove Topic=-1 nodes from both graphs
+    enabled:            str   = "auto"  # "auto" | "true" | "false"
+    corpus_only:        bool  = True    # co-citation: keep only nodes in corpus
+    exclude_outliers:   bool  = True    # remove Topic=-1 nodes from both graphs
+    node_size_min:      float = 4.0     # smallest node radius (pixels)
+    node_size_max:      float = 26.0    # largest node radius (pixels)
+    node_size_exponent: float = 1.5     # >1 increases contrast between nodes (applied to log-normalised values)
 
 
 @dataclass
@@ -652,23 +664,6 @@ class ReportMetaConfig(ConfigField):
 
 
 @dataclass
-class ReportConfig(ConfigField):
-    meta:     Union[None, ReportMetaConfig]     = None
-    sections: Union[None, ReportSectionsConfig] = None
-
-    def __post_init__(self):
-        super().__post_init__()
-        if isinstance(self.meta, dict):
-            self.meta = ReportMetaConfig(**self.meta)
-        elif self.meta is None:
-            self.meta = ReportMetaConfig()
-        if isinstance(self.sections, dict):
-            self.sections = ReportSectionsConfig(**self.sections)
-        elif self.sections is None:
-            self.sections = ReportSectionsConfig()
-
-
-@dataclass
 class TopicLabelerConfig(ConfigField):
     """LLM configuration for generating human-readable topic labels."""
     provider:                str
@@ -684,10 +679,37 @@ class TopicLabelerConfig(ConfigField):
 
 @dataclass
 class TopicReportConfig(ConfigField):
-    """Model-selection parameters for the topic-report stage."""
+    """Model-selection and PDF layout parameters for the topic-report stage."""
     run_dir:     str = None  # auto-detected by Config.load() from topic_model.export.export_dir when blank
     model_index: int = 0
     export_to:   str = None
+    meta:        Union[None, ReportMetaConfig]     = None
+    sections:    Union[None, ReportSectionsConfig] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.meta, dict):
+            self.meta = ReportMetaConfig(**self.meta)
+        elif self.meta is None:
+            self.meta = ReportMetaConfig()
+        if isinstance(self.sections, dict):
+            self.sections = ReportSectionsConfig(**self.sections)
+        elif self.sections is None:
+            self.sections = ReportSectionsConfig()
+
+
+@dataclass
+class VosviewerConfig(ConfigField):
+    """Enable the VOSviewer JSON export stage.
+
+    Add ``vosviewer: {}`` to your pipeline YAML to activate it.
+    The stage runs after ``topic-report`` and writes three JSON files
+    (citation, coupling, co-citation) into the same directory as the
+    existing GraphML exports.  Topic clusters are derived automatically
+    from topic-model results when available.
+    """
+    max_nodes:   int  = 3000  # max nodes per JSON export (top N by degree)
+    corpus_only: bool = True  # keep only corpus documents in all networks
 
 
 @dataclass
@@ -809,7 +831,7 @@ class Config:
     bib_network:        Union[None, BibNetworkConfig]       = None
     topic_model:        Union[None, TopicModelConfig]       = None
     topic_report:       Union[None, TopicReportConfig]      = None
-    report:             Union[None, ReportConfig]           = None
+    vosviewer:          Union[None, VosviewerConfig]        = None
     llm:                Union[None, TopicLabelerConfig]     = None
     # Auto-populated during load() — not a user-facing YAML key.
     bib_network_graphs: Union[None, BibNetworkReportConfig] = None
@@ -895,7 +917,7 @@ class Config:
             bib_network        = BibNetworkConfig(**bib_network_data)    if bib_network_data              else None,
             topic_model        = TopicModelConfig(**topic_model_data)    if topic_model_data              else None,
             topic_report       = TopicReportConfig(**topic_report_data)  if topic_report_data             else None,
-            report             = ReportConfig(**resolved['report'])      if resolved.get('report')        else None,
+            vosviewer          = VosviewerConfig()                       if resolved.get('vosviewer') is not None else None,
             llm                = TopicLabelerConfig(**resolved['llm'])   if resolved.get('llm')           else None,
             bib_network_graphs = bib_network_graphs,
         )

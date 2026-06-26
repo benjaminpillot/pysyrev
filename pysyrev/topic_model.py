@@ -9,10 +9,12 @@ Field names mirror the corresponding entries in config.py to keep the
 bridge between the two trivial.
 """
 
+import glob
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 
 import pandas as pd
 from bertopic.dimensionality import BaseDimensionalityReduction
@@ -23,6 +25,7 @@ from umap import UMAP
 
 from pysyrev.core.config import TopicModelConfig
 from pysyrev.core.topic import clean_dataset, topic_modeling
+from pysyrev.core.topic_labels import load_cached_labels, save_labels
 
 
 # =============================================================================
@@ -133,6 +136,7 @@ class TopicModel:
     ranking_scorer:       str
     purity_scorer:        str
     run_name:             Union[None, str]
+    labeler_config:       Optional[object] = None  # TopicLabelerConfig or None
     overwrite:            bool = False
     _run_dir:             Union[None, str] = field(default=None, init=False, repr=False)
 
@@ -174,8 +178,8 @@ class TopicModel:
             batch_size     = tc.topic_distribution.batch_size,
         )
         report_nr = (
-            config.report.sections.topics.n_repr_docs_per_topic
-            if config.report is not None else 5
+            config.topic_report.sections.topics.n_repr_docs_per_topic
+            if config.topic_report is not None else 5
         )
         llm_nr = config.llm.n_repr_docs_for_labeling if config.llm is not None else 3
         return cls(
@@ -196,6 +200,7 @@ class TopicModel:
             ranking_scorer       = tc.coherence_scorer.ranking,
             purity_scorer        = tc.coherence_scorer.purity,
             run_name             = tc.export.run_name,
+            labeler_config       = config.llm,
         )
 
     # ---- runtime --------------------------------------------------------
@@ -212,6 +217,27 @@ class TopicModel:
         run_dir.mkdir(parents=True, exist_ok=self.overwrite)
         self._run_dir = str(run_dir)
         return run_dir
+
+    def _label_all_models(self) -> None:
+        """Generate and cache LLM labels for every saved topic_info file in run_dir."""
+        from pysyrev.core.llm import label_topics
+        import pandas as pd
+
+        tinfo_dir = os.path.join(self._run_dir, "topic_info")
+        csv_files = glob.glob(os.path.join(tinfo_dir, "*.csv"))
+        if not csv_files:
+            return
+
+        print(f"[TopicModel] Generating topic labels for {len(csv_files)} model(s)…")
+        for csv_path in csv_files:
+            file_prefix = Path(csv_path).stem
+            if load_cached_labels(self._run_dir, file_prefix) is not None:
+                print(f"  [skip] {file_prefix} — labels already cached")
+                continue
+            topic_info = pd.read_csv(csv_path)
+            labels = label_topics(topic_info, self.labeler_config)
+            path = save_labels(self._run_dir, file_prefix, labels)
+            print(f"  [saved] {path}")
 
     def run(self, dataset: pd.DataFrame = None, show_progress=True):
         """Run the topic modelling pipeline.
@@ -240,7 +266,7 @@ class TopicModel:
         embeddings = self.bertopic_model.embedding_model.encode(
             cleans_docs, show_progress_bar=show_progress,
         )
-        return topic_modeling(
+        result = topic_modeling(
             dataset,
             cleans_docs,
             self.bertopic_model,
@@ -261,3 +287,6 @@ class TopicModel:
             show_progress,
             surviving_indices,
         )
+        if self.labeler_config is not None:
+            self._label_all_models()
+        return result
