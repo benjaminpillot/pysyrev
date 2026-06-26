@@ -517,7 +517,7 @@ class TopicModelConfig(ConfigField):
     doc_dataset:         Union[None, str]                       = None
     distance:            str                                    = "euclidean"
     keep_n_results:      int                                    = 10
-    best_model_index:         int                                    = 0
+    best_model_index:    int                                    = 0
     coherence_scorer:    CoherenceScorerConfig                  = None
     hdbscan:             HDBSCANConfig                          = None
     umap:                UMAPConfig                             = None
