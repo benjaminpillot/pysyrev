@@ -517,6 +517,7 @@ class TopicModelConfig(ConfigField):
     doc_dataset:         Union[None, str]                       = None
     distance:            str                                    = "euclidean"
     keep_n_results:      int                                    = 10
+    best_model_index:         int                                    = 0
     coherence_scorer:    CoherenceScorerConfig                  = None
     hdbscan:             HDBSCANConfig                          = None
     umap:                UMAPConfig                             = None
@@ -679,9 +680,8 @@ class TopicLabelerConfig(ConfigField):
 
 @dataclass
 class TopicReportConfig(ConfigField):
-    """Model-selection and PDF layout parameters for the topic-report stage."""
+    """PDF layout parameters for the topic-report stage."""
     run_dir:     str = None  # auto-detected by Config.load() from topic_model.export.export_dir when blank
-    model_index: int = 0
     export_to:   str = None
     meta:        Union[None, ReportMetaConfig]     = None
     sections:    Union[None, ReportSectionsConfig] = None

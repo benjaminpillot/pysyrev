@@ -28,6 +28,7 @@ topic_model:
     run_name: tutorial_run
   distance: euclidean
   keep_n_results: 5
+  best_model_index: 0
   hdbscan:
     min_topic_size_range: [4, 8]
     min_sample_range: [2, 2]
@@ -41,7 +42,6 @@ topic_model:
     n_gram_range: bigram
 
 topic_report:
-  model_index: 0
   export_to: tutorials/outputs/report/
   meta:
     title: ABM Literature Review — Tutorial

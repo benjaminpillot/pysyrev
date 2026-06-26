@@ -41,7 +41,7 @@ class TopicReport:
 
     run_dir:        str
     report_config:  object           # ReportConfig
-    model_index:    int              = 0
+    best_model_index:    int              = 0
     export_to:      Union[None, str] = None
     labeler_config: object           = None  # TopicLabelerConfig or None
 
@@ -65,7 +65,7 @@ class TopicReport:
         return cls(
             run_dir            = config.topic_report.run_dir,
             report_config      = config.topic_report,
-            model_index        = config.topic_report.model_index,
+            best_model_index        = config.topic_model.best_model_index if config.topic_model is not None else 0,
             export_to          = config.topic_report.export_to,
             labeler_config     = config.llm,
             bib_network_config = config.bib_network_graphs,
@@ -98,12 +98,12 @@ class TopicReport:
     @property
     def selected_model_row(self) -> pd.Series:
         n = len(self.best_results)
-        if self.model_index >= n:
+        if self.best_model_index >= n:
             raise IndexError(
-                f"model_index={self.model_index} out of range "
+                f"best_model_index={self.best_model_index} out of range "
                 f"(only {n} result(s) available in best_results)."
             )
-        return self.best_results.iloc[self.model_index]
+        return self.best_results.iloc[self.best_model_index]
 
     @property
     def topic_info(self) -> pd.DataFrame:
@@ -156,7 +156,7 @@ class TopicReport:
 
         report_data = build_report_data(
             self.run_dir,
-            self.model_index,
+            self.best_model_index,
             self.best_results,
             self.topic_info,
             self.bertopic_results,

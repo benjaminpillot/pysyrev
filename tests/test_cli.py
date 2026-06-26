@@ -58,7 +58,7 @@ class TestCLIArguments:
         assert result.returncode != 0
 
     def test_invalid_stage_exits_nonzero(self, tmp_path):
-        cfg = _write_config(tmp_path, "topic_report:\n  model_index: 0\n")
+        cfg = _write_config(tmp_path, "topic_report: {}\n")
         result = _run(str(cfg), "--stage", "invalid-stage")
         assert result.returncode != 0
 
@@ -83,7 +83,6 @@ class TestCLITopicReport:
     def test_topic_report_stage_exits_zero(self, tmp_path, topic_model_outputs):
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {tmp_path / "report"}
         """)
@@ -93,7 +92,6 @@ class TestCLITopicReport:
     def test_topic_report_stage_prints_done(self, tmp_path, topic_model_outputs):
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {tmp_path / "report"}
         """)
@@ -104,7 +102,6 @@ class TestCLITopicReport:
         export_dir = tmp_path / "report"
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {export_dir}
         """)
@@ -116,7 +113,6 @@ class TestCLITopicReport:
         """'all' with only topic_report in config must not fail on absent stages."""
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {tmp_path / "report"}
         """)
@@ -135,7 +131,6 @@ class TestCLITopicReport:
         export_dir = tmp_path / "report"
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {export_dir}
         """)
@@ -147,7 +142,6 @@ class TestCLITopicReport:
         export_dir = tmp_path / "report"
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {export_dir}
         """)
@@ -160,7 +154,6 @@ class TestCLITopicReport:
         export_dir = tmp_path / "report"
         cfg = _write_config(tmp_path, f"""\
             topic_report:
-              model_index: 0
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {export_dir}
         """)

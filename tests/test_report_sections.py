@@ -447,7 +447,7 @@ class TestBuildReportData:
              report_cfg, bib_network_config=None, topic_labels=None, export_to=None):
         return build_report_data(
             run_dir            = "/fake/run_dir",
-            model_index        = 0,
+            best_model_index        = 0,
             best_results       = tiny_best_results,
             topic_info         = tiny_topic_info,
             bertopic_results   = tiny_bertopic_results,

@@ -170,7 +170,7 @@ class TestTopicReportIntegration:
         report = TopicReport(
             run_dir=topic_model_outputs["run_dir"],
             report_config=_minimal_report_config(),
-            model_index=0,
+            best_model_index=0,
             export_to=str(tmp_path),
         )
         out = str(tmp_path / "test_report.pdf")
@@ -182,7 +182,7 @@ class TestTopicReportIntegration:
         report = TopicReport(
             run_dir=topic_model_outputs["run_dir"],
             report_config=_minimal_report_config(),
-            model_index=0,
+            best_model_index=0,
             export_to=str(tmp_path),
         )
         report.generate_report(output_file=str(tmp_path / "test_report.pdf"))
@@ -192,7 +192,7 @@ class TestTopicReportIntegration:
         report = TopicReport(
             run_dir=topic_model_outputs["run_dir"],
             report_config=_minimal_report_config(),
-            model_index=0,
+            best_model_index=0,
             export_to=str(tmp_path),
         )
         report.generate_report(output_file=str(tmp_path / "test_report.pdf"))
@@ -210,7 +210,7 @@ class TestTopicReportIntegration:
         report = TopicReport(
             run_dir=topic_model_outputs["run_dir"],
             report_config=_minimal_report_config(),
-            model_index=0,
+            best_model_index=0,
             export_to=str(tmp_path),
             bib_network_config=bib_cfg,
         )
@@ -242,7 +242,7 @@ class TestTopicReportIntegration:
         report = TopicReport(
             run_dir=topic_model_outputs["run_dir"],
             report_config=cfg,
-            model_index=0,
+            best_model_index=0,
             export_to=str(tmp_path),
         )
         report.generate_report(output_file=str(tmp_path / "test_report.pdf"))

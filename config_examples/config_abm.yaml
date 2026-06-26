@@ -297,10 +297,6 @@ topic_model:
 # the topic-model stage. Leave it out to skip report generation entirely.
 #
 topic_report:
-#   # Index in the ranked best_results.csv (0 = best model by distance score).
-#   # Open metrics/<distance>_best_results.csv to inspect all ranked models.
-#   model_index: 0
-#
 #   # Directory where the PDF and annex files will be written.
    export_to: /path/to/PYSYREV/REPORT/
 #

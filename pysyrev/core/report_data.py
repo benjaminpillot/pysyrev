@@ -247,14 +247,14 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
 # Section builders
 # =============================================================================
 
-def _build_overview_section(run_dir, model_index, best_results, section_n):
-    row = best_results.iloc[model_index]
+def _build_overview_section(run_dir, best_model_index, best_results, section_n):
+    row = best_results.iloc[best_model_index]
     coherence_col = next(
         (c for c in best_results.columns if c not in _FIXED_METRIC_COLS), None
     )
     kv_items = [
         {"key": "Run directory",         "value": run_dir},
-        {"key": "Selected model (rank)", "value": model_index},
+        {"key": "Selected model (rank)", "value": best_model_index},
         {"key": "HDBSCAN parameters",    "value": row["hdbscan"]},
         {"key": "UMAP parameters",       "value": row["umap"]},
         {"key": "Number of topics",      "value": int(row["nb_topics"])},
@@ -987,7 +987,7 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
 # =============================================================================
 
 def build_report_data(run_dir: str,
-                      model_index: int,
+                      best_model_index: int,
                       best_results: pd.DataFrame,
                       topic_info: pd.DataFrame,
                       bertopic_results: pd.DataFrame,
@@ -998,7 +998,7 @@ def build_report_data(run_dir: str,
     """Build the declarative report_data dict consumed by PDFReportEngine."""
     meta = report_config.meta
     sec  = report_config.sections
-    nb_topics = int(best_results.iloc[model_index]["nb_topics"])
+    nb_topics = int(best_results.iloc[best_model_index]["nb_topics"])
 
     report_data = {
         "meta": {
@@ -1081,7 +1081,7 @@ def build_report_data(run_dir: str,
 
     # 7. Technical appendix
     report_data["sections"].append(
-        _build_overview_section(run_dir, model_index, best_results, n)
+        _build_overview_section(run_dir, best_model_index, best_results, n)
     )
 
     # Extra user-defined sections

@@ -261,6 +261,7 @@ topic_model:
 
   # ---- Number of best configurations to keep -----------------------------
   keep_n_results: 10
+  best_model_index: 0      # index in best_results.csv (0 = best ranked model)
 
   # ---- Coherence scorers (defaults shown) --------------------------------
   # coherence_scorer:
@@ -317,7 +318,6 @@ topic_model:
 # Remove this section entirely to skip report generation.
 #
 # topic_report:
-#   model_index: 0          # index in best_results.csv (0 = best ranked model)
 #   export_to: /path/to/output/report/
 #   # run_dir:              # blank → auto-detect the latest topic_model run
 #
