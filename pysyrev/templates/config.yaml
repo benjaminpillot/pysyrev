@@ -218,16 +218,13 @@ bib_network:
 
   # ---- Direct citation (directed graph: A → B means A cites B) ----------
   citation_network:
-    use_resolved: true            # requires resolve_references to have been run
 
   # ---- Bibliographic coupling --------------------------------------------
   coupling_network:
-    use_resolved: true            # requires resolve_references to have been run
     min_shared: 1                 # min shared references to draw an edge
 
   # ---- Co-citation -------------------------------------------------------
   cocitation_network:
-    use_resolved: true            # requires resolve_references to have been run
     min_cocitations: 1            # min co-occurrences to draw an edge
 
   # ---- Output ------------------------------------------------------------

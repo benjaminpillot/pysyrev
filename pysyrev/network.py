@@ -54,25 +54,9 @@ class BibNetwork:
     # Direct citation                                                       #
     # ------------------------------------------------------------------ #
 
-    def build_citation_network(
-        self,
-        use_resolved:   bool = True,
-        use_unresolved: bool = True,
-    ) -> 'BibNetwork':
-        """Build (or rebuild) the directed citation graph.
-
-        Parameters
-        ----------
-        use_resolved : bool
-            Include resolved internal reference IDs.
-        use_unresolved : bool
-            Include unresolved raw reference strings.
-        """
-        self._citation_graph = build_citation_graph(
-            self._dataset.dataset,
-            use_resolved=use_resolved,
-            use_unresolved=use_unresolved,
-        )
+    def build_citation_network(self) -> 'BibNetwork':
+        """Build (or rebuild) the directed citation graph."""
+        self._citation_graph = build_citation_graph(self._dataset.dataset)
         return self
 
     @property
@@ -87,28 +71,16 @@ class BibNetwork:
     # Bibliographic coupling                                               #
     # ------------------------------------------------------------------ #
 
-    def build_coupling_network(
-        self,
-        use_resolved:   bool = True,
-        use_unresolved: bool = True,
-        min_shared:     int  = 1,
-    ) -> 'BibNetwork':
+    def build_coupling_network(self, min_shared: int = 1) -> 'BibNetwork':
         """Build (or rebuild) the bibliographic coupling graph.
 
         Parameters
         ----------
-        use_resolved : bool
-            Use resolved internal reference IDs (requires resolve_references()
-            to have been called on the source dataset).
-        use_unresolved : bool
-            Use raw unresolved reference strings.
         min_shared : int
             Minimum shared references to add an edge between two documents.
         """
         self._coupling_graph = build_coupling_graph(
             self._dataset.dataset,
-            use_resolved=use_resolved,
-            use_unresolved=use_unresolved,
             min_shared=min_shared,
         )
         return self
@@ -125,27 +97,16 @@ class BibNetwork:
     # Co-citation                                                          #
     # ------------------------------------------------------------------ #
 
-    def build_cocitation_network(
-        self,
-        use_resolved:    bool = True,
-        use_unresolved:  bool = True,
-        min_cocitations: int  = 1,
-    ) -> 'BibNetwork':
+    def build_cocitation_network(self, min_cocitations: int = 1) -> 'BibNetwork':
         """Build (or rebuild) the co-citation graph.
 
         Parameters
         ----------
-        use_resolved : bool
-            Include resolved internal reference IDs as co-citation nodes.
-        use_unresolved : bool
-            Include unresolved raw reference strings as co-citation nodes.
         min_cocitations : int
             Minimum co-citation count to add an edge between two references.
         """
         self._cocitation_graph = build_cocitation_graph(
             self._dataset.dataset,
-            use_resolved=use_resolved,
-            use_unresolved=use_unresolved,
             min_cocitations=min_cocitations,
         )
         return self
@@ -191,21 +152,13 @@ class BibNetwork:
                 )
             self._dataset = BibDataset(bib_dataset=pd.read_csv(self._doc_dataset))
 
-        cfg = self._citation_config
-        self.build_citation_network(
-            use_resolved   = cfg.use_resolved   if cfg else True,
-            use_unresolved = cfg.use_unresolved if cfg else True,
-        )
+        self.build_citation_network()
         cfg = self._coupling_config
         self.build_coupling_network(
-            use_resolved   = cfg.use_resolved   if cfg else True,
-            use_unresolved = cfg.use_unresolved if cfg else True,
-            min_shared     = cfg.min_shared     if cfg else 1,
+            min_shared = cfg.min_shared if cfg else 1,
         )
         cfg = self._cocitation_config
         self.build_cocitation_network(
-            use_resolved    = cfg.use_resolved    if cfg else True,
-            use_unresolved  = cfg.use_unresolved  if cfg else True,
             min_cocitations = cfg.min_cocitations if cfg else 1,
         )
         return self

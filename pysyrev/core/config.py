@@ -420,19 +420,17 @@ class ReviewConfig(ConfigField):
 
 @dataclass
 class CitationNetworkConfig(ConfigField):
-    use_resolved: bool = False
+    pass
 
 
 @dataclass
 class CouplingNetworkConfig(ConfigField):
-    use_resolved: bool = False
-    min_shared:   int  = 1
+    min_shared: int = 1
 
 
 @dataclass
 class CocitationNetworkConfig(ConfigField):
-    use_resolved:    bool = False
-    min_cocitations: int  = 1
+    min_cocitations: int = 1
 
 
 @dataclass

@@ -202,14 +202,11 @@ bib_network:
   doc_dataset:  # leave blank to use the last review run in export_dir
 
   citation_network:
-    use_resolved: true
 
   coupling_network:
-    use_resolved: true
     min_shared: 1
 
   cocitation_network:
-    use_resolved: true
     min_cocitations: 1
 
   export:
