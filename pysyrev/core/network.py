@@ -79,12 +79,16 @@ def build_coupling_graph(
     return G
 
 
-def build_citation_graph(df: pd.DataFrame) -> nx.DiGraph:
+def build_citation_graph(
+    df:            pd.DataFrame,
+    min_citations: int = 0,
+) -> nx.DiGraph:
     """Build a directed citation graph from a bib DataFrame.
 
     Both resolved and unresolved references are included when present.
 
-    Nodes  — corpus document IDs (node_type='internal', with title/year/journal/doi)
+    Nodes  — corpus document IDs with cited_by ≥ min_citations
+             (node_type='internal', with title/year/journal/doi)
              plus external references (node_type='external', prefixed with R: or U:).
     Edges  — directed A → B meaning corpus document A cites reference B.
 
@@ -92,33 +96,45 @@ def build_citation_graph(df: pd.DataFrame) -> nx.DiGraph:
     ----------
     df : pd.DataFrame
         BibDataset internal DataFrame.
+    min_citations : int
+        Minimum number of citations (cited_by) a corpus document must have
+        to be included as a node. Default 0 keeps all documents.
     """
     doc_refs     = _build_doc_refs(df)
     corpus_index = df.set_index(ID)
 
+    def _cited_by(row) -> int:
+        try:
+            return int(float(row.get('cited_by', 0) or 0))
+        except (ValueError, TypeError):
+            return 0
+
     G = nx.DiGraph()
 
-    # Add all corpus docs as nodes
+    # Add corpus docs that meet the citation threshold
+    included_corpus = set()
     for _, row in df.iterrows():
-        attrs = {col: row[col] for col in _NODE_ATTRS if col in df.columns}
-        attrs['node_type'] = 'internal'
-        G.add_node(row[ID], **attrs)
+        if _cited_by(row) >= min_citations:
+            attrs = {col: row[col] for col in _NODE_ATTRS if col in df.columns}
+            attrs['node_type'] = 'internal'
+            G.add_node(row[ID], **attrs)
+            included_corpus.add(row[ID])
 
     # Add directed edges: corpus doc → cited reference
     for doc_id, refs in doc_refs.items():
+        if doc_id not in included_corpus:
+            continue
         for key in refs:
             if key.startswith('R:'):
                 ref_id = key[2:]
                 if ref_id in corpus_index.index:
-                    # Corpus → corpus: target node already exists (no prefix)
-                    G.add_edge(doc_id, ref_id)
+                    if ref_id in included_corpus:
+                        G.add_edge(doc_id, ref_id)
                 else:
-                    # Corpus → resolved-but-external
                     if key not in G:
                         G.add_node(key, node_type='external')
                     G.add_edge(doc_id, key)
             else:
-                # Corpus → unresolved external reference
                 if key not in G:
                     G.add_node(key, label=key[2:], node_type='external')
                 G.add_edge(doc_id, key)

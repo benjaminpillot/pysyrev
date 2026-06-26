@@ -218,6 +218,7 @@ bib_network:
 
   # ---- Direct citation (directed graph: A → B means A cites B) ----------
   citation_network:
+    min_citations: 0               # min cited_by count to include a corpus node (0 = keep all)
 
   # ---- Bibliographic coupling --------------------------------------------
   coupling_network:

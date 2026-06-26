@@ -54,9 +54,18 @@ class BibNetwork:
     # Direct citation                                                       #
     # ------------------------------------------------------------------ #
 
-    def build_citation_network(self) -> 'BibNetwork':
-        """Build (or rebuild) the directed citation graph."""
-        self._citation_graph = build_citation_graph(self._dataset.dataset)
+    def build_citation_network(self, min_citations: int = 0) -> 'BibNetwork':
+        """Build (or rebuild) the directed citation graph.
+
+        Parameters
+        ----------
+        min_citations : int
+            Minimum cited_by count for a corpus document to appear as a node.
+        """
+        self._citation_graph = build_citation_graph(
+            self._dataset.dataset,
+            min_citations=min_citations,
+        )
         return self
 
     @property
@@ -152,7 +161,10 @@ class BibNetwork:
                 )
             self._dataset = BibDataset(bib_dataset=pd.read_csv(self._doc_dataset))
 
-        self.build_citation_network()
+        cfg = self._citation_config
+        self.build_citation_network(
+            min_citations = cfg.min_citations if cfg else 0,
+        )
         cfg = self._coupling_config
         self.build_coupling_network(
             min_shared = cfg.min_shared if cfg else 1,

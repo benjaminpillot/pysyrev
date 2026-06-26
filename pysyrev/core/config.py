@@ -420,7 +420,7 @@ class ReviewConfig(ConfigField):
 
 @dataclass
 class CitationNetworkConfig(ConfigField):
-    pass
+    min_citations: int = 0  # min cited_by count to include a corpus node
 
 
 @dataclass
