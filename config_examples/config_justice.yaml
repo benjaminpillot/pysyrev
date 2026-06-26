@@ -349,17 +349,6 @@ topic_report:
 
 
 # =============================================================================
-# vosviewer — VOSviewer JSON export (optional)
-# =============================================================================
-# When present, three JSON files compatible with app.vosviewer.com are written
-# into the same directory as the bib_network GraphML exports.
-# Topic clusters are derived automatically from topic-model results.
-#
-vosviewer:
-    max_nodes: 500
-
-
-# =============================================================================
 # llm — LLM topic labelling (optional)
 # =============================================================================
 # When present, an LLM generates a human-readable label for each topic.

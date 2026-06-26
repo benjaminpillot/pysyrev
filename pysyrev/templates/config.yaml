@@ -6,7 +6,7 @@
 #
 # All sections are optional — only the sections present are executed.
 # The canonical stage order is:
-#   bib → review → bib-network → topic-model → topic-report → vosviewer
+#   bib → review → bib-network → topic-model → topic-report
 #
 # Sections:
 #   bib          — bibliography collection and preparation
@@ -14,7 +14,6 @@
 #   bib_network  — bibliographic coupling and co-citation graphs
 #   topic_model  — BERTopic-based topic modelling
 #   topic_report — PDF report generation (model selection)
-#   vosviewer    — VOSviewer JSON export (optional, requires bib_network)
 #   llm          — LLM topic labelling (optional, used with topic_report)
 #   report       — PDF layout and section parameters
 #
@@ -357,22 +356,6 @@ topic_model:
 #   #     selection_by: citations          # citations | random | coupling | co_citation
 #   #     export_annex: true
 #   #     annex_format: csv         # csv | txt
-
-
-# =============================================================================
-# vosviewer  (optional)
-# =============================================================================
-# When present, three VOSviewer-compatible JSON files are written into the
-# same directory as the bib_network GraphML exports:
-#   citation_network_vos.json, coupling_network_vos.json,
-#   cocitation_network_vos.json
-# Topic clusters are derived automatically from topic-model results when
-# available.  Open the JSON files at app.vosviewer.com → "Load your own data".
-# Requires bib_network (with export) to have been run.
-#
-# vosviewer:
-#   max_nodes: 3000        # max nodes per JSON export, top N by degree (default: 3000)
-#   corpus_only: true      # keep only corpus documents in all networks (default: true)
 
 
 # =============================================================================

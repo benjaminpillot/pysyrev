@@ -699,20 +699,6 @@ class TopicReportConfig(ConfigField):
 
 
 @dataclass
-class VosviewerConfig(ConfigField):
-    """Enable the VOSviewer JSON export stage.
-
-    Add ``vosviewer: {}`` to your pipeline YAML to activate it.
-    The stage runs after ``topic-report`` and writes three JSON files
-    (citation, coupling, co-citation) into the same directory as the
-    existing GraphML exports.  Topic clusters are derived automatically
-    from topic-model results when available.
-    """
-    max_nodes:   int  = 3000  # max nodes per JSON export (top N by degree)
-    corpus_only: bool = True  # keep only corpus documents in all networks
-
-
-@dataclass
 class BibNetworkReportConfig(ConfigField):
     """Paths to the exported bib_network graphs for inclusion in the report.
 
@@ -831,7 +817,6 @@ class Config:
     bib_network:        Union[None, BibNetworkConfig]       = None
     topic_model:        Union[None, TopicModelConfig]       = None
     topic_report:       Union[None, TopicReportConfig]      = None
-    vosviewer:          Union[None, VosviewerConfig]        = None
     llm:                Union[None, TopicLabelerConfig]     = None
     # Auto-populated during load() — not a user-facing YAML key.
     bib_network_graphs: Union[None, BibNetworkReportConfig] = None
@@ -917,7 +902,6 @@ class Config:
             bib_network        = BibNetworkConfig(**bib_network_data)    if bib_network_data              else None,
             topic_model        = TopicModelConfig(**topic_model_data)    if topic_model_data              else None,
             topic_report       = TopicReportConfig(**topic_report_data)  if topic_report_data             else None,
-            vosviewer          = VosviewerConfig()                       if resolved.get('vosviewer') is not None else None,
             llm                = TopicLabelerConfig(**resolved['llm'])   if resolved.get('llm')           else None,
             bib_network_graphs = bib_network_graphs,
         )
