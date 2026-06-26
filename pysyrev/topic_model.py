@@ -9,7 +9,6 @@ Field names mirror the corresponding entries in config.py to keep the
 bridge between the two trivial.
 """
 
-import glob
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -137,6 +136,7 @@ class TopicModel:
     purity_scorer:        str
     run_name:             Union[None, str]
     labeler_config:       Optional[object] = None  # TopicLabelerConfig or None
+    best_model_index:     int = 0
     overwrite:            bool = False
     _run_dir:             Union[None, str] = field(default=None, init=False, repr=False)
 
@@ -201,6 +201,7 @@ class TopicModel:
             purity_scorer        = tc.coherence_scorer.purity,
             run_name             = tc.export.run_name,
             labeler_config       = config.llm,
+            best_model_index     = tc.best_model_index,
         )
 
     # ---- runtime --------------------------------------------------------
@@ -218,26 +219,29 @@ class TopicModel:
         self._run_dir = str(run_dir)
         return run_dir
 
-    def _label_all_models(self) -> None:
-        """Generate and cache LLM labels for every saved topic_info file in run_dir."""
+    def _label_selected_model(self) -> None:
+        """Generate and cache LLM labels for the model at best_model_index."""
         from pysyrev.core.llm import label_topics
-        import pandas as pd
+        from pysyrev.core.report_data import find_best_results_csv, build_file_prefix
 
-        tinfo_dir = os.path.join(self._run_dir, "topic_info")
-        csv_files = glob.glob(os.path.join(tinfo_dir, "*.csv"))
-        if not csv_files:
+        csv_path, distance_name = find_best_results_csv(self._run_dir)
+        best_results = pd.read_csv(csv_path)
+        if self.best_model_index >= len(best_results):
+            print(f"[TopicModel] best_model_index={self.best_model_index} out of range — skipping label generation")
+            return
+        row = best_results.iloc[self.best_model_index]
+        file_prefix = build_file_prefix(row["hdbscan"], row["umap"], distance_name)
+
+        if load_cached_labels(self._run_dir, file_prefix) is not None:
+            print(f"[TopicModel] Labels already cached for model {self.best_model_index} — skipping")
             return
 
-        print(f"[TopicModel] Generating topic labels for {len(csv_files)} model(s)…")
-        for csv_path in csv_files:
-            file_prefix = Path(csv_path).stem
-            if load_cached_labels(self._run_dir, file_prefix) is not None:
-                print(f"  [skip] {file_prefix} — labels already cached")
-                continue
-            topic_info = pd.read_csv(csv_path)
-            labels = label_topics(topic_info, self.labeler_config)
-            path = save_labels(self._run_dir, file_prefix, labels)
-            print(f"  [saved] {path}")
+        tinfo_path = os.path.join(self._run_dir, "topic_info", f"{file_prefix}.csv")
+        topic_info = pd.read_csv(tinfo_path)
+        print(f"[TopicModel] Generating topic labels for model {self.best_model_index}…")
+        labels = label_topics(topic_info, self.labeler_config)
+        path = save_labels(self._run_dir, file_prefix, labels)
+        print(f"[TopicModel] Topic labels saved to: {path}")
 
     def run(self, dataset: pd.DataFrame = None, show_progress=True):
         """Run the topic modelling pipeline.
@@ -288,5 +292,5 @@ class TopicModel:
             surviving_indices,
         )
         if self.labeler_config is not None:
-            self._label_all_models()
+            self._label_selected_model()
         return result
