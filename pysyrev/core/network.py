@@ -4,10 +4,10 @@ from itertools import combinations
 import networkx as nx
 import pandas as pd
 
-from pysyrev.core.bib import ID, TITLE, YEAR, JOURNAL, DOI
+from pysyrev.core.bib import ID, TITLE, YEAR, JOURNAL, DOI, CITED_BY
 
 _SEP = '; '
-_NODE_ATTRS = [TITLE, YEAR, JOURNAL, DOI]
+_NODE_ATTRS = [TITLE, YEAR, JOURNAL, DOI, CITED_BY]
 
 
 def _build_doc_refs(df: pd.DataFrame) -> dict[str, set[str]]:
@@ -115,8 +115,10 @@ def build_citation_graph(
     # Add corpus docs that meet the citation threshold
     included_corpus = set()
     for _, row in df.iterrows():
-        if _cited_by(row) >= min_citations:
-            attrs = {col: row[col] for col in _NODE_ATTRS if col in df.columns}
+        cb = _cited_by(row)
+        if cb >= min_citations:
+            attrs = {col: row[col] for col in _NODE_ATTRS if col in df.columns and col != CITED_BY}
+            attrs[CITED_BY] = cb  # sanitized integer, avoids NaN in graphml
             attrs['node_type'] = 'internal'
             G.add_node(row[ID], **attrs)
             included_corpus.add(row[ID])
