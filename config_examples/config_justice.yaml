@@ -202,6 +202,7 @@ bib_network:
   doc_dataset:  # leave blank to use the last review run in export_dir
 
   citation_network:
+    min_citations: 1
 
   coupling_network:
     min_shared: 1
@@ -322,8 +323,8 @@ topic_report:
        enabled: auto            # auto | true | false
        corpus_only: true        # keep only corpus nodes in all graphs; set false to show external refs
        exclude_outliers: true   # remove Topic=-1 nodes from all graphs
-       node_size_exponent: 5.0
-       node_size_max: 35.0
+       node_size_exponent: 3.0
+       node_size_max: 75.0
        node_size_min: 4.0
 #     temporal:
 #       variants: [absolute, cumulative, normalized, weighted]
