@@ -573,18 +573,19 @@ class TopicsSectionConfig(ConfigField):
 
 @dataclass
 class BibNetworkSectionConfig(ConfigField):
-    enabled:            str   = "auto"  # "auto" | "true" | "false"
-    corpus_only:        bool  = True    # co-citation: keep only nodes in corpus
-    exclude_outliers:   bool  = True    # remove Topic=-1 nodes from both graphs
-    node_size_min:      float = 4.0     # smallest node radius (pixels)
-    node_size_max:      float = 26.0    # largest node radius (pixels)
-    node_size_exponent: float = 1.5     # >1 increases contrast between nodes (applied to log-normalised values)
+    enabled:            str   = "auto"        # "auto" | "true" | "false"
+    corpus_only:        bool  = True          # co-citation: keep only nodes in corpus
+    exclude_outliers:   bool  = True          # remove Topic=-1 nodes from both graphs
+    node_size_min:      float = 4.0           # smallest node radius (pixels)
+    node_size_max:      float = 26.0          # largest node radius (pixels)
+    node_size_exponent: float = 1.5           # >1 increases contrast between nodes (applied to log-normalised values)
+    layout:             str   = "forceatlas2" # "forceatlas2" | "spring"
 
 
 @dataclass
 class TemporalSectionConfig(ConfigField):
     variants: List[str] = field(default_factory=lambda: [
-        "absolute", "cumulative", "normalized", "weighted"
+        "absolute", "normalized", "weighted"
     ])
 
 
