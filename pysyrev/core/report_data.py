@@ -98,12 +98,44 @@ def _topic_cols(bertopic_results: pd.DataFrame):
 # Network visualisation
 # =============================================================================
 
+def _compute_layout(G, layout: str = "forceatlas2") -> dict:
+    """Return a {node: (x, y)} position dict using the requested algorithm.
+
+    Falls back to spring_layout when ForceAtlas2 is not available or the
+    graph is empty.
+    """
+    import networkx as nx
+
+    if G.number_of_nodes() == 0:
+        return {}
+
+    if layout == "forceatlas2":
+        try:
+            from fa2_modified import ForceAtlas2
+            fa2 = ForceAtlas2(
+                # Tuning: gravity pulls disconnected nodes to centre; scalingRatio
+                # spreads nodes apart; barnesHutOptimize speeds up large graphs.
+                gravity=1.0,
+                scalingRatio=2.0,
+                strongGravityMode=False,
+                barnesHutOptimize=G.number_of_nodes() > 200,
+                verbose=False,
+            )
+            iterations = max(100, min(500, 50_000 // max(G.number_of_nodes(), 1)))
+            return fa2.forceatlas2_networkx_layout(G, pos=None, iterations=iterations)
+        except ImportError:
+            pass  # fall through to spring
+
+    return nx.spring_layout(G, seed=42)
+
+
 def _make_network_figure(G, title: str, max_nodes: int = None,
                          topic_map: dict = None, topic_label_map: dict = None,
                          directed: bool = False,
                          node_size_min: float = 4.0,
                          node_size_max: float = 26.0,
-                         node_size_exponent: float = 1.5):
+                         node_size_exponent: float = 1.5,
+                         layout: str = "forceatlas2"):
     """Return a Plotly Figure representing a NetworkX graph.
 
     When *topic_map* ({node_id: topic_int}) is provided nodes are coloured by
@@ -127,8 +159,7 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
         G = G.subgraph([n for n, _ in top]).copy()
         is_truncated = True
 
-    import networkx as nx
-    pos = nx.spring_layout(G, seed=42)
+    pos = _compute_layout(G, layout=layout)
 
     nodes = list(G.nodes())
 
@@ -162,17 +193,35 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
         showlegend=False,
     )
 
-    # Arrow annotations for directed graphs (skipped when too many edges)
-    arrow_annotations = []
+    # Arrow markers for directed graphs — drawn as a Scatter trace (not layout
+    # annotations) so they sit between edge lines and node markers in the data
+    # list, which keeps nodes visually on top.
+    arrow_trace = None
     if directed and G.number_of_edges() <= 300:
+        ax, ay, angles = [], [], []
         for u, v in G.edges():
             x0, y0 = pos[u]; x1, y1 = pos[v]
-            arrow_annotations.append(dict(
-                x=x1, y=y1, ax=x0, ay=y0,
-                xref="x", yref="y", axref="x", ayref="y",
-                showarrow=True, arrowhead=2, arrowsize=0.8,
-                arrowwidth=1, arrowcolor="#AAAAAA",
-            ))
+            dx, dy = x1 - x0, y1 - y0
+            length = (dx * dx + dy * dy) ** 0.5
+            if length > 0:
+                ax.append(x0 + 0.75 * dx)
+                ay.append(y0 + 0.75 * dy)
+                # CW rotation from +y to match edge direction
+                angles.append(90 - float(np.degrees(np.arctan2(dy, dx))))
+        if ax:
+            arrow_trace = go.Scatter(
+                x=ax, y=ay,
+                mode="markers",
+                marker=dict(
+                    symbol="triangle-up",
+                    size=6,
+                    angle=angles,
+                    color="#AAAAAA",
+                    opacity=0.8,
+                ),
+                hoverinfo="none",
+                showlegend=False,
+            )
 
     # Per-node hover text
     def _hover(n):
@@ -238,8 +287,9 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
             ),
         )]
 
+    middle = [arrow_trace] if arrow_trace is not None else []
     fig = go.Figure(
-        data=[edge_trace] + node_traces,
+        data=[edge_trace] + middle + node_traces,
         layout=go.Layout(
             title=title if not is_truncated else f"{title} (top {max_nodes} nodes by degree)",
             showlegend=topic_map is not None,
@@ -248,7 +298,6 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
             yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             margin=dict(l=20, r=20, t=50, b=20),
             width=900, height=600,
-            annotations=arrow_annotations if arrow_annotations else [],
         ),
     )
     return fig, is_truncated
@@ -422,6 +471,7 @@ def _build_bib_network_section(bib_network_config, section_n,
     _node_size_min      = section_cfg.node_size_min      if section_cfg is not None else 4.0
     _node_size_max      = section_cfg.node_size_max      if section_cfg is not None else 26.0
     _node_size_exponent = section_cfg.node_size_exponent if section_cfg is not None else 1.5
+    _layout             = section_cfg.layout             if section_cfg is not None else "forceatlas2"
 
     sub_blocks = []
     for path, label, max_nodes, node_col_header, is_directed in graphs:
@@ -550,6 +600,7 @@ def _build_bib_network_section(bib_network_config, section_n,
             node_size_min=_node_size_min,
             node_size_max=_node_size_max,
             node_size_exponent=_node_size_exponent,
+            layout=_layout,
         )
         if is_directed:
             caption = "Node size scales with citation count (cited_by, log scale)."
@@ -568,10 +619,24 @@ def _build_bib_network_section(bib_network_config, section_n,
 
         # Export interactive HTML alongside the PDF
         if export_to:
+            import plotly.graph_objects as _go
             os.makedirs(export_to, exist_ok=True)
             html_name = label.lower().replace(" ", "_") + "_network.html"
             html_path = os.path.join(export_to, html_name)
-            fig.write_html(html_path)
+            # Use autosize for the HTML version; keep width/height in the
+            # original figure so the PDF rendering is unaffected.
+            fig_html = _go.Figure(fig)
+            fig_html.update_layout(autosize=True, width=None, height=None)
+            fig_html.write_html(
+                html_path,
+                config={"responsive": True},
+                default_width="100%",
+                default_height="100%",
+                post_script=(
+                    "document.documentElement.style.cssText='height:100%;margin:0;padding:0;';"
+                    "document.body.style.cssText='height:100%;margin:0;padding:0;';"
+                ),
+            )
             file_uri  = Path(html_path).resolve().as_uri()
             sub_content.append({
                 "type":  "callout",
@@ -614,32 +679,16 @@ def _build_temporal_section(bertopic_results, nb_topics, temporal_cfg, section_n
         fig = px.histogram(
             br_wo.sort_values("Topic"),
             x="year", y="nb_docs", color="Topic",
-            title="Number of documents per topic over time (absolute)",
-            nbins=int(br_wo["year"].max() - br_wo["year"].min() + 1),
-        )
-        fig.update_layout(width=900, height=550)
-        sub_blocks.append({
-            "type":   "subsection",
-            "title":  "Absolute",
-            "blocks": [{"type": "plotly", "figure": fig,
-                        "caption": "Total documents per topic per year."}],
-        })
-
-    # -- cumulative --
-    if "cumulative" in variants:
-        fig = px.histogram(
-            br_wo.sort_values("Topic"),
-            x="year", y="nb_docs", color="Topic",
-            title="Number of documents per topic over time (cumulative)",
+            title="Number of documents per topic over time (cumulative absolute)",
             nbins=int(br_wo["year"].max() - br_wo["year"].min() + 1),
             cumulative=True,
         )
         fig.update_layout(width=900, height=550)
         sub_blocks.append({
             "type":   "subsection",
-            "title":  "Cumulative",
+            "title":  "Absolute",
             "blocks": [{"type": "plotly", "figure": fig,
-                        "caption": "Cumulative documents per topic per year."}],
+                        "caption": "Cumulative total documents per topic per year."}],
         })
 
     # -- normalized --
@@ -650,15 +699,16 @@ def _build_temporal_section(bertopic_results, nb_topics, temporal_cfg, section_n
         fig = px.histogram(
             br_norm.sort_values("Topic"),
             x="year", y="normalized", color="Topic",
-            title="Proportion of each topic's documents over time (normalized)",
+            title="Proportion of each topic's documents over time (cumulative normalized)",
             nbins=int(br_wo["year"].max() - br_wo["year"].min() + 1),
+            cumulative=True,
         )
         fig.update_layout(width=900, height=550)
         sub_blocks.append({
             "type":   "subsection",
             "title":  "Normalized (within-topic proportion)",
             "blocks": [{"type": "plotly", "figure": fig,
-                        "caption": "Each topic's share of its own documents per year."}],
+                        "caption": "Cumulative share of each topic's own documents per year."}],
         })
 
     # -- weighted (BERTopic approximate distribution) --
@@ -678,15 +728,16 @@ def _build_temporal_section(bertopic_results, nb_topics, temporal_cfg, section_n
             fig = px.histogram(
                 df_agg.sort_values("topic_num"),
                 x="year", y="weighted_count", color="topic_num",
-                title="Weighted number of documents per topic over time",
+                title="Weighted number of documents per topic over time (cumulative)",
                 nbins=int(br_wo["year"].max() - br_wo["year"].min() + 1),
+                cumulative=True,
             )
             fig.update_layout(width=900, height=550)
             sub_blocks.append({
                 "type":   "subsection",
                 "title":  "Weighted (BERTopic approximate distribution)",
                 "blocks": [{"type": "plotly", "figure": fig,
-                            "caption": "Sum of BERTopic topic-probability weights per year."}],
+                            "caption": "Cumulative sum of BERTopic topic-probability weights per year."}],
             })
 
     if not sub_blocks:
