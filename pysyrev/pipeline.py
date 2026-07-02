@@ -33,6 +33,7 @@ in memory when stages are chained:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Union
 
@@ -114,17 +115,25 @@ class Pipeline:
             self.network.run(dataset)
             if self.config.bib_network.export is not None:
                 self.network.save()
+                # Propagate freshly saved graphml paths — Config.load auto-detected
+                # the previous run; update to the one just created.
+                from pysyrev.core.config import BibNetworkReportConfig
+                exp = self.network._export_config
+                self.config.bib_network_graphs = BibNetworkReportConfig(
+                    citation_graph   = exp.citation_graph   if exp.citation_graph   and os.path.isfile(exp.citation_graph)   else None,
+                    coupling_graph   = exp.coupling_graph   if exp.coupling_graph   and os.path.isfile(exp.coupling_graph)   else None,
+                    cocitation_graph = exp.cocitation_graph if exp.cocitation_graph and os.path.isfile(exp.cocitation_graph) else None,
+                )
 
         if 'topic-model' in ordered:
             from pysyrev.topic_model import TopicModel
             self.topic = TopicModel.from_config(self.config)
             dataset = self.review.included_docs if self.review is not None else None
             self.topic.run(dataset)
-            # Always propagate the freshly created run_dir to topic_report when
-            # both stages run together — Config.load may have auto-detected an
-            # older run that existed before this one was created.
-            if (self.config.topic_report is not None
-                    and 'topic-report' in ordered):
+            # Propagate the freshly created run_dir — Config.load auto-detected the
+            # previous run; update to the one just created, whether or not
+            # topic-report is in this same run() call.
+            if self.config.topic_report is not None:
                 self.config.topic_report.run_dir = self.topic._run_dir
 
         if 'topic-report' in ordered:
