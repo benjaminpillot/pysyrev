@@ -19,7 +19,7 @@ import datetime
 import os
 import re
 from dataclasses import dataclass, fields, field
-from typing import List, Union
+from typing import List, Optional, Union
 
 import yaml
 from dotenv import load_dotenv
@@ -136,6 +136,30 @@ class WosSourceConfig(ConfigField):
 
 
 @dataclass
+class WosCompletionConfig(ConfigField):
+    """Complete a source's missing abstracts from Web of Science, by DOI.
+
+    Declared as a completion sub-block of a primary source (e.g. under
+    ``open_alex``). Its mere presence enables completion: any record the
+    primary source left without an abstract is looked up in WoS Expanded via
+    its DOI and the recovered abstract is filled in. Only the ``abstract``
+    column is touched — the primary source's references/IDs (e.g. OpenAlex
+    ``referenced_works``, used for coupling networks) are left intact. Omit the
+    whole block to skip completion. Requires a WoS Expanded API key.
+    """
+    api_key:   Union[None, str] = None   # typically `${WOS_API_KEY}`
+    cache_dir: Union[None, str] = None   # optional WoS session cache
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.api_key:
+            raise ValueError(
+                "wos_completion is set but no `api_key:` is given "
+                "(a WoS Expanded API key is required)"
+            )
+
+
+@dataclass
 class OpenAlexApiConfig(ConfigField):
     """Configuration for retrieving works via the OpenAlex API.
 
@@ -153,10 +177,15 @@ class OpenAlexApiConfig(ConfigField):
 @dataclass
 class OpenAlexSourceConfig(ConfigField):
     """One OpenAlex source: either a file path, or an API config. Exactly
-    one of `file` / `api` must be set."""
-    source: str = 'file'  # 'file' or 'api'
-    file:   Union[None, str] = None
-    api:    Union[None, OpenAlexApiConfig] = None
+    one of `file` / `api` must be set.
+
+    Optional completion sub-blocks enrich the records this source returns from
+    other providers. ``wos_completion`` fills missing abstracts from Web of
+    Science; further providers (e.g. Scopus) can be added the same way."""
+    source:         str = 'file'  # 'file' or 'api'
+    file:           Union[None, str] = None
+    api:            Union[None, OpenAlexApiConfig] = None
+    wos_completion: Union[None, WosCompletionConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -168,6 +197,9 @@ class OpenAlexSourceConfig(ConfigField):
             raise ValueError("OpenAlex source is 'api' but no `api:` block is set")
         if self.source not in ('file', 'api'):
             raise ValueError(f"Unknown OpenAlex source {self.source!r}; expected 'file' or 'api'")
+        # Presence of the completion sub-block enables it; absence leaves it None.
+        if isinstance(self.wos_completion, dict):
+            self.wos_completion = WosCompletionConfig(**self.wos_completion)
 
 
 @dataclass
@@ -573,13 +605,26 @@ class TopicsSectionConfig(ConfigField):
 
 @dataclass
 class BibNetworkSectionConfig(ConfigField):
-    enabled:            str   = "auto"        # "auto" | "true" | "false"
-    corpus_only:        bool  = True          # co-citation: keep only nodes in corpus
-    exclude_outliers:   bool  = True          # remove Topic=-1 nodes from both graphs
-    node_size_min:      float = 4.0           # smallest node radius (pixels)
-    node_size_max:      float = 26.0          # largest node radius (pixels)
-    node_size_exponent: float = 1.5           # >1 increases contrast between nodes (applied to log-normalised values)
-    layout:             str   = "forceatlas2" # "forceatlas2" | "spring"
+    enabled:              str            = "auto"        # "auto" | "true" | "false"
+    corpus_only:          bool           = True          # co-citation: keep only nodes in corpus
+    exclude_outliers:     bool           = True          # remove Topic=-1 nodes from both graphs
+    node_size_min:        float          = 4.0           # smallest node radius (pixels)
+    node_size_max:        float          = 26.0          # largest node radius (pixels)
+    node_size_exponent:   float          = 1.5           # >1 increases contrast between nodes (applied to log-normalised values)
+    layout:               str            = "forceatlas2" # "forceatlas2" | "spring"
+    fa2_scaling_ratio:    float          = 2.0           # higher → nodes pushed further apart
+    fa2_gravity:          float          = 1.0           # lower → less pull toward centre
+    min_degree:           int            = 0             # remove nodes with degree strictly below this value
+    max_nodes:            Optional[int]  = None          # cap displayed nodes for all networks
+    # ---- Reworked coupling panel (Salton + Leiden + backbone) --------------
+    # The coupling network is recomputed from the reviewed dataset's raw
+    # references, laid out so Leiden communities read as separated blobs, and
+    # coloured by BERTopic topic to reveal the topic mix of each community.
+    coupling_resolution:  float          = 0.7           # Leiden resolution (higher → more, smaller communities)
+    coupling_min_size:    int            = 5             # communities smaller than this → uncoupled tail
+    coupling_backbone_k:  int            = 3             # keep each node's k strongest couplings when drawing
+    coupling_color_by:    str            = "topic"       # "topic" | "community"
+    coupling_hulls:       bool           = True          # outline Leiden communities (only when colouring by topic)
 
 
 @dataclass

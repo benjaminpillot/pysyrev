@@ -1,4 +1,6 @@
 import warnings
+from functools import partial
+
 from rapidfuzz import fuzz
 
 from pysyrev.core.api import OpenAlexClient, WosClient
@@ -10,6 +12,7 @@ from pysyrev.core.references import (resolve_references as _resolve_references,
 from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
 from pysyrev.core.clean import clean_doi, clean_abstracts
+from pysyrev.core.completion import complete_abstracts_from_wos
 from typing import Iterable, List
 
 import pandas as pd
@@ -28,6 +31,13 @@ class BibDataset:
     _db = None
     _bib_dataset = None
     _cross_id_map: dict  # {dropped_id: kept_id} built during merge
+
+    # Completion strategies available for this source, keyed by the config
+    # sub-block (attribute on the source config) that enables them. Each value
+    # is ``(provider_label, factory)`` where ``factory(cfg)`` turns that config
+    # block into a ``(dataframe, show_progress) -> int`` completer. Empty on the
+    # base class; subclasses declare the providers they support.
+    _COMPLETERS: dict = {}
 
     def __init__(self, bibfile=None, bib_dataset=None):
         """
@@ -143,6 +153,49 @@ class BibDataset:
         """
         #TODO
         pass
+
+    def complete_abstracts(self, completer, provider="completion", verbose=True):
+        """Fill missing abstracts using a completion strategy.
+
+        Generic over the provider: *completer* is any callable
+        ``(dataframe, show_progress) -> int`` that fills the ``abstract`` column
+        of records left bare by the primary source and returns how many it
+        recovered (e.g. ``complete_abstracts_from_wos`` with its provider
+        params bound). No other column should be modified — the source's
+        references/IDs used for coupling networks must be preserved. Must be
+        called before :meth:`clean_and_drop`, which drops no-abstract rows.
+
+        Parameters
+        ----------
+        completer : callable
+            Completion strategy, ``(dataframe, show_progress) -> int``.
+        provider : str
+            Human-readable provider name, used only in the log line.
+        verbose : bool
+            Show progress and print how many abstracts were recovered.
+
+        Returns
+        -------
+        self
+        """
+        recovered = completer(self._bib_dataset, show_progress=verbose)
+        if verbose:
+            print(f"{provider} completion: recovered {recovered} missing abstract(s)")
+        return self
+
+    def apply_completions(self, source_config, verbose=True):
+        """Apply every completion sub-block present on *source_config*.
+
+        Iterates this class's ``_COMPLETERS`` registry: for each declared
+        provider whose config sub-block is set, build its completer and run it.
+        Absent sub-blocks are skipped. Returns self so it chains after
+        :meth:`from_config`.
+        """
+        for attr, (provider, factory) in self._COMPLETERS.items():
+            cfg = getattr(source_config, attr, None)
+            if cfg:
+                self.complete_abstracts(factory(cfg), provider=provider, verbose=verbose)
+        return self
 
     def fetch_citations(self):
         """ Fetch citation count through
@@ -318,7 +371,14 @@ class BibDataset:
         if config.wos:
             datasets.append(WosDataset.from_config(config.wos))
         if config.open_alex:
-            datasets.append(OpenAlexDataset.from_config(config.open_alex))
+            # Completion sub-blocks (e.g. wos_completion) enrich the OpenAlex
+            # records before merge/clean, so abstracts OpenAlex left bare are
+            # recovered rather than dropped as no-abstract rows. Only the
+            # abstract is touched; OpenAlex IDs are preserved. Which providers
+            # run is declared in OpenAlexDataset._COMPLETERS.
+            open_alex = OpenAlexDataset.from_config(config.open_alex)
+            open_alex.apply_completions(config.open_alex)
+            datasets.append(open_alex)
         if config.scopus:
             datasets.append(ScopusDataset(bibfile=config.scopus))
         if config.pubmed:
@@ -454,6 +514,17 @@ class WosDataset(BibDataset):
 class OpenAlexDataset(BibDataset):
 
     _db = "scopus"
+
+    # Abstract-completion providers available for OpenAlex-sourced records:
+    # config sub-block -> (label, factory building a (df, show_progress) -> int
+    # completer). Add a provider here to enable it — from_config needs no change.
+    _COMPLETERS = {
+        "wos_completion": ("WoS", lambda cfg: partial(
+            complete_abstracts_from_wos,
+            api_key=cfg.api_key,
+            session_file=f"{cfg.cache_dir}/session.json" if cfg.cache_dir else None,
+        )),
+    }
 
     @classmethod
     def from_config(cls, config: OpenAlexSourceConfig) -> 'OpenAlexDataset':

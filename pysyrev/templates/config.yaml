@@ -59,6 +59,17 @@ bib:
     #     publication_year: '2015-2024'
     #     type: article
     #   cache_dir: /path/to/oa_cache/
+    # ---- Abstract completion (opt-in) --------------------------------------
+    # OpenAlex has no abstract for a share of its records. Add this block to
+    # recover those abstracts from Web of Science (looked up by DOI) before
+    # no-abstract rows are dropped. Its presence enables completion; omit it to
+    # skip. Only the abstract is filled — the OpenAlex referenced_works IDs used
+    # for coupling networks are left intact. Requires a WoS Expanded API key.
+    # Further completion providers (e.g. scopus_completion) can be added here
+    # later the same way.
+    # wos_completion:
+    #   api_key: ${WOS_API_KEY}
+    #   cache_dir: /path/to/wos_completion_cache/   # omit to disable caching
 
   # scopus:
   # pubmed:
@@ -340,8 +351,19 @@ topic_model:
 #   #     node_size_min: 4.0        # smallest node radius in pixels (default: 4.0)
 #   #     node_size_max: 26.0       # largest node radius in pixels (default: 26.0)
 #   #     node_size_exponent: 1.5   # exponent applied to log-normalised values; >1 increases contrast (default: 1.5)
+#   #     layout: forceatlas2       # forceatlas2 | spring (default: forceatlas2)
+#   #     fa2_scaling_ratio: 2.0    # higher → nodes pushed further apart (default: 2.0)
+#   #     fa2_gravity: 1.0          # lower → less pull toward centre (default: 1.0)
+#   #     min_degree: 0             # remove nodes with fewer connections (default: 0 = keep all)
+#   #     max_nodes: ~              # cap total displayed nodes across all networks (default: no limit)
+#   #     # -- Coupling panel: Salton coupling + Leiden communities, coloured by topic --
+#   #     coupling_resolution: 0.7  # Leiden resolution; higher → more, smaller communities (default: 0.7)
+#   #     coupling_min_size: 5      # communities smaller than this fall into the uncoupled tail (default: 5)
+#   #     coupling_backbone_k: 3    # draw only each node's k strongest couplings (default: 3)
+#   #     coupling_color_by: topic  # topic | community (default: topic)
+#   #     coupling_hulls: true      # outline Leiden communities when colouring by topic (default: true)
 #   #   temporal:
-#   #     variants: [absolute, cumulative, normalized, weighted]
+#   #     variants: [absolute, normalized, weighted]
 #   #   topic_characteristics:
 #   #     n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
 #   #     n_top_cited_global: 50     # N most-cited papers globally used for topic distribution

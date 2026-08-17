@@ -98,7 +98,8 @@ def _topic_cols(bertopic_results: pd.DataFrame):
 # Network visualisation
 # =============================================================================
 
-def _compute_layout(G, layout: str = "forceatlas2") -> dict:
+def _compute_layout(G, layout: str = "forceatlas2",
+                    scaling_ratio: float = 2.0, gravity: float = 1.0) -> dict:
     """Return a {node: (x, y)} position dict using the requested algorithm.
 
     Falls back to spring_layout when ForceAtlas2 is not available or the
@@ -113,10 +114,8 @@ def _compute_layout(G, layout: str = "forceatlas2") -> dict:
         try:
             from fa2_modified import ForceAtlas2
             fa2 = ForceAtlas2(
-                # Tuning: gravity pulls disconnected nodes to centre; scalingRatio
-                # spreads nodes apart; barnesHutOptimize speeds up large graphs.
-                gravity=1.0,
-                scalingRatio=2.0,
+                gravity=gravity,
+                scalingRatio=scaling_ratio,
                 strongGravityMode=False,
                 barnesHutOptimize=G.number_of_nodes() > 200,
                 verbose=False,
@@ -135,7 +134,9 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
                          node_size_min: float = 4.0,
                          node_size_max: float = 26.0,
                          node_size_exponent: float = 1.5,
-                         layout: str = "forceatlas2"):
+                         layout: str = "forceatlas2",
+                         fa2_scaling_ratio: float = 2.0,
+                         fa2_gravity: float = 1.0):
     """Return a Plotly Figure representing a NetworkX graph.
 
     When *topic_map* ({node_id: topic_int}) is provided nodes are coloured by
@@ -159,7 +160,8 @@ def _make_network_figure(G, title: str, max_nodes: int = None,
         G = G.subgraph([n for n, _ in top]).copy()
         is_truncated = True
 
-    pos = _compute_layout(G, layout=layout)
+    pos = _compute_layout(G, layout=layout,
+                          scaling_ratio=fa2_scaling_ratio, gravity=fa2_gravity)
 
     nodes = list(G.nodes())
 
@@ -436,23 +438,187 @@ def _node_display_label(node_id: str, attrs: dict) -> str:
     return s[2:] if len(s) > 2 and s[1] == ":" else s
 
 
+def _export_network_html(fig, export_to, label):
+    """Write an interactive HTML version of a Plotly network figure and return a
+    'Interactive version' callout block (or None)."""
+    if not export_to:
+        return None
+    import plotly.graph_objects as _go
+    os.makedirs(export_to, exist_ok=True)
+    html_name = label.lower().replace(" ", "_") + "_network.html"
+    html_path = os.path.join(export_to, html_name)
+    fig_html = _go.Figure(fig)
+    fig_html.update_layout(autosize=True, width=None, height=None)
+    fig_html.write_html(
+        html_path,
+        config={"responsive": True},
+        default_width="100%", default_height="100%",
+        post_script=(
+            "document.documentElement.style.cssText='height:100%;margin:0;padding:0;';"
+            "document.body.style.cssText='height:100%;margin:0;padding:0;';"
+        ),
+    )
+    file_uri = Path(html_path).resolve().as_uri()
+    return {
+        "type":  "callout",
+        "title": "Interactive version",
+        "text":  (f'Open the interactive graph: '
+                  f'<link href="{file_uri}" color="#0B63CE">{html_name}</link>'),
+    }
+
+
+def _build_coupling_subsection(coupling_dataset, bertopic_results, topic_labels,
+                               section_cfg, export_to):
+    """Reworked bibliographic-coupling panel.
+
+    Rebuilds the coupling network from the reviewed dataset's raw references
+    (Salton matrix → Leiden communities → backbone layout) and renders it with
+    Plotly, coloured by BERTopic topic so the topic mix of each bibliographic
+    community is visible. Returns a subsection block, or None if the dataset is
+    missing / unusable.
+    """
+    try:
+        df = pd.read_csv(coupling_dataset, low_memory=False)
+    except Exception:
+        return None
+    if "references" not in df.columns or "id" not in df.columns:
+        return None
+
+    from pysyrev.core.networks import build_coupling, plot_network, backbone_edges
+
+    resolution = getattr(section_cfg, "coupling_resolution", 0.7)
+    min_size   = getattr(section_cfg, "coupling_min_size", 5)
+    k          = getattr(section_cfg, "coupling_backbone_k", 3)
+    color_mode = getattr(section_cfg, "coupling_color_by", "topic")
+    hulls      = getattr(section_cfg, "coupling_hulls", True)
+
+    res = build_coupling(df, resolution=resolution, min_size=min_size)
+    if res.n_nodes == 0:
+        return None
+
+    # Topic per node (row-aligned to res.node_ids), and legend labels.
+    topic_of = {}
+    if bertopic_results is not None and "Topic" in bertopic_results.columns:
+        id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
+        if id_col:
+            topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
+    topics = np.array([int(topic_of.get(nid, -1)) for nid in res.node_ids])
+    color_labels = {t: _topic_label(t, topic_labels)
+                    for t in set(topics.tolist()) if t != -1}
+
+    # Per-node hover from the bib metadata.
+    meta = df.drop_duplicates("id").set_index("id")
+    strength = res.W.sum(axis=1)
+
+    def _meta(nid, col, default="-"):
+        try:
+            v = meta.at[nid, col]
+        except (KeyError, IndexError):
+            return default
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return default
+        return v
+
+    hover = []
+    for nid, comm, tp, st in zip(res.node_ids, res.labels, topics, strength):
+        title = str(_meta(nid, "title", ""))[:70]
+        tlabel = color_labels.get(int(tp), "outlier / no topic")
+        hover.append(
+            f"<b>{title}</b><br>Year: {_meta(nid, 'year')}<br>"
+            f"Community: {'C%d' % comm if comm >= 0 else 'tail'}<br>"
+            f"Topic: {tlabel}<br>Strength: {st:.3g}"
+        )
+
+    color_by = topics if color_mode == "topic" else None
+    fig = plot_network(
+        res.coords, res.labels, res.W, k=k,
+        color_by=color_by, color_labels=color_labels,
+        community_hulls=(hulls and color_mode == "topic"),
+        hover_text=hover, title=None,
+    )
+
+    # ── Stats + top-10 nodes by coupling strength ──────────────────────────
+    n_backbone = len(backbone_edges(res.W, res.labels, k=k))
+    n_full     = int((res.W > 0).sum() // 2)
+    coupled    = int((strength > 0).sum())
+    sub_content = [{
+        "type": "key_value",
+        "items": [
+            {"key": "Documents",            "value": res.n_nodes},
+            {"key": "Coupled documents",    "value": f"{coupled} ({coupled / res.n_nodes:.0%})"},
+            {"key": "Leiden communities",   "value": res.n_communities},
+            {"key": "Modularity",           "value": f"{res.modularity:.3f}"},
+            {"key": "Coupling edges",       "value": n_full},
+            {"key": f"Backbone edges (k={k})", "value": n_backbone},
+        ],
+    }]
+
+    order = np.argsort(strength)[::-1][:10]
+    rows = []
+    for i in order:
+        nid = res.node_ids[i]
+        comm = int(res.labels[i])
+        rows.append([
+            str(_meta(nid, "title", nid))[:70],
+            f"{strength[i]:.3g}",
+            f"C{comm}" if comm >= 0 else "-",
+            color_labels.get(int(topics[i]), "-"),
+        ])
+    if rows:
+        sub_content.append({
+            "type": "table",
+            "title": "Top 10 documents by coupling strength",
+            "headers": ["Title", "Strength", "Community", "Topic"],
+            "rows": rows,
+            "col_widths": [8.5, 1.8, 2.2, 4.5],
+        })
+
+    caption = ("Layout and blobs come from bibliographic coupling (shared "
+               "references); node colour is the BERTopic topic, so each "
+               "community's topic mix is visible. Node size scales with coupling "
+               "strength; grey nodes are uncoupled.")
+    sub_content.append({
+        "type":            "plotly",
+        "figure":          fig,
+        "caption":         caption,
+        "filename_prefix": "bibliographic_coupling",
+    })
+
+    html_block = _export_network_html(fig, export_to, "Bibliographic coupling")
+    if html_block is not None:
+        sub_content.append(html_block)
+
+    return {
+        "type":   "subsection",
+        "title":  "Bibliographic coupling",
+        "blocks": sub_content,
+    }
+
+
 def _build_bib_network_section(bib_network_config, section_n,
                                bertopic_results=None, topic_labels=None,
-                               export_to=None, section_cfg=None):
-    """Section — bibliographic coupling and co-citation networks."""
+                               export_to=None, section_cfg=None,
+                               coupling_dataset=None):
+    """Section — bibliographic coupling and co-citation networks.
+
+    The coupling panel is reworked: when *coupling_dataset* (the reviewed CSV
+    with raw references) is available, it is rebuilt with Salton coupling +
+    Leiden communities + a backbone layout and coloured by BERTopic topic
+    (:func:`_build_coupling_subsection`). Citation and co-citation still render
+    from their GraphML via the legacy path.
+    """
     try:
         import networkx as nx
     except ImportError:
         return None
 
-    # Co-citation graphs are typically large; cap visualisation at this many nodes.
-    _COCITATION_MAX_NODES = 150
+    _max_nodes = section_cfg.max_nodes if section_cfg is not None else None
 
-    # (path, label, max_nodes, node_col_header, is_directed)
+    # (path, label, node_col_header, is_directed)
     graphs = [
-        (bib_network_config.citation_graph,   "Citation",               None,                  "Title",     True),
-        (bib_network_config.coupling_graph,   "Bibliographic coupling", None,                  "Title",     False),
-        (bib_network_config.cocitation_graph, "Co-citation",            _COCITATION_MAX_NODES, "Reference", False),
+        (bib_network_config.citation_graph,   "Citation",               "Title",     True),
+        (bib_network_config.coupling_graph,   "Bibliographic coupling", "Title",     False),
+        (bib_network_config.cocitation_graph, "Co-citation",            "Reference", False),
     ]
 
     # Build a base topic map {paper_id: topic_int} and outlier set from bertopic_results
@@ -472,14 +638,29 @@ def _build_bib_network_section(bib_network_config, section_n,
     _node_size_max      = section_cfg.node_size_max      if section_cfg is not None else 26.0
     _node_size_exponent = section_cfg.node_size_exponent if section_cfg is not None else 1.5
     _layout             = section_cfg.layout             if section_cfg is not None else "forceatlas2"
+    _fa2_scaling_ratio  = section_cfg.fa2_scaling_ratio  if section_cfg is not None else 2.0
+    _fa2_gravity        = section_cfg.fa2_gravity        if section_cfg is not None else 1.0
+    _min_degree         = section_cfg.min_degree         if section_cfg is not None else 0
 
     sub_blocks = []
-    for path, label, max_nodes, node_col_header, is_directed in graphs:
+    for path, label, node_col_header, is_directed in graphs:
+        # Reworked coupling: recompute from raw references (Salton + Leiden +
+        # backbone) instead of reading the legacy count-based GraphML.
+        if label == "Bibliographic coupling" and coupling_dataset:
+            coupling_sub = _build_coupling_subsection(
+                coupling_dataset, bertopic_results, topic_labels,
+                section_cfg, export_to,
+            )
+            if coupling_sub is not None:
+                sub_blocks.append(coupling_sub)
+                continue
+            # else: fall through to the legacy GraphML path below
+
         if not path or not os.path.isfile(path):
             continue
         G = nx.read_graphml(path)
 
-        is_cocitation = (not is_directed) and (max_nodes is not None)
+        is_cocitation = (not is_directed) and (label == "Co-citation")
 
         # ── Filter nodes ──────────────────────────────────────────────────────
         if is_cocitation:
@@ -508,8 +689,8 @@ def _build_bib_network_section(bib_network_config, section_n,
                     [n for n in G.nodes() if n not in _outlier_ids]
                 ).copy()
 
-        # Remove isolated nodes that became disconnected after filtering
-        G = G.subgraph([n for n, d in G.degree() if d > 0]).copy()
+        # Remove nodes below the minimum degree threshold (0 = isolated only)
+        G = G.subgraph([n for n, d in G.degree() if d > _min_degree]).copy()
 
         n_nodes  = G.number_of_nodes()
         n_edges  = G.number_of_edges()
@@ -593,7 +774,7 @@ def _build_bib_network_section(bib_network_config, section_n,
         # Network figure — coloured by topic when available
         fig, is_truncated = _make_network_figure(
             G, label,
-            max_nodes=max_nodes,
+            max_nodes=_max_nodes,
             topic_map=topic_map,
             topic_label_map=topic_labels,
             directed=is_directed,
@@ -601,6 +782,8 @@ def _build_bib_network_section(bib_network_config, section_n,
             node_size_max=_node_size_max,
             node_size_exponent=_node_size_exponent,
             layout=_layout,
+            fa2_scaling_ratio=_fa2_scaling_ratio,
+            fa2_gravity=_fa2_gravity,
         )
         if is_directed:
             caption = "Node size scales with citation count (cited_by, log scale)."
@@ -1077,7 +1260,8 @@ def build_report_data(run_dir: str,
                       report_config,
                       bib_network_config=None,
                       topic_labels: dict = None,
-                      export_to: str = None) -> dict:
+                      export_to: str = None,
+                      coupling_dataset: str = None) -> dict:
     """Build the declarative report_data dict consumed by PDFReportEngine."""
     meta = report_config.meta
     sec  = report_config.sections
@@ -1125,6 +1309,7 @@ def build_report_data(run_dir: str,
             topic_labels=topic_labels,
             export_to=export_to,
             section_cfg=sec.bib_network,
+            coupling_dataset=coupling_dataset,
         )
         if section is not None:
             report_data["sections"].append(section)
