@@ -493,26 +493,21 @@ class TestBuildReportData:
         titles = [s["title"] for s in sections]
         assert not any("network" in t.lower() for t in titles)
 
-    def test_networks_section_skipped_when_enabled_false(
+    def test_networks_section_skipped_when_dataset_has_no_references(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
-        reviewed_dataset_path,
+        tmp_path,
     ):
-        from pysyrev.core.config import TopicReportConfig, ReportSectionsConfig
-        cfg = TopicReportConfig(
-            meta=report_cfg.meta,
-            sections=ReportSectionsConfig(
-                bib_network=BibNetworkSectionConfig(
-                    enabled="false", coupling_min_size=3, cocitation_min_size=3),
-            ),
-        )
+        # No `references` column → no coupling result → no network section.
+        p = tmp_path / "no_refs.csv"
+        pd.DataFrame({"id": ["a", "b"], "title": ["A", "B"]}).to_csv(p, index=False)
         sections = self._run(
-            tiny_best_results, tiny_topic_info, tiny_bertopic_results, cfg,
-            coupling_dataset=reviewed_dataset_path,
+            tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+            coupling_dataset=str(p),
         )["sections"]
         titles = [s["title"] for s in sections]
         assert not any("network" in t.lower() for t in titles)
 
-    def test_networks_section_present_when_enabled_auto(
+    def test_networks_section_present_with_dataset(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
         reviewed_dataset_path,
     ):

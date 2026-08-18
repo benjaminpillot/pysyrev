@@ -51,7 +51,7 @@ def _minimal_report_config() -> TopicReportConfig:
         ),
         sections=ReportSectionsConfig(
             topics=TopicsSectionConfig(n_repr_docs_per_topic=2),
-            bib_network=BibNetworkSectionConfig(enabled="auto"),
+            bib_network=BibNetworkSectionConfig(),
             temporal=TemporalSectionConfig(variants=["absolute"]),
             topic_characteristics=TopicCharacteristicsConfig(n_top_cited_per_topic=2, n_top_cited_global=5),
             topic_similarity=TopicSimilarityConfig(clustering=False, dendrogram=False),

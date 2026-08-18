@@ -299,7 +299,7 @@ topic_model:
 #   # run_dir:              # blank → auto-detect the latest topic_model run
 #
 #   # ---- PDF metadata (defaults shown) -------------------------------------
-#   # meta:
+#   # meta4 rue du puits vieux 34110 Vic la Gardiole:
 #   #   title: Bibliographic report — Pysyrev
 #   #   subtitle:
 #   #   author: Report generated with the pysyrev engine (v0.1)
@@ -313,7 +313,6 @@ topic_model:
 #   #   topics:
 #   #     n_repr_docs_per_topic: 5   # representative documents shown per topic
 #   #   bib_network:                # coupling + co-citation panels
-#   #     enabled: auto             # auto | true | false
 #   #     # -- Coupling (document × document): Salton + Leiden, coloured by topic --
 #   #     coupling_resolution: 0.7  # Leiden resolution; higher → more, smaller communities (default: 0.7)
 #   #     coupling_min_size: 5      # communities smaller than this fall into the uncoupled tail (default: 5)

@@ -531,9 +531,10 @@ class BibNetworkSectionConfig(ConfigField):
     The coupling and co-citation networks are recomputed from the reviewed
     dataset's raw references (Salton / co-citation matrix → Leiden communities →
     backbone layout). Coupling is coloured by BERTopic topic to reveal the topic
-    mix of each community; co-citation by Leiden community by default.
+    mix of each community; co-citation by Leiden community by default. Like every
+    other report section, the panels render whenever their prerequisite is met —
+    here, a reviewed dataset carrying a ``references`` column.
     """
-    enabled:                str   = "auto"     # "auto" | "true" | "false"
     # ---- Coupling network (document × document) ----------------------------
     coupling_resolution:    float = 0.7        # Leiden resolution (higher → more, smaller communities)
     coupling_min_size:      int   = 5          # communities smaller than this → uncoupled tail

@@ -867,9 +867,9 @@ def build_report_data(run_dir: str,
             except Exception:
                 _cocitation_result = None
 
-    # 2. Bibliographic networks (coupling + co-citation)
-    bib_enabled = str(sec.bib_network.enabled).lower()
-    if bib_enabled in ("true", "auto") and _coupling_result is not None:
+    # 2. Bibliographic networks (coupling + co-citation) — rendered whenever the
+    # reviewed dataset yielded a coupling network (i.e. it carried references).
+    if _coupling_result is not None:
         section = _build_networks_section(
             _networks_df, _coupling_result, _cocitation_result,
             bertopic_results, topic_labels, sec.bib_network, export_to, n)
