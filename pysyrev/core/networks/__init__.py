@@ -15,6 +15,7 @@ from pysyrev.core.networks.common import (
     reference_sets,
 )
 from pysyrev.core.networks.coupling import build_coupling, salton_coupling
+from pysyrev.core.networks.cocitation import build_cocitation, cocitation_matrix
 from pysyrev.core.networks.plotting import plot_network
 
 __all__ = [
@@ -28,4 +29,6 @@ __all__ = [
     "plot_network",
     "salton_coupling",
     "build_coupling",
+    "cocitation_matrix",
+    "build_cocitation",
 ]

@@ -451,85 +451,6 @@ class ReviewConfig(ConfigField):
 
 
 @dataclass
-class CitationNetworkConfig(ConfigField):
-    min_citations: int = 0  # min cited_by count to include a corpus node
-
-
-@dataclass
-class CouplingNetworkConfig(ConfigField):
-    min_shared: int = 1
-
-
-@dataclass
-class CocitationNetworkConfig(ConfigField):
-    min_cocitations: int = 1
-
-
-@dataclass
-class BibNetworkExportConfig(ConfigField):
-    """Output configuration for the bib_network stage.
-
-    Each run is stored in ``<export_dir>/<run_name>/``.
-    Leave ``run_name`` blank to auto-generate a timestamp.
-    Call :meth:`resolve` to finalise the run directory and set file paths.
-    """
-    export_dir:          str
-    run_name:            Union[None, str] = None
-    citation_graph:      Union[None, str] = None   # set by resolve()
-    coupling_graph:      Union[None, str] = None   # set by resolve()
-    cocitation_graph:    Union[None, str] = None   # set by resolve()
-    citation_html:       Union[None, str] = None   # set by resolve()
-    coupling_html:       Union[None, str] = None   # set by resolve()
-    cocitation_html:     Union[None, str] = None   # set by resolve()
-    citation_vos:        Union[None, str] = None   # set by resolve()
-    coupling_vos:        Union[None, str] = None   # set by resolve()
-    cocitation_vos:      Union[None, str] = None   # set by resolve()
-
-    def resolve(self):
-        """Create the run directory and set output file paths."""
-        self.run_name, run_dir = _make_run_dir(self.export_dir, self.run_name)
-        self.citation_graph    = os.path.join(run_dir, 'citation_network.graphml')
-        self.coupling_graph    = os.path.join(run_dir, 'coupling_network.graphml')
-        self.cocitation_graph  = os.path.join(run_dir, 'cocitation_network.graphml')
-        self.citation_html     = os.path.join(run_dir, 'citation_network.html')
-        self.coupling_html     = os.path.join(run_dir, 'coupling_network.html')
-        self.cocitation_html   = os.path.join(run_dir, 'cocitation_network.html')
-        self.citation_vos      = os.path.join(run_dir, 'citation_network_vos.json')
-        self.coupling_vos      = os.path.join(run_dir, 'coupling_network_vos.json')
-        self.cocitation_vos    = os.path.join(run_dir, 'cocitation_network_vos.json')
-        return self
-
-
-@dataclass
-class BibNetworkConfig(ConfigField):
-    doc_dataset:        str                                 = None
-    citation_network:   CitationNetworkConfig               = None
-    coupling_network:   CouplingNetworkConfig               = None
-    cocitation_network: CocitationNetworkConfig             = None
-    export:             Union[None, BibNetworkExportConfig] = None
-
-    def __post_init__(self):
-        super().__post_init__()
-        if isinstance(self.citation_network, dict):
-            self.citation_network = CitationNetworkConfig(**self.citation_network)
-        elif self.citation_network is None:
-            self.citation_network = CitationNetworkConfig()
-
-        if isinstance(self.coupling_network, dict):
-            self.coupling_network = CouplingNetworkConfig(**self.coupling_network)
-        elif self.coupling_network is None:
-            self.coupling_network = CouplingNetworkConfig()
-
-        if isinstance(self.cocitation_network, dict):
-            self.cocitation_network = CocitationNetworkConfig(**self.cocitation_network)
-        elif self.cocitation_network is None:
-            self.cocitation_network = CocitationNetworkConfig()
-
-        if isinstance(self.export, dict):
-            self.export = BibNetworkExportConfig(**self.export)
-
-
-@dataclass
 class TopicExportConfig(ConfigField):
     """Output configuration for the topic-model stage.
 
@@ -605,26 +526,27 @@ class TopicsSectionConfig(ConfigField):
 
 @dataclass
 class BibNetworkSectionConfig(ConfigField):
-    enabled:              str            = "auto"        # "auto" | "true" | "false"
-    corpus_only:          bool           = True          # co-citation: keep only nodes in corpus
-    exclude_outliers:     bool           = True          # remove Topic=-1 nodes from both graphs
-    node_size_min:        float          = 4.0           # smallest node radius (pixels)
-    node_size_max:        float          = 26.0          # largest node radius (pixels)
-    node_size_exponent:   float          = 1.5           # >1 increases contrast between nodes (applied to log-normalised values)
-    layout:               str            = "forceatlas2" # "forceatlas2" | "spring"
-    fa2_scaling_ratio:    float          = 2.0           # higher → nodes pushed further apart
-    fa2_gravity:          float          = 1.0           # lower → less pull toward centre
-    min_degree:           int            = 0             # remove nodes with degree strictly below this value
-    max_nodes:            Optional[int]  = None          # cap displayed nodes for all networks
-    # ---- Reworked coupling panel (Salton + Leiden + backbone) --------------
-    # The coupling network is recomputed from the reviewed dataset's raw
-    # references, laid out so Leiden communities read as separated blobs, and
-    # coloured by BERTopic topic to reveal the topic mix of each community.
-    coupling_resolution:  float          = 0.7           # Leiden resolution (higher → more, smaller communities)
-    coupling_min_size:    int            = 5             # communities smaller than this → uncoupled tail
-    coupling_backbone_k:  int            = 3             # keep each node's k strongest couplings when drawing
-    coupling_color_by:    str            = "topic"       # "topic" | "community"
-    coupling_hulls:       bool           = True          # outline Leiden communities (only when colouring by topic)
+    """Bibliographic-network panels of the report.
+
+    The coupling and co-citation networks are recomputed from the reviewed
+    dataset's raw references (Salton / co-citation matrix → Leiden communities →
+    backbone layout). Coupling is coloured by BERTopic topic to reveal the topic
+    mix of each community; co-citation by Leiden community by default.
+    """
+    enabled:                str   = "auto"     # "auto" | "true" | "false"
+    # ---- Coupling network (document × document) ----------------------------
+    coupling_resolution:    float = 0.7        # Leiden resolution (higher → more, smaller communities)
+    coupling_min_size:      int   = 5          # communities smaller than this → uncoupled tail
+    coupling_backbone_k:    int   = 3          # draw only each node's k strongest couplings
+    coupling_color_by:      str   = "topic"    # "topic" | "community"
+    coupling_hulls:         bool  = True       # outline Leiden communities (only when colouring by topic)
+    # ---- Co-citation network (reference × reference) -----------------------
+    cocitation_min_ref_freq: int   = 2         # keep references cited by at least this many documents
+    cocitation_resolution:   float = 0.7       # Leiden resolution
+    cocitation_min_size:     int   = 5         # communities smaller than this → tail
+    cocitation_backbone_k:   int   = 3         # draw only each node's k strongest co-citations
+    cocitation_color_by:     str   = "community"  # "topic" | "community"
+    cocitation_hulls:        bool  = True      # outline Leiden communities (only when colouring by topic)
 
 
 @dataclass
@@ -743,19 +665,6 @@ class TopicReportConfig(ConfigField):
 
 
 @dataclass
-class BibNetworkReportConfig(ConfigField):
-    """Paths to the exported bib_network graphs for inclusion in the report.
-
-    Leave all paths blank and set 'config' at the root of the report YAML so
-    that the latest bib_network run is detected automatically from
-    bib_network.export.export_dir in the main pipeline config.
-    """
-    citation_graph:   Union[None, str] = None
-    coupling_graph:   Union[None, str] = None
-    cocitation_graph: Union[None, str] = None
-
-
-@dataclass
 class UnpaywallConfig(ConfigField):
     """Unpaywall source for open-access PDF discovery.
 
@@ -849,7 +758,7 @@ class Config:
 
     All sections are optional — only the sections present in the YAML are
     executed. The canonical stage order is:
-    ``bib → review → bib-network → topic-model → topic-report``.
+    ``bib → review → topic-model → topic-report``.
 
     ``Config.load()`` propagates outputs between stages automatically when
     ``doc_dataset`` / ``run_dir`` are left blank, so a full-pipeline YAML
@@ -858,12 +767,9 @@ class Config:
     env:                Union[None, str]                    = None
     bib:                Union[None, BibConfig]              = None
     review:             Union[None, ReviewConfig]           = None
-    bib_network:        Union[None, BibNetworkConfig]       = None
     topic_model:        Union[None, TopicModelConfig]       = None
     topic_report:       Union[None, TopicReportConfig]      = None
     llm:                Union[None, TopicLabelerConfig]     = None
-    # Auto-populated during load() — not a user-facing YAML key.
-    bib_network_graphs: Union[None, BibNetworkReportConfig] = None
 
     @classmethod
     def load(cls, config_file):
@@ -888,12 +794,12 @@ class Config:
 
         # ── Propagate outputs between stages when doc_dataset is blank ────────
         #   bib.export.export_dir    → review.doc_dataset
-        #   review.export.export_dir → bib_network.doc_dataset
-        #                            → topic_model.doc_dataset
+        #   review.export.export_dir → topic_model.doc_dataset
+        #     (topic_model.doc_dataset — the reviewed_included.csv — is also the
+        #      source the report's network panels are recomputed from.)
         bib_export_dir    = (resolved.get('bib') or {}).get('export', {}).get('export_dir')
         review_export_dir = (resolved.get('review') or {}).get('export', {}).get('export_dir')
         review_data      = dict(resolved.get('review') or {})
-        bib_network_data = dict(resolved.get('bib_network') or {})
         topic_model_data = dict(resolved.get('topic_model') or {})
 
         if bib_export_dir and not review_data.get('doc_dataset'):
@@ -901,13 +807,10 @@ class Config:
             if latest:
                 review_data['doc_dataset'] = latest
 
-        if review_export_dir:
+        if review_export_dir and not topic_model_data.get('doc_dataset'):
             latest = _find_latest_file(review_export_dir, 'reviewed_included.csv')
             if latest:
-                if not bib_network_data.get('doc_dataset'):
-                    bib_network_data['doc_dataset'] = latest
-                if not topic_model_data.get('doc_dataset'):
-                    topic_model_data['doc_dataset'] = latest
+                topic_model_data['doc_dataset'] = latest
 
         # ── Auto-detect topic_report.run_dir from latest topic_model run ─────
         topic_report_data = dict(resolved.get('topic_report') or {})
@@ -921,31 +824,11 @@ class Config:
                 if latest:
                     topic_report_data['run_dir'] = latest
 
-        # ── Auto-detect bib_network graph paths for the report ────────────────
-        bib_network_graphs = None
-        bn_export_dir = (
-            bib_network_data.get('export', {}).get('export_dir')
-            or (resolved.get('bib_network') or {}).get('export', {}).get('export_dir')
-        )
-        if bn_export_dir:
-            latest_dir = _find_latest_dir(bn_export_dir)
-            if latest_dir:
-                citation   = os.path.join(latest_dir, 'citation_network.graphml')
-                coupling   = os.path.join(latest_dir, 'coupling_network.graphml')
-                cocitation = os.path.join(latest_dir, 'cocitation_network.graphml')
-                bib_network_graphs = BibNetworkReportConfig(
-                    citation_graph   = citation   if os.path.isfile(citation)   else None,
-                    coupling_graph   = coupling   if os.path.isfile(coupling)   else None,
-                    cocitation_graph = cocitation if os.path.isfile(cocitation) else None,
-                )
-
         return cls(
             env                = resolved.get('env'),
             bib                = BibConfig(**resolved['bib'])            if resolved.get('bib')          else None,
             review             = ReviewConfig(**review_data)             if review_data                   else None,
-            bib_network        = BibNetworkConfig(**bib_network_data)    if bib_network_data              else None,
             topic_model        = TopicModelConfig(**topic_model_data)    if topic_model_data              else None,
             topic_report       = TopicReportConfig(**topic_report_data)  if topic_report_data             else None,
             llm                = TopicLabelerConfig(**resolved['llm'])   if resolved.get('llm')           else None,
-            bib_network_graphs = bib_network_graphs,
         )

@@ -7,11 +7,11 @@ Usage
   pysyrev config.yaml
 
   # Run one or more specific stages
-  pysyrev config.yaml --stage bib-network
-  pysyrev config.yaml --stage bib-network topic-model topic-report
+  pysyrev config.yaml --stage topic-model
+  pysyrev config.yaml --stage topic-model topic-report
 
   # Run from a given stage to the end (all configured stages from that point)
-  pysyrev config.yaml --from bib-network
+  pysyrev config.yaml --from topic-model
 
   # Download full-text papers for a list of candidates
   pysyrev download liste.csv output_folder [--config download_config.yaml]
@@ -41,17 +41,6 @@ def _print_stage_result(stage, pipeline):
         print(f"[bib] Done — {len(pipeline.bib.dataset)} documents.")
     elif stage == 'review' and pipeline.review is not None:
         print(f"[review] Done — {len(pipeline.review.included_docs)} documents included.")
-    elif stage == 'bib-network' and pipeline.network is not None:
-        net = pipeline.network
-        if pipeline.config.bib_network.export is not None:
-            print(
-                f"[bib-network] Done — "
-                f"citation: {net.n_citation_nodes} nodes / {net.n_citation_edges} edges, "
-                f"coupling: {net.n_coupling_nodes} nodes / {net.n_coupling_edges} edges, "
-                f"co-citation: {net.n_cocitation_nodes} nodes / {net.n_cocitation_edges} edges."
-            )
-        else:
-            print("[bib-network] Done (no export configured).")
     elif stage == 'topic-model':
         print("[topic-model] Done.")
     elif stage == 'topic-report' and pipeline.report is not None:
@@ -74,7 +63,7 @@ def _run_pipeline(argv):
         metavar='STAGE',
         help=(
             'One or more stages to run: '
-            'bib | review | bib-network | topic-model | topic-report. '
+            'bib | review | topic-model | topic-report. '
             'Stages are always executed in canonical order.'
         ),
     )
@@ -85,7 +74,7 @@ def _run_pipeline(argv):
         metavar='STAGE',
         help=(
             'Run all configured stages starting from STAGE (inclusive): '
-            'bib | review | bib-network | topic-model | topic-report.'
+            'bib | review | topic-model | topic-report.'
         ),
     )
 

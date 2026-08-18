@@ -53,8 +53,7 @@ class TopicReport:
 
     # ---- bridge from configuration ----------------------------------------
 
-    bib_network_config: object           = None  # BibNetworkReportConfig or None
-    coupling_dataset:   object           = None  # path to reviewed_included.csv (raw references)
+    coupling_dataset:   object           = None  # reviewed dataset (raw references) for the network panels
 
     @classmethod
     def from_config(cls, config: Config) -> 'TopicReport':
@@ -69,11 +68,11 @@ class TopicReport:
             best_model_index        = config.topic_model.best_model_index if config.topic_model is not None else 0,
             export_to          = config.topic_report.export_to,
             labeler_config     = config.llm,
-            bib_network_config = config.bib_network_graphs,
-            # The coupling panel is recomputed from the reviewed dataset (it
-            # needs the raw references, which the GraphML / bertopic outputs drop).
-            coupling_dataset   = (config.bib_network.doc_dataset
-                                  if config.bib_network is not None else None),
+            # The network panels are recomputed from the reviewed dataset (they
+            # need the raw references, which the bertopic outputs drop) — the same
+            # reviewed_included.csv fed to the topic model.
+            coupling_dataset   = (config.topic_model.doc_dataset
+                                  if config.topic_model is not None else None),
         )
 
     # ---- internals --------------------------------------------------------
@@ -166,7 +165,6 @@ class TopicReport:
             self.topic_info,
             self.bertopic_results,
             self.report_config,
-            bib_network_config = self.bib_network_config,
             topic_labels       = topic_labels,
             export_to          = str(Path(output_file).parent),
             coupling_dataset   = self.coupling_dataset,

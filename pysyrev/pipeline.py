@@ -10,17 +10,16 @@ Usage
   pipeline = Pipeline.from_config("config.yaml")
   pipeline.run()
 
-  # Selected stages (in canonical order: bib → review → bib-network → topic-model → topic-report)
+  # Selected stages (in canonical order: bib → review → topic-model → topic-report)
   pipeline.run(stages=["bib", "review"])
 
   # From a given stage to the end
-  start = ALL_STAGES.index("bib-network")
+  start = ALL_STAGES.index("topic-model")
   pipeline.run(stages=ALL_STAGES[start:])
 
   # Results are available as attributes
   pipeline.bib.dataset          # pd.DataFrame
   pipeline.review.included_docs # pd.DataFrame
-  pipeline.network              # BibNetwork
   pipeline.topic                # TopicModel
   pipeline.report               # TopicReport
 
@@ -33,19 +32,17 @@ in memory when stages are chained:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional, Union
 
 if TYPE_CHECKING:
     from pysyrev.bibdata import BibDataset
     from pysyrev.core.config import Config
-    from pysyrev.network import BibNetwork
     from pysyrev.review import LLMReview
     from pysyrev.topic_model import TopicModel
     from pysyrev.topic_report import TopicReport
 
-ALL_STAGES = ['bib', 'review', 'bib-network', 'topic-model', 'topic-report']
+ALL_STAGES = ['bib', 'review', 'topic-model', 'topic-report']
 
 
 @dataclass
@@ -57,7 +54,6 @@ class Pipeline:
     config:  'Config'
     bib:     Optional['BibDataset']  = field(default=None, init=False)
     review:  Optional['LLMReview']   = field(default=None, init=False)
-    network: Optional['BibNetwork']  = field(default=None, init=False)
     topic:   Optional['TopicModel']  = field(default=None, init=False)
     report:  Optional['TopicReport'] = field(default=None, init=False)
 
@@ -76,7 +72,7 @@ class Pipeline:
         ----------
         stages : list of str, optional
             Subset of stages to run. Defaults to all configured stages in order.
-            Valid values: 'bib', 'review', 'bib-network', 'topic-model', 'topic-report'.
+            Valid values: 'bib', 'review', 'topic-model', 'topic-report'.
             Stages are always executed in canonical order regardless of the
             order they appear in the list.
             When None, only stages that have a corresponding section in the
@@ -108,23 +104,6 @@ class Pipeline:
             dataset = self.bib.dataset if self.bib is not None else None
             self.review.run(dataset).save()
 
-        if 'bib-network' in ordered:
-            from pysyrev.network import BibNetwork
-            self.network = BibNetwork.from_config(self.config.bib_network)
-            dataset = self.review.included_docs if self.review is not None else None
-            self.network.run(dataset)
-            if self.config.bib_network.export is not None:
-                self.network.save()
-                # Propagate freshly saved graphml paths — Config.load auto-detected
-                # the previous run; update to the one just created.
-                from pysyrev.core.config import BibNetworkReportConfig
-                exp = self.network._export_config
-                self.config.bib_network_graphs = BibNetworkReportConfig(
-                    citation_graph   = exp.citation_graph   if exp.citation_graph   and os.path.isfile(exp.citation_graph)   else None,
-                    coupling_graph   = exp.coupling_graph   if exp.coupling_graph   and os.path.isfile(exp.coupling_graph)   else None,
-                    cocitation_graph = exp.cocitation_graph if exp.cocitation_graph and os.path.isfile(exp.cocitation_graph) else None,
-                )
-
         if 'topic-model' in ordered:
             from pysyrev.topic_model import TopicModel
             self.topic = TopicModel.from_config(self.config)
@@ -148,7 +127,6 @@ class Pipeline:
         present = {
             'bib':          self.config.bib          is not None,
             'review':       self.config.review        is not None,
-            'bib-network':  self.config.bib_network   is not None,
             'topic-model':  self.config.topic_model   is not None,
             'topic-report': self.config.topic_report  is not None,
         }

@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from pysyrev.core.config import (
-    BibNetworkExportConfig,
     BibNetworkSectionConfig,
     PaperSelectionConfig,
     ReportMetaConfig,
@@ -188,22 +187,6 @@ def report_cfg():
     )
 
 
-@pytest.fixture
-def coupling_graphml(tmp_path):
-    """Tiny coupling-network GraphML file written to tmp_path."""
-    import networkx as nx
-    G = nx.Graph()
-    for i, title in enumerate(["Paper Alpha", "Paper Beta", "Paper Gamma", "Paper Delta"]):
-        G.add_node(f"n{i}", title=title, doi=f"10.9/{i}")
-    G.add_edge("n0", "n1")
-    G.add_edge("n1", "n2")
-    G.add_edge("n2", "n3")
-    G.add_edge("n0", "n3")
-    path = str(tmp_path / "coupling.graphml")
-    nx.write_graphml(G, path)
-    return path
-
-
 # =============================================================================
 # Integration-test fixtures (session-scoped, marked integration)
 # =============================================================================
@@ -214,21 +197,11 @@ def bib_dataset():
     return pd.read_csv(_TESTS_DIR / "data" / "bib_dataset.csv")
 
 
-@pytest.fixture(scope="session")
-def bib_network_outputs(tmp_path_factory, bib_dataset):
-    """Build coupling + co-citation graphs and export to temp dir once per session."""
-    from pysyrev.network import BibNetwork
-
-    tmp = tmp_path_factory.mktemp("bib_network")
-    net = BibNetwork()
-    net.run(bib_dataset)
-    export_cfg = BibNetworkExportConfig(export_dir=str(tmp), run_name="test_run")
-    net.save(export_cfg)
-    return {
-        "net": net,
-        "coupling_graphml": export_cfg.coupling_graph,
-        "cocitation_graphml": export_cfg.cocitation_graph,
-    }
+@pytest.fixture
+def reviewed_dataset_path():
+    """Path to a reviewed-style dataset with raw references (drives the report's
+    network panels, which are recomputed from `references`)."""
+    return str(_TESTS_DIR / "data" / "bib_dataset.csv")
 
 
 @pytest.fixture(scope="session")

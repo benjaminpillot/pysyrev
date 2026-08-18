@@ -1,4 +1,4 @@
-"""End-to-end integration tests: bib_network → topic_model → topic_report.
+"""End-to-end integration tests: review → topic_model → topic_report.
 
 Run with:
     pytest -m integration
@@ -10,12 +10,10 @@ The session-scoped fixtures that do the heavy ML work live in conftest.py.
 import ast
 from pathlib import Path
 
-import networkx as nx
 import pandas as pd
 import pytest
 
 from pysyrev.core.config import (
-    BibNetworkReportConfig,
     BibNetworkSectionConfig,
     PaperSelectionConfig,
     ReportMetaConfig,
@@ -67,40 +65,26 @@ def _minimal_report_config() -> TopicReportConfig:
     )
 
 
-# ── BibNetwork ───────────────────────────────────────────────────────────────
+# ── Networks (coupling + co-citation) ────────────────────────────────────────
 
 @pytest.mark.integration
-class TestBibNetworkIntegration:
+class TestNetworksIntegration:
+    """The networks are recomputed from the reviewed dataset's references."""
 
-    def test_coupling_graph_has_nodes(self, bib_network_outputs):
-        G = bib_network_outputs["net"].coupling_graph
-        assert G.number_of_nodes() > 0
+    _DATA = Path(__file__).parent / "data" / "bib_dataset.csv"
 
-    def test_coupling_graph_has_edges(self, bib_network_outputs):
-        G = bib_network_outputs["net"].coupling_graph
-        assert G.number_of_edges() > 0
+    def test_build_coupling_has_nodes(self):
+        from pysyrev.core.networks import build_coupling
+        res = build_coupling(pd.read_csv(self._DATA, low_memory=False),
+                             resolution=0.7, min_size=3)
+        assert res.n_nodes > 0
+        assert (res.W > 0).sum() > 0
 
-    def test_cocitation_graph_has_nodes(self, bib_network_outputs):
-        G = bib_network_outputs["net"].cocitation_graph
-        assert G.number_of_nodes() > 0
-
-    def test_graphml_files_exist(self, bib_network_outputs):
-        assert Path(bib_network_outputs["coupling_graphml"]).exists()
-        assert Path(bib_network_outputs["cocitation_graphml"]).exists()
-
-    def test_coupling_graphml_is_loadable(self, bib_network_outputs):
-        G = nx.read_graphml(bib_network_outputs["coupling_graphml"])
-        assert G.number_of_nodes() > 0
-
-    def test_cocitation_graphml_is_loadable(self, bib_network_outputs):
-        G = nx.read_graphml(bib_network_outputs["cocitation_graphml"])
-        assert G.number_of_nodes() > 0
-
-    def test_coupling_nodes_have_title_attr(self, bib_network_outputs):
-        G = bib_network_outputs["net"].coupling_graph
-        node_data = dict(list(G.nodes(data=True))[:1])
-        first = next(iter(node_data.values()))
-        assert "title" in first
+    def test_build_cocitation_has_nodes(self):
+        from pysyrev.core.networks import build_cocitation
+        res = build_cocitation(pd.read_csv(self._DATA, low_memory=False),
+                               min_ref_freq=2, resolution=0.7, min_size=3)
+        assert res.n_nodes > 0
 
 
 # ── TopicModel ───────────────────────────────────────────────────────────────
@@ -200,21 +184,15 @@ class TestTopicReportIntegration:
         for col in ("title", "year", "doi"):
             assert col in annex.columns, f"Missing column in annex: {col}"
 
-    def test_report_with_explicit_bib_network_paths(
-        self, tmp_path, topic_model_outputs, bib_network_outputs
-    ):
-        bib_cfg = BibNetworkReportConfig(
-            coupling_graph=bib_network_outputs["coupling_graphml"],
-            cocitation_graph=bib_network_outputs["cocitation_graphml"],
-        )
+    def test_report_with_network_panels(self, tmp_path, topic_model_outputs):
         report = TopicReport(
             run_dir=topic_model_outputs["run_dir"],
             report_config=_minimal_report_config(),
             best_model_index=0,
             export_to=str(tmp_path),
-            bib_network_config=bib_cfg,
+            coupling_dataset=str(Path(__file__).parent / "data" / "bib_dataset.csv"),
         )
-        out = str(tmp_path / "test_report_bib.pdf")
+        out = str(tmp_path / "test_report_net.pdf")
         result = report.generate_report(output_file=out)
         assert Path(result).exists()
         assert Path(result).stat().st_size > 1024

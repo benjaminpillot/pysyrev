@@ -50,7 +50,7 @@ class TestCLIArguments:
 
     def test_help_lists_all_stages(self):
         result = _run("--help")
-        for stage in ("bib", "review", "bib-network", "topic-model", "topic-report"):
+        for stage in ("bib", "review", "topic-model", "topic-report"):
             assert stage in result.stdout
 
     def test_missing_config_file_exits_nonzero(self):
@@ -150,13 +150,13 @@ class TestCLITopicReport:
         assert "[topic-report] Done" in result.stdout
 
     def test_from_stage_skips_earlier_unconfigured_stages(self, tmp_path, topic_model_outputs):
-        """--from bib-network must not attempt bib or review when absent from config."""
+        """--from topic-model must not attempt bib or review when absent from config."""
         export_dir = tmp_path / "report"
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
               export_to: {export_dir}
         """)
-        result = _run(str(cfg), "--from", "bib-network")
+        result = _run(str(cfg), "--from", "topic-model")
         assert result.returncode == 0, result.stderr
         assert "[topic-report] Done" in result.stdout

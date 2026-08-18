@@ -15,7 +15,6 @@ import pandas as pd
 import pytest
 
 from pysyrev.core.config import (
-    BibNetworkReportConfig,
     BibNetworkSectionConfig,
     PaperSelectionConfig,
     TemporalSectionConfig,
@@ -24,7 +23,7 @@ from pysyrev.core.config import (
     TopicSimilarityConfig,
 )
 from pysyrev.core.report_data import (
-    _build_bib_network_section,
+    _build_networks_section,
     _build_overview_section,
     _build_paper_selection_section,
     _build_temporal_section,
@@ -132,56 +131,56 @@ class TestBuildTopicsSection:
 
 
 # =============================================================================
-# _build_bib_network_section
+# _build_networks_section  (coupling + co-citation, recomputed from references)
 # =============================================================================
 
-class TestBuildBibNetworkSection:
+class TestBuildNetworksSection:
 
-    def test_returns_none_when_both_paths_none(self):
-        cfg = BibNetworkReportConfig(coupling_graph=None, cocitation_graph=None)
-        assert _build_bib_network_section(cfg, 2) is None
+    @staticmethod
+    def _results(path):
+        import pandas as pd
+        from pysyrev.core.networks import build_coupling, build_cocitation
+        df = pd.read_csv(path, low_memory=False)
+        coupling   = build_coupling(df, resolution=0.7, min_size=3)
+        cocitation = build_cocitation(df, min_ref_freq=2, resolution=0.7, min_size=3)
+        return df, coupling, cocitation
 
-    def test_returns_none_when_files_do_not_exist(self, tmp_path):
-        cfg = BibNetworkReportConfig(
-            coupling_graph=str(tmp_path / "missing.graphml"),
-            cocitation_graph=None,
-        )
-        assert _build_bib_network_section(cfg, 2) is None
+    def test_returns_none_without_results(self):
+        cfg = BibNetworkSectionConfig()
+        assert _build_networks_section(None, None, None, None, None, cfg, None, 2) is None
 
-    def test_returns_section_with_valid_graphml(self, coupling_graphml):
-        cfg = BibNetworkReportConfig(
-            coupling_graph=coupling_graphml, cocitation_graph=None
-        )
-        sec = _build_bib_network_section(cfg, 2)
+    def test_two_networks_produce_two_subsections(self, reviewed_dataset_path,
+                                                  tiny_bertopic_results):
+        cfg = BibNetworkSectionConfig(coupling_min_size=3, cocitation_min_size=3)
+        df, coupling, cocitation = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, cocitation,
+                                      tiny_bertopic_results, None, cfg, None, 2)
         assert sec is not None
-        assert "blocks" in sec
+        assert len(_subsections(sec)) == 2
 
-    def test_title_contains_section_number(self, coupling_graphml):
-        cfg = BibNetworkReportConfig(coupling_graph=coupling_graphml, cocitation_graph=None)
-        sec = _build_bib_network_section(cfg, 3)
+    def test_title_contains_section_number(self, reviewed_dataset_path):
+        cfg = BibNetworkSectionConfig(coupling_min_size=3, cocitation_min_size=3)
+        df, coupling, cocitation = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, cocitation, None, None, cfg, None, 3)
         assert "3." in sec["title"]
 
-    def test_graph_subsection_contains_key_value_stats(self, coupling_graphml):
-        cfg = BibNetworkReportConfig(coupling_graph=coupling_graphml, cocitation_graph=None)
-        sec = _build_bib_network_section(cfg, 2)
-        kv_blocks = _blocks_of_type(sec, "key_value")
-        assert kv_blocks, "Expected at least one key_value block with network stats"
-        keys = {item["key"] for item in kv_blocks[0]["items"]}
-        assert {"Nodes", "Edges", "Density"}.issubset(keys)
+    def test_coupling_subsection_has_stats_and_table(self, reviewed_dataset_path):
+        cfg = BibNetworkSectionConfig(coupling_min_size=3)
+        df, coupling, _ = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
+        subs = _subsections(sec)
+        assert subs and subs[0]["title"] == "Bibliographic coupling"
+        kv = _blocks_of_type(subs[0], "key_value")
+        assert kv
+        keys = {item["key"] for item in kv[0]["items"]}
+        assert {"Documents", "Modularity"}.issubset(keys)
+        assert _blocks_of_type(subs[0], "table")
 
-    def test_top_nodes_table_present(self, coupling_graphml):
-        cfg = BibNetworkReportConfig(coupling_graph=coupling_graphml, cocitation_graph=None)
-        sec = _build_bib_network_section(cfg, 2)
-        tables = _blocks_of_type(sec, "table")
-        assert tables, "Expected a table listing top connected nodes"
-
-    def test_two_graphs_produce_two_subsections(self, coupling_graphml):
-        cfg = BibNetworkReportConfig(
-            coupling_graph=coupling_graphml,
-            cocitation_graph=coupling_graphml,   # reuse same file for simplicity
-        )
-        sec = _build_bib_network_section(cfg, 2)
-        assert len(_subsections(sec)) == 2
+    def test_only_coupling_when_cocitation_absent(self, reviewed_dataset_path):
+        cfg = BibNetworkSectionConfig(coupling_min_size=3)
+        df, coupling, _ = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
+        assert len(_subsections(sec)) == 1
 
 
 # =============================================================================
@@ -444,7 +443,7 @@ class TestBuildPaperSelectionSection:
 class TestBuildReportData:
 
     def _run(self, tiny_best_results, tiny_topic_info, tiny_bertopic_results,
-             report_cfg, bib_network_config=None, topic_labels=None, export_to=None):
+             report_cfg, coupling_dataset=None, topic_labels=None, export_to=None):
         return build_report_data(
             run_dir            = "/fake/run_dir",
             best_model_index        = 0,
@@ -452,9 +451,9 @@ class TestBuildReportData:
             topic_info         = tiny_topic_info,
             bertopic_results   = tiny_bertopic_results,
             report_config      = report_cfg,
-            bib_network_config = bib_network_config,
             topic_labels       = topic_labels,
             export_to          = export_to,
+            coupling_dataset   = coupling_dataset,
         )
 
     def test_returns_meta_and_sections(self, tiny_best_results, tiny_topic_info,
@@ -484,43 +483,44 @@ class TestBuildReportData:
         )["sections"]
         assert "Technical" in sections[-1]["title"] or "Overview" in sections[-1]["title"]
 
-    def test_bib_network_section_skipped_when_config_is_none(
+    def test_networks_section_skipped_without_dataset(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg
     ):
         sections = self._run(
             tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
-            bib_network_config=None,
+            coupling_dataset=None,
         )["sections"]
         titles = [s["title"] for s in sections]
         assert not any("network" in t.lower() for t in titles)
 
-    def test_bib_network_section_skipped_when_enabled_false(
+    def test_networks_section_skipped_when_enabled_false(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
-        coupling_graphml,
+        reviewed_dataset_path,
     ):
         from pysyrev.core.config import TopicReportConfig, ReportSectionsConfig
         cfg = TopicReportConfig(
             meta=report_cfg.meta,
             sections=ReportSectionsConfig(
-                bib_network=BibNetworkSectionConfig(enabled="false"),
+                bib_network=BibNetworkSectionConfig(
+                    enabled="false", coupling_min_size=3, cocitation_min_size=3),
             ),
         )
-        bn = BibNetworkReportConfig(coupling_graph=coupling_graphml)
         sections = self._run(
             tiny_best_results, tiny_topic_info, tiny_bertopic_results, cfg,
-            bib_network_config=bn,
+            coupling_dataset=reviewed_dataset_path,
         )["sections"]
         titles = [s["title"] for s in sections]
         assert not any("network" in t.lower() for t in titles)
 
-    def test_bib_network_section_present_when_enabled_auto_with_valid_graph(
+    def test_networks_section_present_when_enabled_auto(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
-        coupling_graphml,
+        reviewed_dataset_path,
     ):
-        bn = BibNetworkReportConfig(coupling_graph=coupling_graphml)
+        report_cfg.sections.bib_network.coupling_min_size = 3
+        report_cfg.sections.bib_network.cocitation_min_size = 3
         sections = self._run(
             tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
-            bib_network_config=bn,
+            coupling_dataset=reviewed_dataset_path,
         )["sections"]
         titles = [s["title"] for s in sections]
         assert any("network" in t.lower() for t in titles)
