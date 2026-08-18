@@ -180,7 +180,39 @@ class TestBuildNetworksSection:
         cfg = BibNetworkSectionConfig(coupling_min_size=3)
         df, coupling, _ = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
+        # no topics passed → no connectivity panel either
         assert len(_subsections(sec)) == 1
+
+    def test_connectivity_panel_present_with_matching_topics(self, reviewed_dataset_path):
+        cfg = BibNetworkSectionConfig(coupling_min_size=3)
+        df, coupling, _ = self._results(reviewed_dataset_path)
+        # BERTopic-style results whose ids match the corpus → topic groups exist
+        ids = list(df["id"])
+        bt = pd.DataFrame({"id": ids, "Topic": [i % 3 for i in range(len(ids))]})
+        sec = _build_networks_section(df, coupling, None, bt, None, cfg, None, 2)
+        titles = [s["title"] for s in _subsections(sec)]
+        assert "Topic connectivity" in titles
+
+
+class TestConnectivityMatrix:
+
+    def test_matrix_symmetric_scaled_and_baseline(self):
+        from pysyrev.core.networks import (
+            inter_cluster_matrix, corpus_baseline, coupling_inout,
+        )
+        W = np.array([[0, .4, .1, 0],
+                      [.4, 0, 0, .2],
+                      [.1, 0, 0, .3],
+                      [0, .2, .3, 0]], dtype=float)
+        groups = [("A", np.array([0, 1])), ("B", np.array([2, 3]))]
+        M, labs = inter_cluster_matrix(W, groups, scale=1000)
+        assert labs == ["A", "B"]
+        assert np.allclose(M, M.T)
+        assert M[0, 0] == 400.0          # single intra-A pair W=0.4 → ×1000
+        assert corpus_baseline(W, scale=1000) > 0
+        prof = coupling_inout(M, 0)
+        assert prof["internal"] == M[0, 0]
+        assert prof["outward"] == M[0, 1]
 
 
 # =============================================================================

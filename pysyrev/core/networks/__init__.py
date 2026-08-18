@@ -16,7 +16,13 @@ from pysyrev.core.networks.common import (
 )
 from pysyrev.core.networks.coupling import build_coupling, salton_coupling
 from pysyrev.core.networks.cocitation import build_cocitation, cocitation_matrix
-from pysyrev.core.networks.plotting import plot_network
+from pysyrev.core.networks.connectivity import (
+    inter_cluster_matrix,
+    corpus_baseline,
+    coupling_inout,
+    groups_from_labels,
+)
+from pysyrev.core.networks.plotting import plot_network, plot_connectivity_matrix
 
 __all__ = [
     "NetworkResult",
@@ -31,4 +37,9 @@ __all__ = [
     "build_coupling",
     "cocitation_matrix",
     "build_cocitation",
+    "inter_cluster_matrix",
+    "corpus_baseline",
+    "coupling_inout",
+    "groups_from_labels",
+    "plot_connectivity_matrix",
 ]

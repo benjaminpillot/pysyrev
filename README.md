@@ -21,7 +21,7 @@
 - **Multi-source ingestion** — Web of Science (file or REST API), OpenAlex (file or REST API), Scopus, PubMed
 - **Automatic deduplication** — fuzzy title matching across sources
 - **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…)
-- **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout), rendered in the report and cross-coloured by BERTopic topic
+- **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
 
@@ -34,7 +34,7 @@
 | Bibliography | `bib` | Fetch, clean, filter, deduplicate, and optionally resolve references |
 | LLM review | `review` | Screen documents against inclusion/exclusion criteria with one or more LLM reviewers |
 | Topic modelling | `topic-model` | Cluster documents into topics using BERTopic; rank configurations by coherence |
-| Report | `topic-report` | Generate a PDF report from the selected topic model run, including the bibliographic coupling and co-citation network panels (recomputed from the reviewed corpus' references) |
+| Report | `topic-report` | Generate a PDF report from the selected topic model run, including the bibliographic coupling, co-citation and topic-connectivity network panels (recomputed from the reviewed corpus' references) |
 
 All sections are optional — only the stages declared in the config file are executed. Each stage auto-detects the most recent output of the previous one when run standalone.
 

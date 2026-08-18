@@ -326,6 +326,9 @@ topic_model:
 #   #     cocitation_backbone_k: 3     # draw only each node's k strongest co-citations (default: 3)
 #   #     cocitation_color_by: community  # topic | community (default: community)
 #   #     cocitation_hulls: true       # outline Leiden communities when colouring by topic (default: true)
+#   #     # -- Connectivity matrix: mean coupling between groups --
+#   #     connectivity_by: topic       # topic | community — group the coupling nodes by this (default: topic)
+#   #     connectivity_scale: 1000     # rescales the tiny coupling values for readability (default: 1000)
 #   #   temporal:
 #   #     variants: [absolute, normalized, weighted]
 #   #   topic_characteristics:

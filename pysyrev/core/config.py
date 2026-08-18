@@ -548,6 +548,9 @@ class BibNetworkSectionConfig(ConfigField):
     cocitation_backbone_k:   int   = 3         # draw only each node's k strongest co-citations
     cocitation_color_by:     str   = "community"  # "topic" | "community"
     cocitation_hulls:        bool  = True      # outline Leiden communities (only when colouring by topic)
+    # ---- Connectivity matrix (mean coupling between groups) -----------------
+    connectivity_by:         str   = "topic"   # "topic" | "community" — group the coupling nodes by this
+    connectivity_scale:      float = 1000.0    # rescales the tiny coupling values for readability
 
 
 @dataclass

@@ -353,15 +353,90 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     return {"type": "subsection", "title": title, "blocks": sub_content}
 
 
+def _build_connectivity_subsection(coupling_result, bertopic_results,
+                                   topic_labels, section_cfg, export_to):
+    """Inter-group connectivity: mean bibliographic coupling between topics (or
+    Leiden communities), from the coupling matrix. A heatmap plus a per-group
+    internal/outward table. Grouping by topic is the informative use — it tests
+    whether topics share references (are intellectually connected) or are siloed.
+    Returns a subsection block, or None when fewer than two groups exist.
+    """
+    from pysyrev.core.networks import (
+        inter_cluster_matrix, corpus_baseline, coupling_inout,
+        groups_from_labels, plot_connectivity_matrix,
+    )
+
+    if coupling_result is None or coupling_result.n_nodes < 2:
+        return None
+
+    by    = getattr(section_cfg, "connectivity_by", "topic")
+    scale = getattr(section_cfg, "connectivity_scale", 1000.0)
+    W     = coupling_result.W
+
+    if by == "community":
+        groups = groups_from_labels(coupling_result.labels)
+        unit   = "community"
+    else:
+        topic_of = {}
+        if bertopic_results is not None and "Topic" in bertopic_results.columns:
+            id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
+            if id_col:
+                topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
+        topics = np.array([int(topic_of.get(nid, -1)) for nid in coupling_result.node_ids])
+        groups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
+                  for t in sorted(x for x in set(topics.tolist()) if x != -1)]
+        unit = "topic"
+
+    groups = [(lab, idx) for lab, idx in groups if len(idx) > 0]
+    if len(groups) < 2:
+        return None
+
+    M, labs = inter_cluster_matrix(W, groups, scale=scale)
+    base    = corpus_baseline(W, scale=scale)
+    fig     = plot_connectivity_matrix(M, labs, baseline=base, title=None)
+
+    rows = []
+    for i, lab in enumerate(labs):
+        p = coupling_inout(M, i)
+        siloed = p["internal"] > p["outward"] and p["outward"] < base
+        rows.append([lab, f"{p['internal']:.2f}", f"{p['outward']:.2f}",
+                     "self-contained" if siloed else "integrated"])
+
+    sub_content = [
+        {"type": "paragraph",
+         "text": (f"Mean bibliographic coupling between {unit}s (shared references, "
+                  f"scaled ×{int(scale)}). The diagonal is each {unit}'s internal "
+                  f"cohesion; off-diagonal cells show how much two {unit}s share "
+                  f"references. Corpus baseline: <b>{base:.2f}</b>.")},
+        {"type": "plotly", "figure": fig,
+         "caption": (f"Darker = stronger shared-reference overlap. A {unit} with high "
+                     f"internal and low outward coupling (below baseline) is a "
+                     f"self-contained / weakly integrated theme."),
+         "filename_prefix": f"{unit}_connectivity"},
+        {"type": "table",
+         "title": f"Internal vs outward coupling per {unit}",
+         "headers": [unit.capitalize(), "Internal", "Outward", "Profile"],
+         "rows": rows, "col_widths": [7.0, 3.0, 3.0, 4.0]},
+    ]
+    html_block = _export_network_html(fig, export_to, f"{unit} connectivity")
+    if html_block is not None:
+        sub_content.append(html_block)
+
+    return {"type": "subsection",
+            "title": f"{unit.capitalize()} connectivity",
+            "blocks": sub_content}
+
+
 def _build_networks_section(df, coupling_result, cocitation_result,
                             bertopic_results, topic_labels, section_cfg,
                             export_to, section_n):
     """Section — bibliographic coupling and co-citation networks.
 
-    Both are recomputed from the reviewed dataset's raw references (Salton /
-    co-citation matrix → Leiden communities → backbone layout) and rendered with
-    Plotly. Coupling is coloured by BERTopic topic (the croisement); co-citation
-    by Leiden community by default. Citation is intentionally not rendered yet.
+    Coupling and co-citation are recomputed from the reviewed dataset's raw
+    references (Salton / co-citation matrix → Leiden communities → backbone
+    layout) and rendered with Plotly; coupling is coloured by BERTopic topic (the
+    croisement). A third panel gives the inter-topic connectivity matrix (mean
+    coupling between topics). Citation is intentionally not rendered yet.
     """
     cfg = section_cfg
     sub_blocks = []
@@ -387,6 +462,11 @@ def _build_networks_section(df, coupling_result, cocitation_result,
     )
     if cocitation_sub is not None:
         sub_blocks.append(cocitation_sub)
+
+    connectivity_sub = _build_connectivity_subsection(
+        coupling_result, bertopic_results, topic_labels, cfg, export_to)
+    if connectivity_sub is not None:
+        sub_blocks.append(connectivity_sub)
 
     if not sub_blocks:
         return None

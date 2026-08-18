@@ -192,3 +192,37 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
         plot_bgcolor="white",
     ))
     return fig
+
+
+def plot_connectivity_matrix(M: np.ndarray, labels: List[str],
+                             baseline: Optional[float] = None,
+                             title: Optional[str] = None):
+    """Annotated Plotly heatmap of an inter-group connectivity matrix.
+
+    ``M[i,j]`` is the mean bibliographic coupling between groups *i* and *j*
+    (diagonal = internal cohesion). Each cell is annotated with its value.
+    Returns a ``plotly.graph_objects.Figure``.
+    """
+    import plotly.graph_objects as go
+
+    M = np.asarray(M, dtype=float)
+    text = [[f"{v:.1f}" for v in row] for row in M]
+    n = len(labels)
+
+    fig = go.Figure(go.Heatmap(
+        z=M, x=labels, y=labels,
+        text=text, texttemplate="%{text}", textfont=dict(size=10),
+        colorscale="Blues", zmin=0.0,
+        hovertemplate="%{y} ↔ %{x}: %{z:.2f}<extra></extra>",
+        colorbar=dict(title="mean coupling", thickness=12),
+    ))
+    subtitle = f"  (corpus baseline {baseline:.2f})" if baseline is not None else ""
+    fig.update_layout(
+        title=(title + subtitle) if title else (subtitle.strip() or None),
+        xaxis=dict(side="top", tickangle=-30, automargin=True),
+        yaxis=dict(autorange="reversed", automargin=True),
+        width=max(460, 90 * n + 220), height=max(420, 80 * n + 180),
+        margin=dict(l=20, r=20, t=70, b=20),
+        plot_bgcolor="white",
+    )
+    return fig
