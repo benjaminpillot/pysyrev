@@ -312,23 +312,23 @@ topic_model:
 #   # sections:
 #   #   topics:
 #   #     n_repr_docs_per_topic: 5   # representative documents shown per topic
-#   #   bib_network:                # coupling + co-citation panels
-#   #     # -- Coupling (document × document): Salton + Leiden, coloured by topic --
-#   #     coupling_resolution: 0.7  # Leiden resolution; higher → more, smaller communities (default: 0.7)
-#   #     coupling_min_size: 5      # communities smaller than this fall into the uncoupled tail (default: 5)
-#   #     coupling_backbone_k: 3    # draw only each node's k strongest couplings (default: 3)
-#   #     coupling_color_by: topic  # topic | community (default: topic)
-#   #     coupling_hulls: true      # outline Leiden communities when colouring by topic (default: true)
-#   #     # -- Co-citation (reference × reference): Salton + Leiden --
-#   #     cocitation_min_ref_freq: 2   # keep references cited by at least this many documents (default: 2)
-#   #     cocitation_resolution: 0.7   # Leiden resolution (default: 0.7)
-#   #     cocitation_min_size: 5       # communities smaller than this fall into the tail (default: 5)
-#   #     cocitation_backbone_k: 3     # draw only each node's k strongest co-citations (default: 3)
-#   #     cocitation_color_by: community  # topic | community (default: community)
-#   #     cocitation_hulls: true       # outline Leiden communities when colouring by topic (default: true)
-#   #     # -- Connectivity matrix: mean coupling between groups --
-#   #     connectivity_by: topic       # topic | community — group the coupling nodes by this (default: topic)
-#   #     connectivity_scale: 1000     # rescales the tiny coupling values for readability (default: 1000)
+#   #   bib_network:                # coupling + co-citation + connectivity panels
+#   #     coupling:                 # document × document (Salton + Leiden, coloured by topic)
+#   #       resolution: 0.7         # Leiden resolution; higher → more, smaller communities (default: 0.7)
+#   #       min_size: 5             # communities smaller than this fall into the uncoupled tail (default: 5)
+#   #       backbone_k: 3           # draw only each node's k strongest couplings (default: 3)
+#   #       color_by: topic         # topic | community (default: topic)
+#   #       hulls: true             # outline Leiden communities when colouring by topic (default: true)
+#   #     cocitation:               # reference × reference (Salton + Leiden)
+#   #       min_ref_freq: 2         # keep references cited by at least this many documents (default: 2)
+#   #       resolution: 0.7         # Leiden resolution (default: 0.7)
+#   #       min_size: 5             # communities smaller than this fall into the tail (default: 5)
+#   #       backbone_k: 3           # draw only each node's k strongest co-citations (default: 3)
+#   #       color_by: community     # topic | community (default: community)
+#   #       hulls: true             # outline Leiden communities when colouring by topic (default: true)
+#   #     connectivity:             # mean coupling between groups
+#   #       by: topic               # topic | community — group the coupling nodes by this (default: topic)
+#   #       scale: 1000             # rescales the tiny coupling values for readability (default: 1000)
 #   #   temporal:
 #   #     variants: [absolute, normalized, weighted]
 #   #   topic_characteristics:
@@ -342,12 +342,13 @@ topic_model:
 #   #     proportion_per_topic: 0.15
 #   #     selection_by: citations          # citations | random | coupling | co_citation | composite
 #   #     # composite = three-axis indicator (coupling centrality + citation
-#   #     # relevance + thematic representativeness), ranked per topic. Tuning:
-#   #     composite_aggregate: mean        # mean | gmean | chebyshev
-#   #     composite_weights: [1, 1, 1]     # (centrality, representativeness, relevance); omit for equal
-#   #     composite_relevance_mode: blend  # blend (cit/yr + raw citations) | cpy (cit/yr alone)
-#   #     composite_drop_current_year: true  # drop the incomplete current year from the cit/yr denominator
-#   #     composite_current_year:          # reference year; blank = latest year in the corpus
+#   #     # relevance + thematic representativeness), ranked per topic. Tune it here:
+#   #     composite:
+#   #       aggregate: mean          # mean | gmean | chebyshev
+#   #       weights: [1, 1, 1]       # (centrality, representativeness, relevance); omit for equal
+#   #       relevance_mode: blend    # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+#   #       drop_current_year: true  # drop the incomplete current year from the cit/yr denominator
+#   #       current_year:            # reference year; blank = latest year in the corpus
 #   #     export_annex: true
 #   #     annex_format: csv         # csv | txt
 

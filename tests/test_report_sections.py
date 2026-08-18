@@ -16,6 +16,9 @@ import pytest
 
 from pysyrev.core.config import (
     BibNetworkSectionConfig,
+    CocitationPanelConfig,
+    CompositeConfig,
+    CouplingPanelConfig,
     PaperSelectionConfig,
     TemporalSectionConfig,
     TopicCharacteristicsConfig,
@@ -151,7 +154,7 @@ class TestBuildNetworksSection:
 
     def test_two_networks_produce_two_subsections(self, reviewed_dataset_path,
                                                   tiny_bertopic_results):
-        cfg = BibNetworkSectionConfig(coupling_min_size=3, cocitation_min_size=3)
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3), cocitation=CocitationPanelConfig(min_size=3))
         df, coupling, cocitation = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, cocitation,
                                       tiny_bertopic_results, None, cfg, None, 2)
@@ -159,13 +162,13 @@ class TestBuildNetworksSection:
         assert len(_subsections(sec)) == 2
 
     def test_title_contains_section_number(self, reviewed_dataset_path):
-        cfg = BibNetworkSectionConfig(coupling_min_size=3, cocitation_min_size=3)
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3), cocitation=CocitationPanelConfig(min_size=3))
         df, coupling, cocitation = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, cocitation, None, None, cfg, None, 3)
         assert "3." in sec["title"]
 
     def test_coupling_subsection_has_stats_and_table(self, reviewed_dataset_path):
-        cfg = BibNetworkSectionConfig(coupling_min_size=3)
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3))
         df, coupling, _ = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
         subs = _subsections(sec)
@@ -177,14 +180,14 @@ class TestBuildNetworksSection:
         assert _blocks_of_type(subs[0], "table")
 
     def test_only_coupling_when_cocitation_absent(self, reviewed_dataset_path):
-        cfg = BibNetworkSectionConfig(coupling_min_size=3)
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3))
         df, coupling, _ = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
         # no topics passed → no connectivity panel either
         assert len(_subsections(sec)) == 1
 
     def test_connectivity_panel_present_with_matching_topics(self, reviewed_dataset_path):
-        cfg = BibNetworkSectionConfig(coupling_min_size=3)
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3))
         df, coupling, _ = self._results(reviewed_dataset_path)
         # BERTopic-style results whose ids match the corpus → topic groups exist
         ids = list(df["id"])
@@ -271,7 +274,7 @@ class TestCompositeSelection:
 
     def test_weights_validation(self):
         with pytest.raises(ValueError):
-            PaperSelectionConfig(composite_weights=[1, 1])
+            CompositeConfig(weights=[1, 1])
 
 
 # =============================================================================
@@ -602,8 +605,8 @@ class TestBuildReportData:
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
         reviewed_dataset_path,
     ):
-        report_cfg.sections.bib_network.coupling_min_size = 3
-        report_cfg.sections.bib_network.cocitation_min_size = 3
+        report_cfg.sections.bib_network.coupling.min_size = 3
+        report_cfg.sections.bib_network.cocitation.min_size = 3
         sections = self._run(
             tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
             coupling_dataset=reviewed_dataset_path,

@@ -369,8 +369,8 @@ def _build_connectivity_subsection(coupling_result, bertopic_results,
     if coupling_result is None or coupling_result.n_nodes < 2:
         return None
 
-    by    = getattr(section_cfg, "connectivity_by", "topic")
-    scale = getattr(section_cfg, "connectivity_scale", 1000.0)
+    by    = section_cfg.connectivity.by
+    scale = section_cfg.connectivity.scale
     W     = coupling_result.W
 
     if by == "community":
@@ -445,9 +445,8 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         coupling_result, df, bertopic_results, topic_labels,
         title="Bibliographic coupling", filename_prefix="bibliographic_coupling",
         node_kind="document", count_label="Documents",
-        k=getattr(cfg, "coupling_backbone_k", 3),
-        color_mode=getattr(cfg, "coupling_color_by", "topic"),
-        hulls=getattr(cfg, "coupling_hulls", True), export_to=export_to,
+        k=cfg.coupling.backbone_k, color_mode=cfg.coupling.color_by,
+        hulls=cfg.coupling.hulls, export_to=export_to,
     )
     if coupling_sub is not None:
         sub_blocks.append(coupling_sub)
@@ -456,9 +455,8 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         cocitation_result, df, bertopic_results, topic_labels,
         title="Co-citation", filename_prefix="co_citation",
         node_kind="reference", count_label="References",
-        k=getattr(cfg, "cocitation_backbone_k", 3),
-        color_mode=getattr(cfg, "cocitation_color_by", "community"),
-        hulls=getattr(cfg, "cocitation_hulls", True), export_to=export_to,
+        k=cfg.cocitation.backbone_k, color_mode=cfg.cocitation.color_by,
+        hulls=cfg.cocitation.hulls, export_to=export_to,
     )
     if cocitation_sub is not None:
         sub_blocks.append(cocitation_sub)
@@ -837,13 +835,13 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         _degree_map = _strength_map(cocitation_result)
         selection_label = "Most central (co-citation)"
     elif sel_cfg.selection_by == "composite" and coupling_result is not None:
+        comp = sel_cfg.composite
         _composite_detail = _composite_scores(
             coupling_result, bertopic_results,
-            aggregate=getattr(sel_cfg, "composite_aggregate", "mean"),
-            weights=getattr(sel_cfg, "composite_weights", None),
-            relevance_mode=getattr(sel_cfg, "composite_relevance_mode", "blend"),
-            drop_current_year=getattr(sel_cfg, "composite_drop_current_year", True),
-            current_year=getattr(sel_cfg, "composite_current_year", None),
+            aggregate=comp.aggregate, weights=comp.weights,
+            relevance_mode=comp.relevance_mode,
+            drop_current_year=comp.drop_current_year,
+            current_year=comp.current_year,
         )
         _degree_map = {nid: d["score"] for nid, d in _composite_detail.items()}
         selection_label = "Most relevant (3-axis)"
@@ -1045,13 +1043,13 @@ def build_report_data(run_dir: str,
             try:
                 _coupling_result = build_coupling(
                     _networks_df,
-                    resolution=nc.coupling_resolution, min_size=nc.coupling_min_size)
+                    resolution=nc.coupling.resolution, min_size=nc.coupling.min_size)
             except Exception:
                 _coupling_result = None
             try:
                 _cocitation_result = build_cocitation(
-                    _networks_df, min_ref_freq=nc.cocitation_min_ref_freq,
-                    resolution=nc.cocitation_resolution, min_size=nc.cocitation_min_size)
+                    _networks_df, min_ref_freq=nc.cocitation.min_ref_freq,
+                    resolution=nc.cocitation.resolution, min_size=nc.cocitation.min_size)
             except Exception:
                 _cocitation_result = None
 

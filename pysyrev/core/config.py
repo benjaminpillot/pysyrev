@@ -525,6 +525,34 @@ class TopicsSectionConfig(ConfigField):
 
 
 @dataclass
+class CouplingPanelConfig(ConfigField):
+    """Coupling network panel (document × document)."""
+    resolution: float = 0.7        # Leiden resolution (higher → more, smaller communities)
+    min_size:   int   = 5          # communities smaller than this → uncoupled tail
+    backbone_k: int   = 3          # draw only each node's k strongest couplings
+    color_by:   str   = "topic"    # "topic" | "community"
+    hulls:      bool  = True        # outline Leiden communities (only when colouring by topic)
+
+
+@dataclass
+class CocitationPanelConfig(ConfigField):
+    """Co-citation network panel (reference × reference)."""
+    min_ref_freq: int   = 2         # keep references cited by at least this many documents
+    resolution:   float = 0.7       # Leiden resolution
+    min_size:     int   = 5         # communities smaller than this → tail
+    backbone_k:   int   = 3         # draw only each node's k strongest co-citations
+    color_by:     str   = "community"  # "topic" | "community"
+    hulls:        bool  = True      # outline Leiden communities (only when colouring by topic)
+
+
+@dataclass
+class ConnectivityConfig(ConfigField):
+    """Inter-group connectivity matrix panel."""
+    by:    str   = "topic"          # "topic" | "community" — group the coupling nodes by this
+    scale: float = 1000.0           # rescales the tiny coupling values for readability
+
+
+@dataclass
 class BibNetworkSectionConfig(ConfigField):
     """Bibliographic-network panels of the report.
 
@@ -535,22 +563,24 @@ class BibNetworkSectionConfig(ConfigField):
     other report section, the panels render whenever their prerequisite is met —
     here, a reviewed dataset carrying a ``references`` column.
     """
-    # ---- Coupling network (document × document) ----------------------------
-    coupling_resolution:    float = 0.7        # Leiden resolution (higher → more, smaller communities)
-    coupling_min_size:      int   = 5          # communities smaller than this → uncoupled tail
-    coupling_backbone_k:    int   = 3          # draw only each node's k strongest couplings
-    coupling_color_by:      str   = "topic"    # "topic" | "community"
-    coupling_hulls:         bool  = True       # outline Leiden communities (only when colouring by topic)
-    # ---- Co-citation network (reference × reference) -----------------------
-    cocitation_min_ref_freq: int   = 2         # keep references cited by at least this many documents
-    cocitation_resolution:   float = 0.7       # Leiden resolution
-    cocitation_min_size:     int   = 5         # communities smaller than this → tail
-    cocitation_backbone_k:   int   = 3         # draw only each node's k strongest co-citations
-    cocitation_color_by:     str   = "community"  # "topic" | "community"
-    cocitation_hulls:        bool  = True      # outline Leiden communities (only when colouring by topic)
-    # ---- Connectivity matrix (mean coupling between groups) -----------------
-    connectivity_by:         str   = "topic"   # "topic" | "community" — group the coupling nodes by this
-    connectivity_scale:      float = 1000.0    # rescales the tiny coupling values for readability
+    coupling:     CouplingPanelConfig   = None
+    cocitation:   CocitationPanelConfig = None
+    connectivity: ConnectivityConfig    = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.coupling, dict):
+            self.coupling = CouplingPanelConfig(**self.coupling)
+        elif self.coupling is None:
+            self.coupling = CouplingPanelConfig()
+        if isinstance(self.cocitation, dict):
+            self.cocitation = CocitationPanelConfig(**self.cocitation)
+        elif self.cocitation is None:
+            self.cocitation = CocitationPanelConfig()
+        if isinstance(self.connectivity, dict):
+            self.connectivity = ConnectivityConfig(**self.connectivity)
+        elif self.connectivity is None:
+            self.connectivity = ConnectivityConfig()
 
 
 @dataclass
@@ -573,29 +603,42 @@ class TopicSimilarityConfig(ConfigField):
 
 
 @dataclass
+class CompositeConfig(ConfigField):
+    """Tuning of the three-axis composite selector (selection_by: composite)."""
+    aggregate:         str  = "mean"    # "mean" | "gmean" | "chebyshev"
+    weights:           Union[None, List[float]] = None  # (centrality, representativeness, relevance); None = equal
+    relevance_mode:    str  = "blend"   # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
+    drop_current_year: bool = True      # drop the incomplete current year from the cit/yr denominator
+    current_year:      Union[None, int] = None  # reference year; None = latest year in the corpus
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.weights is not None and len(self.weights) != 3:
+            raise ValueError(
+                "paper_selection.composite.weights must have exactly 3 values "
+                "(centrality, representativeness, relevance)"
+            )
+
+
+@dataclass
 class PaperSelectionConfig(ConfigField):
     min_year:             int   = 2000
     proportion_per_topic: float = 0.15
     # "citations" | "random" | "coupling" | "co_citation" | "composite"
     # "composite" ranks papers per topic by the three-axis indicator (coupling
-    # centrality + citation relevance + thematic representativeness).
+    # centrality + citation relevance + thematic representativeness); tune it
+    # under the `composite:` sub-block.
     selection_by:         str   = "citations"
-    # ---- composite indicator tuning (only used when selection_by: composite) -
-    composite_aggregate:         str  = "mean"    # "mean" | "gmean" | "chebyshev"
-    composite_weights:           Union[None, List[float]] = None  # (centrality, representativeness, relevance); None = equal
-    composite_relevance_mode:    str  = "blend"   # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
-    composite_drop_current_year: bool = True      # drop the incomplete current year from the cit/yr denominator
-    composite_current_year:      Union[None, int] = None  # reference year; None = latest year in the corpus
+    composite:            CompositeConfig = None
     export_annex:         bool  = True
     annex_format:         str   = "csv"   # "csv" | "txt"
 
     def __post_init__(self):
         super().__post_init__()
-        if self.composite_weights is not None and len(self.composite_weights) != 3:
-            raise ValueError(
-                "paper_selection.composite_weights must have exactly 3 values "
-                "(centrality, representativeness, relevance)"
-            )
+        if isinstance(self.composite, dict):
+            self.composite = CompositeConfig(**self.composite)
+        elif self.composite is None:
+            self.composite = CompositeConfig()
 
 
 @dataclass
