@@ -235,18 +235,20 @@ class TestCompositeSelection:
         })
         return coupling, bt
 
-    def test_scores_are_percentile_composites(self, reviewed_dataset_path):
+    def test_scores_carry_three_axes(self, reviewed_dataset_path):
         from pysyrev.core.report_data import _composite_scores
         coupling, bt = self._setup(reviewed_dataset_path)
-        scores = _composite_scores(coupling, bt, aggregate="mean")
-        assert scores
-        assert all(0.0 <= s <= 1.0 for s in scores.values())
+        detail = _composite_scores(coupling, bt, aggregate="mean")
+        assert detail
+        assert all(0.0 <= d["score"] <= 1.0 for d in detail.values())
+        d0 = next(iter(detail.values()))
+        assert {"centrality", "relevance", "representativeness"} <= set(d0)
 
     def test_empty_without_coupling(self):
         from pysyrev.core.report_data import _composite_scores
         assert _composite_scores(None, None) == {}
 
-    def test_composite_selection_labels_rows(self, reviewed_dataset_path):
+    def test_composite_table_shows_axis_columns(self, reviewed_dataset_path):
         from pysyrev.core.report_data import _build_paper_selection_section
         coupling, bt = self._setup(reviewed_dataset_path)
         cfg = PaperSelectionConfig(min_year=2000, proportion_per_topic=0.5,
@@ -254,9 +256,9 @@ class TestCompositeSelection:
         sec = _build_paper_selection_section(bt, None, None, cfg, None, 6,
                                              coupling_result=coupling)
         assert sec is not None
-        tables = _blocks_of_type(sec, "table")
-        assert tables
-        assert any(r[-1] == "Most relevant (3-axis)" for r in tables[0]["rows"])
+        table = _blocks_of_type(sec, "table")[0]
+        assert {"Score", "Cent.", "Rel.", "Typ."} <= set(table["headers"])
+        assert any(r[-1] == "Most relevant (3-axis)" for r in table["rows"])
 
 
 # =============================================================================

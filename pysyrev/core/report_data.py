@@ -743,10 +743,12 @@ def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, sec
 
 
 def _composite_scores(coupling_result, bertopic_results, aggregate="mean"):
-    """``{doc_id: three-axis composite score}`` ranking papers within their topic.
+    """Three-axis ranking of papers within their topic, keyed by document id.
 
-    Combines coupling centrality (PageRank + weighted degree on the coupling
-    matrix), citation relevance (per-year + raw) and thematic representativeness
+    Returns ``{doc_id: {score, centrality, relevance, representativeness,
+    relevance_dropped}}`` (each axis a within-topic percentile). Combines
+    coupling centrality (PageRank + weighted degree on the coupling matrix),
+    citation relevance (per-year + raw) and thematic representativeness
     (typicality to the topic's TF-IDF centroid) — see
     :func:`pysyrev.core.paper_ranking.top_papers_3axis`. Empty dict when a
     prerequisite is missing.
@@ -787,11 +789,17 @@ def _composite_scores(coupling_result, bertopic_results, aggregate="mean"):
     from pysyrev.core.paper_ranking import top_papers_3axis
     top = top_papers_3axis(records, labels, coupling_result.W, n=len(records),
                            aggregate=aggregate, text_of=lambda r: r.get("_text", ""))
-    scores = {}
+    detail = {}
     for rows in top.values():
         for r in rows:
-            scores[node_ids[r["index"]]] = r["score"]
-    return scores
+            detail[node_ids[r["index"]]] = {
+                "score": r["score"],
+                "centrality": r["centrality"],
+                "relevance": r["relevance"],
+                "representativeness": r["representativeness"],
+                "relevance_dropped": r["relevance_dropped"],
+            }
+    return detail
 
 
 def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
@@ -815,6 +823,7 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                 zip(result.node_ids, result.W.sum(axis=1))} if result is not None else {}
 
     _degree_map: dict = {}
+    _composite_detail: dict = {}
     if sel_cfg.selection_by == "coupling" and coupling_result is not None:
         _degree_map = _strength_map(coupling_result)
         selection_label = "Most central (coupling)"
@@ -822,9 +831,10 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         _degree_map = _strength_map(cocitation_result)
         selection_label = "Most central (co-citation)"
     elif sel_cfg.selection_by == "composite" and coupling_result is not None:
-        _degree_map = _composite_scores(
+        _composite_detail = _composite_scores(
             coupling_result, bertopic_results,
             aggregate=getattr(sel_cfg, "composite_aggregate", "mean"))
+        _degree_map = {nid: d["score"] for nid, d in _composite_detail.items()}
         selection_label = "Most relevant (3-axis)"
     else:
         selection_label = ""
@@ -878,6 +888,18 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
 
     full_df = pd.concat(selected_parts, ignore_index=True)
 
+    # Composite mode: attach the three axis scores as columns (for the table and
+    # the CSV annex), replacing Type/DOI with Score/Centrality/Relevance/Typicality.
+    id_col = next((c for c in ["id", "ID"] if c in full_df.columns), None)
+    is_composite = (sel_cfg.selection_by == "composite"
+                    and bool(_composite_detail) and id_col is not None)
+    if is_composite:
+        det = _composite_detail
+        for col, key in [("composite_score", "score"), ("centrality", "centrality"),
+                         ("relevance", "relevance"), ("representativeness", "representativeness"),
+                         ("_reldrop", "relevance_dropped")]:
+            full_df[col] = full_df[id_col].map(lambda i: (det.get(i) or {}).get(key))
+
     def _fmt_year(v):
         try:
             return str(int(float(v)))
@@ -890,20 +912,40 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         except Exception:
             return "-"
 
+    def _fmt_axis(v):
+        try:
+            return "-" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{float(v):.2f}"
+        except Exception:
+            return "-"
+
+    if is_composite:
+        headers    = ["Topic", "Label", "Title", "Year", "Cit.",
+                      "Score", "Cent.", "Rel.", "Typ.", "Selection"]
+        col_widths = [1.0, 2.2, 5.2, 0.9, 0.9, 1.1, 1.1, 1.1, 1.1, 2.4]  # 17 cm
+    else:
+        headers    = ["Topic", "Label", "Title", "Type", "Year", "Cit.", "DOI", "Selection"]
+        col_widths = [1.0, 2.5, 5.5, 1.5, 1.0, 1.0, 2.5, 2.0]  # 17 cm
+
     table_rows = []
     for _, row in full_df.iterrows():
         tid   = int(row["Topic"])
         label = _topic_label(tid, topic_labels)
-        table_rows.append([
-            str(tid),
-            label,
-            str(row.get("title", "-"))[:100],
-            str(row.get("document_type", "-")),
-            _fmt_year(row.get("year")),
-            _fmt_cit(row.get("cited_by")),
-            str(row.get("doi", "-")),
-            str(row.get("_selection", "-")),
-        ])
+        cells = [str(tid), label, str(row.get("title", "-"))[:100]]
+        if is_composite:
+            rel = "n.d." if row.get("_reldrop") else _fmt_axis(row.get("relevance"))
+            cells += [
+                _fmt_year(row.get("year")), _fmt_cit(row.get("cited_by")),
+                _fmt_axis(row.get("composite_score")), _fmt_axis(row.get("centrality")),
+                rel, _fmt_axis(row.get("representativeness")),
+                str(row.get("_selection", "-")),
+            ]
+        else:
+            cells += [
+                str(row.get("document_type", "-")), _fmt_year(row.get("year")),
+                _fmt_cit(row.get("cited_by")), str(row.get("doi", "-")),
+                str(row.get("_selection", "-")),
+            ]
+        table_rows.append(cells)
 
     # Export annex
     annex_msg = None
@@ -912,15 +954,13 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         ext      = sel_cfg.annex_format.lower()
         ann_path = os.path.join(export_to, f"paper_selection.{ext}")
         if ext == "csv":
-            full_df.drop(columns=["_selection"], errors="ignore").rename(
-                columns={"_selection": "selection_type"}
-            )
-            export_df = full_df.rename(columns={"_selection": "selection_type"})
+            export_df = full_df.drop(columns=["_reldrop"], errors="ignore").rename(
+                columns={"_selection": "selection_type",
+                         "representativeness": "typicality"})
             export_df.to_csv(ann_path, index=False)
         else:
             with open(ann_path, "w", encoding="utf-8") as f:
-                headers_txt = ["topic", "label", "title", "type", "year", "citations", "doi", "selection"]
-                f.write(" | ".join(headers_txt) + "\n")
+                f.write(" | ".join(h.lower() for h in headers) + "\n")
                 f.write("-" * 120 + "\n")
                 for r in table_rows:
                     f.write(" | ".join(r) + "\n")
@@ -930,9 +970,9 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         {
             "type":       "table",
             "title":      f"Paper reading list — {len(full_df)} papers selected",
-            "headers":    ["Topic", "Label", "Title", "Type", "Year", "Cit.", "DOI", "Selection"],
+            "headers":    headers,
             "rows":       table_rows,
-            "col_widths": [1.0, 2.5, 5.5, 1.5, 1.0, 1.0, 2.5, 2.0],  # Topic|Label|Title|Type|Year|Cit.|DOI|Sel. — 17 cm
+            "col_widths": col_widths,
         }
     ]
     if annex_msg:
