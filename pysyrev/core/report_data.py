@@ -742,16 +742,19 @@ def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, sec
     return {"title": f"{section_n}. Topic similarity", "blocks": sub_blocks}
 
 
-def _composite_scores(coupling_result, bertopic_results, aggregate="mean"):
+def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
+                      weights=None, relevance_mode="blend",
+                      drop_current_year=True, current_year=None):
     """Three-axis ranking of papers within their topic, keyed by document id.
 
     Returns ``{doc_id: {score, centrality, relevance, representativeness,
     relevance_dropped}}`` (each axis a within-topic percentile). Combines
     coupling centrality (PageRank + weighted degree on the coupling matrix),
     citation relevance (per-year + raw) and thematic representativeness
-    (typicality to the topic's TF-IDF centroid) — see
-    :func:`pysyrev.core.paper_ranking.top_papers_3axis`. Empty dict when a
-    prerequisite is missing.
+    (typicality to the topic's TF-IDF centroid). The ``aggregate``, ``weights``,
+    ``relevance_mode``, ``drop_current_year`` and ``current_year`` knobs are
+    forwarded to :func:`pysyrev.core.paper_ranking.top_papers_3axis`. Empty dict
+    when a prerequisite is missing.
     """
     if coupling_result is None or coupling_result.n_nodes < 2:
         return {}
@@ -788,7 +791,10 @@ def _composite_scores(coupling_result, bertopic_results, aggregate="mean"):
 
     from pysyrev.core.paper_ranking import top_papers_3axis
     top = top_papers_3axis(records, labels, coupling_result.W, n=len(records),
-                           aggregate=aggregate, text_of=lambda r: r.get("_text", ""))
+                           weights=(tuple(weights) if weights else None),
+                           current_year=current_year, relevance_mode=relevance_mode,
+                           drop_current_year=drop_current_year, aggregate=aggregate,
+                           text_of=lambda r: r.get("_text", ""))
     detail = {}
     for rows in top.values():
         for r in rows:
@@ -833,7 +839,12 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     elif sel_cfg.selection_by == "composite" and coupling_result is not None:
         _composite_detail = _composite_scores(
             coupling_result, bertopic_results,
-            aggregate=getattr(sel_cfg, "composite_aggregate", "mean"))
+            aggregate=getattr(sel_cfg, "composite_aggregate", "mean"),
+            weights=getattr(sel_cfg, "composite_weights", None),
+            relevance_mode=getattr(sel_cfg, "composite_relevance_mode", "blend"),
+            drop_current_year=getattr(sel_cfg, "composite_drop_current_year", True),
+            current_year=getattr(sel_cfg, "composite_current_year", None),
+        )
         _degree_map = {nid: d["score"] for nid, d in _composite_detail.items()}
         selection_label = "Most relevant (3-axis)"
     else:

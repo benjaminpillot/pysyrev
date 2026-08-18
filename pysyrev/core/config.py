@@ -580,9 +580,22 @@ class PaperSelectionConfig(ConfigField):
     # "composite" ranks papers per topic by the three-axis indicator (coupling
     # centrality + citation relevance + thematic representativeness).
     selection_by:         str   = "citations"
-    composite_aggregate:  str   = "mean"   # "mean" | "gmean" | "chebyshev" (only for selection_by: composite)
+    # ---- composite indicator tuning (only used when selection_by: composite) -
+    composite_aggregate:         str  = "mean"    # "mean" | "gmean" | "chebyshev"
+    composite_weights:           Union[None, List[float]] = None  # (centrality, representativeness, relevance); None = equal
+    composite_relevance_mode:    str  = "blend"   # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
+    composite_drop_current_year: bool = True      # drop the incomplete current year from the cit/yr denominator
+    composite_current_year:      Union[None, int] = None  # reference year; None = latest year in the corpus
     export_annex:         bool  = True
     annex_format:         str   = "csv"   # "csv" | "txt"
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.composite_weights is not None and len(self.composite_weights) != 3:
+            raise ValueError(
+                "paper_selection.composite_weights must have exactly 3 values "
+                "(centrality, representativeness, relevance)"
+            )
 
 
 @dataclass

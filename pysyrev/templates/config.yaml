@@ -342,8 +342,12 @@ topic_model:
 #   #     proportion_per_topic: 0.15
 #   #     selection_by: citations          # citations | random | coupling | co_citation | composite
 #   #     # composite = three-axis indicator (coupling centrality + citation
-#   #     # relevance + thematic representativeness), ranked per topic
-#   #     composite_aggregate: mean        # mean | gmean | chebyshev (for selection_by: composite)
+#   #     # relevance + thematic representativeness), ranked per topic. Tuning:
+#   #     composite_aggregate: mean        # mean | gmean | chebyshev
+#   #     composite_weights: [1, 1, 1]     # (centrality, representativeness, relevance); omit for equal
+#   #     composite_relevance_mode: blend  # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+#   #     composite_drop_current_year: true  # drop the incomplete current year from the cit/yr denominator
+#   #     composite_current_year:          # reference year; blank = latest year in the corpus
 #   #     export_annex: true
 #   #     annex_format: csv         # csv | txt
 

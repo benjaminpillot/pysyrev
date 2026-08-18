@@ -260,6 +260,19 @@ class TestCompositeSelection:
         assert {"Score", "Cent.", "Rel.", "Typ."} <= set(table["headers"])
         assert any(r[-1] == "Most relevant (3-axis)" for r in table["rows"])
 
+    def test_tuning_params_change_scores(self, reviewed_dataset_path):
+        from pysyrev.core.report_data import _composite_scores
+        coupling, bt = self._setup(reviewed_dataset_path)
+        base = _composite_scores(coupling, bt, aggregate="mean")
+        cpy  = _composite_scores(coupling, bt, aggregate="mean", relevance_mode="cpy")
+        wrel = _composite_scores(coupling, bt, aggregate="mean", weights=[1, 1, 5])
+        assert any(base[k]["score"] != cpy[k]["score"] for k in base)
+        assert any(base[k]["score"] != wrel[k]["score"] for k in base)
+
+    def test_weights_validation(self):
+        with pytest.raises(ValueError):
+            PaperSelectionConfig(composite_weights=[1, 1])
+
 
 # =============================================================================
 # _build_temporal_section
