@@ -215,6 +215,50 @@ class TestConnectivityMatrix:
         assert prof["outward"] == M[0, 1]
 
 
+class TestCompositeSelection:
+
+    @staticmethod
+    def _setup(path):
+        from pysyrev.core.networks import build_coupling
+        df = pd.read_csv(path, low_memory=False)
+        coupling = build_coupling(df, resolution=0.7, min_size=3)
+        ids = list(df["id"])
+        bt = pd.DataFrame({
+            "id": ids,
+            "Document": (df["title"].fillna("") + " " + df["abstract"].fillna("")).tolist(),
+            "Topic": [i % 3 for i in range(len(ids))],
+            "year": df["year"].tolist(),
+            "cited_by": df["cited_by"].tolist(),
+            "document_type": df["document_type"].tolist(),
+            "title": df["title"].tolist(),
+            "doi": df["doi"].tolist(),
+        })
+        return coupling, bt
+
+    def test_scores_are_percentile_composites(self, reviewed_dataset_path):
+        from pysyrev.core.report_data import _composite_scores
+        coupling, bt = self._setup(reviewed_dataset_path)
+        scores = _composite_scores(coupling, bt, aggregate="mean")
+        assert scores
+        assert all(0.0 <= s <= 1.0 for s in scores.values())
+
+    def test_empty_without_coupling(self):
+        from pysyrev.core.report_data import _composite_scores
+        assert _composite_scores(None, None) == {}
+
+    def test_composite_selection_labels_rows(self, reviewed_dataset_path):
+        from pysyrev.core.report_data import _build_paper_selection_section
+        coupling, bt = self._setup(reviewed_dataset_path)
+        cfg = PaperSelectionConfig(min_year=2000, proportion_per_topic=0.5,
+                                   selection_by="composite", export_annex=False)
+        sec = _build_paper_selection_section(bt, None, None, cfg, None, 6,
+                                             coupling_result=coupling)
+        assert sec is not None
+        tables = _blocks_of_type(sec, "table")
+        assert tables
+        assert any(r[-1] == "Most relevant (3-axis)" for r in tables[0]["rows"])
+
+
 # =============================================================================
 # _build_temporal_section
 # =============================================================================

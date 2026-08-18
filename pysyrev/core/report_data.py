@@ -742,6 +742,58 @@ def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, sec
     return {"title": f"{section_n}. Topic similarity", "blocks": sub_blocks}
 
 
+def _composite_scores(coupling_result, bertopic_results, aggregate="mean"):
+    """``{doc_id: three-axis composite score}`` ranking papers within their topic.
+
+    Combines coupling centrality (PageRank + weighted degree on the coupling
+    matrix), citation relevance (per-year + raw) and thematic representativeness
+    (typicality to the topic's TF-IDF centroid) — see
+    :func:`pysyrev.core.paper_ranking.top_papers_3axis`. Empty dict when a
+    prerequisite is missing.
+    """
+    if coupling_result is None or coupling_result.n_nodes < 2:
+        return {}
+    if bertopic_results is None or "Topic" not in bertopic_results.columns:
+        return {}
+    id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
+    if id_col is None:
+        return {}
+
+    by_id = bertopic_results.drop_duplicates(id_col).set_index(id_col)
+    text_col = "Document" if "Document" in by_id.columns else "title"
+
+    def _num(v, default=0.0):
+        try:
+            return default if pd.isna(v) else float(v)
+        except (TypeError, ValueError):
+            return default
+
+    node_ids = coupling_result.node_ids
+    records, labels = [], []
+    for nid in node_ids:
+        if nid in by_id.index:
+            row = by_id.loc[nid]
+            year = row.get("year")
+            records.append({
+                "publication_year": (None if pd.isna(year) else int(_num(year))),
+                "cited_by_count": _num(row.get("cited_by")),
+                "_text": str(row.get(text_col) or ""),
+            })
+            labels.append(int(_num(row.get("Topic"), -1)))
+        else:
+            records.append({"publication_year": None, "cited_by_count": 0.0, "_text": ""})
+            labels.append(-1)
+
+    from pysyrev.core.paper_ranking import top_papers_3axis
+    top = top_papers_3axis(records, labels, coupling_result.W, n=len(records),
+                           aggregate=aggregate, text_of=lambda r: r.get("_text", ""))
+    scores = {}
+    for rows in top.values():
+        for r in rows:
+            scores[node_ids[r["index"]]] = r["score"]
+    return scores
+
+
 def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                                    sel_cfg, export_to, section_n,
                                    coupling_result=None, cocitation_result=None):
@@ -769,6 +821,11 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     elif sel_cfg.selection_by == "co_citation" and cocitation_result is not None:
         _degree_map = _strength_map(cocitation_result)
         selection_label = "Most central (co-citation)"
+    elif sel_cfg.selection_by == "composite" and coupling_result is not None:
+        _degree_map = _composite_scores(
+            coupling_result, bertopic_results,
+            aggregate=getattr(sel_cfg, "composite_aggregate", "mean"))
+        selection_label = "Most relevant (3-axis)"
     else:
         selection_label = ""
 
@@ -790,7 +847,7 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
             selected = filt.sample(n=min(n_docs, len(filt)), random_state=42).copy()
             selected["_selection"] = "Random"
             selection_label = "Random"
-        elif sel_cfg.selection_by in ("coupling", "co_citation") and _degree_map:
+        elif sel_cfg.selection_by in ("coupling", "co_citation", "composite") and _degree_map:
             id_col = next((c for c in ["id", "ID"] if c in filt.columns), None)
             if id_col:
                 tmp = filt.copy()

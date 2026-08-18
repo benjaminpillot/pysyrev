@@ -340,7 +340,10 @@ topic_model:
 #   #   paper_selection:
 #   #     min_year: 2020
 #   #     proportion_per_topic: 0.15
-#   #     selection_by: citations          # citations | random | coupling | co_citation
+#   #     selection_by: citations          # citations | random | coupling | co_citation | composite
+#   #     # composite = three-axis indicator (coupling centrality + citation
+#   #     # relevance + thematic representativeness), ranked per topic
+#   #     composite_aggregate: mean        # mean | gmean | chebyshev (for selection_by: composite)
 #   #     export_annex: true
 #   #     annex_format: csv         # csv | txt
 

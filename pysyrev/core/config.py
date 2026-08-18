@@ -576,7 +576,11 @@ class TopicSimilarityConfig(ConfigField):
 class PaperSelectionConfig(ConfigField):
     min_year:             int   = 2000
     proportion_per_topic: float = 0.15
-    selection_by:         str   = "citations"  # "citations" | "random" | "coupling" | "co_citation"
+    # "citations" | "random" | "coupling" | "co_citation" | "composite"
+    # "composite" ranks papers per topic by the three-axis indicator (coupling
+    # centrality + citation relevance + thematic representativeness).
+    selection_by:         str   = "citations"
+    composite_aggregate:  str   = "mean"   # "mean" | "gmean" | "chebyshev" (only for selection_by: composite)
     export_annex:         bool  = True
     annex_format:         str   = "csv"   # "csv" | "txt"
 
