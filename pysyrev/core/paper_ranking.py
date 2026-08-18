@@ -118,13 +118,33 @@ def top_papers_3axis(records, labels, W, n: int = 3, weights=None,
     W       : symmetric coupling matrix (``len(records)`` square) — used for both
               PageRank and weighted degree.
     n       : papers kept per cluster (best first).
+    weights : ``(w_centrality, w_representativeness, w_relevance)`` axis weights,
+              renormalised to sum to 1. ``None`` → equal (1/3 each). For a current-year
+              paper the relevance weight is dropped and the other two renormalised.
+    current_year : reference year for the citations/year denominator and for detecting
+              current-year papers. ``None`` → the largest *year_key* value in *records*.
+    typicality : optional precomputed representativeness array (cosine-to-centroid),
+              aligned to *records*. ``None`` → computed via :func:`thematic_typicality`.
     relevance_mode : ``"blend"`` = mean(pct cit/yr, pct raw citations); ``"cpy"``
               = citations-per-year alone.
+    drop_current_year : when True (default) the current (incomplete) year is removed
+              from the citations/year denominator, so a paper is divided by its number
+              of *complete* elapsed years; when False the running year is kept in the
+              denominator and every paper is scored on all three axes.
     aggregate : ``"mean"`` | ``"gmean"`` | ``"chebyshev"`` (see :func:`aggregate_axes`).
+    text_of : callable ``record -> str`` giving the text used for thematic typicality
+              (``None`` → ``title`` + ``_abstract``). Ignored when *typicality* is given.
+    year_key, cite_key : record keys for the publication year and citation count
+              (defaults ``"publication_year"`` / ``"cited_by_count"``).
 
-    Returns ``{cluster: [row, ...]}`` where each row is a dict with ``index,
-    score, centrality, relevance, representativeness, relevance_dropped,
-    cited_by_count, cites_per_year``.
+    Returns
+    -------
+    dict
+        ``{cluster: [row, ...]}`` where each row is a dict with ``index, score,
+        centrality, relevance, representativeness, relevance_dropped,
+        cited_by_count, cites_per_year``, sorted best-first. For a current-year
+        paper ``relevance`` and ``cites_per_year`` are ``None`` and
+        ``relevance_dropped`` is ``True``.
     """
     import igraph as ig
 
