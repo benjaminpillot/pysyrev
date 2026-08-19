@@ -366,10 +366,8 @@ class BibDataset:
         config; see CleanConfig, ExtractConfig, MergeConfig, and
         ResolveReferencesConfig for defaults.
         """
-        datasets: List[BibDataset] = []
+        by_source: dict = {}
 
-        if config.wos:
-            datasets.append(WosDataset.from_config(config.wos))
         if config.open_alex:
             # Completion sub-blocks (e.g. wos_completion) enrich the OpenAlex
             # records before merge/clean, so abstracts OpenAlex left bare are
@@ -378,17 +376,27 @@ class BibDataset:
             # run is declared in OpenAlexDataset._COMPLETERS.
             open_alex = OpenAlexDataset.from_config(config.open_alex)
             open_alex.apply_completions(config.open_alex)
-            datasets.append(open_alex)
+            by_source['open_alex'] = open_alex
+        if config.wos:
+            by_source['wos'] = WosDataset.from_config(config.wos)
         if config.scopus:
-            datasets.append(ScopusDataset(bibfile=config.scopus))
+            by_source['scopus'] = ScopusDataset(bibfile=config.scopus)
         if config.pubmed:
-            datasets.append(PubmedDataset(bibfile=config.pubmed))
+            by_source['pubmed'] = PubmedDataset(bibfile=config.pubmed)
 
-        if not datasets:
+        if not by_source:
             raise ValueError("No bib source is configured — set at least one of "
                              "wos, open_alex, scopus, or pubmed in the config.")
 
         cfg_merge = config.merge
+
+        # Order the loaded sources by the configured merge priority. The first
+        # one becomes the merge's primary dataset (it wins duplicates and keeps
+        # its IDs); sources not listed in `priority` keep their declaration order
+        # after the listed ones. See MergeConfig.priority.
+        ordered = [name for name in cfg_merge.priority if name in by_source]
+        ordered += [name for name in by_source if name not in ordered]
+        datasets: List[BibDataset] = [by_source[name] for name in ordered]
         merged = (
             datasets[0] if len(datasets) == 1
             else datasets[0].merge(

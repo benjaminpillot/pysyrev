@@ -236,6 +236,17 @@ class MergeConfig(ConfigField):
     ngram_size:             int = 3
     max_candidates_per_row: int = 200
     scorer:                 str = "token_set_ratio"
+    # Source priority for deduplication, most-important first. The first
+    # configured source in this order becomes the merge's primary dataset: its
+    # records win over duplicates from the others, its IDs are kept, and dropped
+    # duplicates are aliased to the surviving record so references still resolve.
+    # Default keeps OpenAlex first (stable IDs for coupling networks, abstracts
+    # completed from WoS); listing WoS first restores the old WoS-wins behaviour.
+    priority: List[str] = None
+
+    def __post_init__(self):
+        if self.priority is None:
+            self.priority = ["open_alex", "wos", "scopus", "pubmed"]
 
 
 @dataclass

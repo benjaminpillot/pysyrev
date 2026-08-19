@@ -81,6 +81,11 @@ bib:
   #   ngram_size: 3
   #   max_candidates_per_row: 200
   #   scorer: token_set_ratio      # token_set_ratio | partial_token_sort_ratio | WRatio | ...
+  #   # Deduplication priority, most-important source first. The first configured
+  #   # source wins duplicates and keeps its IDs; dropped duplicates are aliased so
+  #   # references still resolve. Default keeps OpenAlex first (stable IDs, abstracts
+  #   # completed from WoS). List wos first to restore the old WoS-wins behaviour.
+  #   priority: [open_alex, wos, scopus, pubmed]
 
   # ---- Abstract cleaning (defaults shown) --------------------------------
   # clean:

@@ -246,8 +246,8 @@ def resolve_references(
     cross_id_map : dict, optional
         Mapping ``{dropped_id: kept_id}`` produced by :func:`merge_bibs`.
         Allows references pointing to IDs that were dropped during deduplication
-        (e.g. OpenAlex IDs replaced by WoS IDs) to resolve to the surviving
-        record.
+        (e.g. WoS IDs replaced by the OpenAlex duplicate, per the configured
+        merge priority) to resolve to the surviving record.
     fuzzy_score_cutoff : int
         Minimum rapidfuzz score (0-100) to accept a fuzzy title match.
         Pass 100 to disable fuzzy matching entirely.
@@ -275,8 +275,8 @@ def resolve_references(
 
     id_to_pos = {id_: i for i, id_ in enumerate(df['id']) if pd.notna(id_)}
 
-    # Extend with alias IDs from cross-source deduplication (e.g. OA IDs that
-    # were dropped in favour of WoS IDs during merge_bibs).
+    # Extend with alias IDs from cross-source deduplication (e.g. WoS IDs that
+    # were dropped in favour of the OpenAlex duplicate during merge_bibs).
     for alias, canonical in (cross_id_map or {}).items():
         if alias not in id_to_pos and canonical in id_to_pos:
             id_to_pos[alias] = id_to_pos[canonical]
