@@ -567,6 +567,29 @@ def _has_bridgeable_dois(df: pd.DataFrame, ref_col: str = REFS) -> bool:
     return False
 
 
+def has_unkeyed_references(df: pd.DataFrame, ref_col: str = REFS) -> bool:
+    """True if any reference is a raw token that is *not* an internal id key.
+
+    A reference "points to a key" when it is a recognized scheme id (an OpenAlex
+    ``Wxxxx`` id, etc.) that already names a document by its native id. Raw
+    citation strings and bare DOIs (WoS / Scopus style) do *not*, so they need
+    :func:`resolve_references` to be matched against the corpus. When every
+    reference is already a scheme id (e.g. a single-source OpenAlex run), or there
+    are no references at all (an API source that returns none), there is nothing to
+    resolve and the caller can skip the pass.
+    """
+    if ref_col not in df.columns:
+        return False
+    for val in df[ref_col]:
+        if not isinstance(val, str):
+            continue
+        for tok in val.split(';'):
+            tok = tok.strip()
+            if tok and _normalize_id(tok) is None:
+                return True
+    return False
+
+
 def add_reference_keys(df: pd.DataFrame, table: Dict[str, Optional[str]],
                        ref_col: str = REFS,
                        out_col: str = 'reference_keys') -> pd.DataFrame:

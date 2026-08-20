@@ -1,4 +1,3 @@
-import warnings
 from functools import partial
 
 from rapidfuzz import fuzz
@@ -10,7 +9,8 @@ from pysyrev.core.mappers import from_openalex_result, from_wos_result
 from pysyrev.core.references import (resolve_references as _resolve_references,
                                      flag_shared_unresolved_references as _flag_unresolved,
                                      complete_reference_keys as _complete_reference_keys,
-                                     resolve_ids_via_openalex as _resolve_ids_via_openalex)
+                                     resolve_ids_via_openalex as _resolve_ids_via_openalex,
+                                     has_unkeyed_references as _has_unkeyed_references)
 from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
 from pysyrev.core.clean import clean_doi, clean_abstracts
@@ -446,27 +446,22 @@ class BibDataset:
                 cache_path=cfg_rk.cache, resolvers=resolvers,
                 resolve_external=cfg_rk.resolve_external)
 
-        # resolve_references runs before extract_documents so that:
-        #   * references are resolved against the full
-        #     cleaned dataset, maximizing the number of
-        #     resolvable targets.
+        # resolve_references maps raw reference strings to internal doc IDs (for
+        # the corpus citation network). It runs before extract_documents so that
+        # references resolve against the full cleaned dataset, maximizing the
+        # number of resolvable targets. It is only worth running when there is
+        # something to resolve:
+        #   * deduplication dropped IDs during the merge (cross_id_map non-empty)
+        #     — references pointing at a dropped ID must be re-aliased to the
+        #     surviving record; or
+        #   * the dataset carries references that are not already internal keys
+        #     (raw WoS/Scopus citation strings, bare DOIs).
+        # A single-source run whose references are all native id keys (e.g. pure
+        # OpenAlex), or an API source that returns no references at all, has
+        # nothing to resolve and is skipped.
         cfg_rr = config.resolve_references
-        if cfg_rr.enabled:
-            api_sources = [
-                name for name, src in (('wos', config.wos), ('open_alex', config.open_alex))
-                if isinstance(src, (WosSourceConfig, OpenAlexSourceConfig))
-                and src.source == 'api'
-            ]
-            if api_sources:
-                warnings.warn(
-                    f"resolve_references is enabled but the following sources use "
-                    f"the API ({', '.join(api_sources)}), which does not return "
-                    f"references inline. The 'references' column will be empty for "
-                    f"those records and resolution will produce no matches. "
-                    f"Switch to source: file to get references.",
-                    UserWarning,
-                    stacklevel=2,
-                )
+        if cfg_rr.enabled and (merged._cross_id_map
+                               or _has_unkeyed_references(merged._bib_dataset)):
             merged = merged.resolve_references(
                 fuzzy_score_cutoff = cfg_rr.fuzzy_score_cutoff,
                 ngram_size         = cfg_rr.ngram_size,

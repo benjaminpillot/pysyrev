@@ -91,6 +91,38 @@ class TestCanonicalMapping:
         assert R.add_reference_keys(df, {})["reference_keys"].tolist() == [None, None, None]
 
 
+class TestHasUnkeyedReferences:
+    """Gate for resolve_references: raw citation strings / DOIs need resolving,
+    native id keys do not."""
+
+    def test_raw_wos_strings_are_unkeyed(self):
+        df = pd.DataFrame({"references": ["Smith J, 2019, NATURE, V1, P1"]})
+        assert R.has_unkeyed_references(df) is True
+
+    def test_bare_doi_is_unkeyed(self):
+        df = pd.DataFrame({"references": ["10.1000/abc"]})
+        assert R.has_unkeyed_references(df) is True
+
+    def test_pure_openalex_ids_are_keyed(self):
+        df = pd.DataFrame({
+            "references": ["https://openalex.org/W1; https://openalex.org/W2"],
+        })
+        assert R.has_unkeyed_references(df) is False
+
+    def test_no_references_at_all(self):
+        df = pd.DataFrame({"references": [None, "", "   "]})
+        assert R.has_unkeyed_references(df) is False
+
+    def test_missing_column(self):
+        assert R.has_unkeyed_references(pd.DataFrame({"id": ["W1"]})) is False
+
+    def test_mixed_sources_are_unkeyed(self):
+        df = pd.DataFrame({
+            "references": ["https://openalex.org/W1", "Author, 2010, DOI 10.1/z"],
+        })
+        assert R.has_unkeyed_references(df) is True
+
+
 class TestCache:
 
     def test_round_trip_with_none(self, tmp_path):
