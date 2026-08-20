@@ -7,7 +7,7 @@ bib:
   # (source: api). Pick one. Switch to `source: api` once your API key
   # is active and update the query below.
   wos:
-    source: file   # 'file' or 'api' or leave blank if not to be included
+    source:        # disabled for this OpenAlex-only test — set to 'file' (or 'api') to re-enable WoS
 #    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
     file: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/REVIEW/WOS/savedrecs_all.bib
     api:
@@ -15,17 +15,18 @@ bib:
       query:
       cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
-#    source: file   # 'file' or 'api' or leave blank if not to be included
-    source:
+    source: api    # 'file' or 'api' or leave blank if not to be included
     file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
     api:
-      api_key: #${OPENALEX_API_KEY}
-      email: #${OPENALEX_EMAIL}                               # optional, polite-pool credit
-      query: agent-based energy transition                    # free-text search (BM25 on title+abstract)
+      api_key: ${OPENALEX_API_KEY}
+      email: ${OPENALEX_EMAIL}                                # optional, polite-pool credit
+      # Narrowed set (~546 works): justice embedded in energy models. The search
+      # covers title+abstract only (not full text); AND/OR/"quotes" are honoured.
+      query: energy transition AND model AND justice
       filters:                                                # structured filters (combined with AND)
-        publication_year: '2015-2024'
+        publication_year: '2016-2026'                         # aligns with extract.year below
         type: article
-      cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/cache
+      cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/OpenAlex_cache
   scopus:
   pubmed:
 
