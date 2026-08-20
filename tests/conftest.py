@@ -172,7 +172,7 @@ def report_cfg():
             topics=TopicsSectionConfig(n_repr_docs_per_topic=3),
             bib_network=BibNetworkSectionConfig(),
             temporal=TemporalSectionConfig(
-                variants=["absolute", "cumulative", "normalized", "weighted"]
+                variants=["absolute", "normalized", "weighted"]
             ),
             topic_characteristics=TopicCharacteristicsConfig(
                 n_top_cited_per_topic=3, n_top_cited_global=10

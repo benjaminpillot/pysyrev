@@ -294,16 +294,16 @@ class TestBuildTemporalSection:
         assert isinstance(sec, dict) and "blocks" in sec
 
     def test_one_subsection_per_variant(self, tiny_bertopic_results):
-        cfg = TemporalSectionConfig(variants=["absolute", "cumulative"])
+        cfg = TemporalSectionConfig(variants=["absolute", "normalized"])
         sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
         assert len(_subsections(sec)) == 2
 
-    def test_all_four_variants_produce_four_subsections(self, tiny_bertopic_results):
+    def test_all_variants_produce_a_subsection_each(self, tiny_bertopic_results):
         cfg = TemporalSectionConfig(
-            variants=["absolute", "cumulative", "normalized", "weighted"]
+            variants=["absolute", "normalized", "weighted"]
         )
         sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
-        assert len(_subsections(sec)) == 4
+        assert len(_subsections(sec)) == 3
 
     def test_each_subsection_has_plotly_block(self, tiny_bertopic_results):
         cfg = TemporalSectionConfig(variants=["absolute", "normalized"])
