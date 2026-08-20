@@ -1,26 +1,31 @@
 """
 Metadata completion for bibliographic records.
 
-A corpus assembled from a single source is rarely complete: fields the primary
-source leaves empty can often be recovered from a secondary one. This module
-gathers those completion strategies. Each fills a specific set of columns from
-an external source while leaving every other field untouched — completion never
-overwrites data the primary source already provides. Web of Science abstract
-completion is the first such strategy; others (e.g. citation counts, references,
-alternative abstract sources) can be added here following the same contract.
+No bibliographic source is complete: fields a record leaves empty can often be
+recovered from another source that indexes the same work. This module gathers
+those completion strategies. Each fills a specific set of columns by looking the
+record up in an external provider (by DOI), while leaving every other field
+untouched — completion never overwrites data already present. It is source-
+agnostic: strategies run on the merged corpus, driven by the corpus-level
+``bib.abstract_completion`` config (see :class:`AbstractCompletionConfig`), and
+several providers can be chained so a later one only fills what earlier ones
+missed. Abstract completion is the first strategy; others (e.g. citation counts,
+references, alternative abstract sources) can be added following the same
+contract.
 
-Abstract completion from Web of Science
----------------------------------------
-When a corpus is built primarily from OpenAlex — whose OpenAlex IDs
-(``referenced_works``) are the most reliable basis for bibliographic-coupling
-networks — a non-trivial share of records carry no abstract: OpenAlex simply
-has none for them. Those records cannot be LLM-screened on their abstract and,
-because :meth:`BibDataset.clean_and_drop` drops no-abstract rows, they would be
-silently discarded, biasing the corpus.
+Providers register a backend keyed by ``provider`` name in
+:attr:`BibDataset._COMPLETERS`; ``wos`` is the only one implemented today.
+
+Abstract completion
+-------------------
+A non-trivial share of records carry no abstract — OpenAlex, a common primary
+source, simply has none for many works. Those records cannot be LLM-screened on
+their abstract and, because :meth:`BibDataset.clean_and_drop` drops no-abstract
+rows, they would be silently discarded, biasing the corpus.
 
 :func:`complete_abstracts_from_wos` recovers those abstracts from Web of Science
 Expanded by DOI lookup and fills **only** the ``abstract`` column. Every other
-field — in particular ``references`` (the OpenAlex IDs used for coupling) — is
+field — in particular ``references`` (the IDs used for coupling networks) — is
 left untouched. WoS under-indexes preprints and many conference series, so this
 is a completion pass, never a primary search.
 """
@@ -97,7 +102,7 @@ def complete_abstracts_from_wos(dataframe: pd.DataFrame,
     """
     if ABSTRACT not in dataframe.columns or DOI not in dataframe.columns:
         raise ValueError(
-            f"wos_completion needs both {ABSTRACT!r} and {DOI!r} columns."
+            f"WoS abstract completion needs both {ABSTRACT!r} and {DOI!r} columns."
         )
 
     client = WosClient(api_key=api_key, session_file=session_file)
