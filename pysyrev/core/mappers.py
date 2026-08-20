@@ -52,6 +52,26 @@ def _oa_reconstruct_abstract(inverted_index: Optional[dict]) -> Optional[str]:
                     if i in pos_to_word)
 
 
+def _oa_authorships(record: dict) -> tuple[Optional[str], Optional[str]]:
+    """Extract '; '-joined author display names and raw affiliation strings from
+    an OpenAlex record's ``authorships`` list (matching the file path's
+    ``authorships.author.display_name`` / ``authorships.raw_affiliation_strings``
+    mapping and the dataset's '; ' author convention)."""
+    authorships = record.get('authorships') or []
+    authors = '; '.join(
+        a['author']['display_name']
+        for a in authorships
+        if a.get('author') and a['author'].get('display_name')
+    ) or None
+    affiliations = '; '.join(
+        aff
+        for a in authorships
+        for aff in (a.get('raw_affiliation_strings') or [])
+        if aff
+    ) or None
+    return authors, affiliations
+
+
 def _map_openalex_record(record: dict) -> dict:
     keywords = record.get('keywords') or []
     keyword_str = '; '.join(
@@ -63,8 +83,12 @@ def _map_openalex_record(record: dict) -> dict:
 
     source = ((record.get('primary_location') or {}).get('source') or {})
 
+    author, affiliations = _oa_authorships(record)
+
     return {
         'id':              record.get('id'),
+        'author':          author,
+        'affiliations':    affiliations,
         'abstract':        _oa_reconstruct_abstract(record.get('abstract_inverted_index')),
         'journal':         source.get('display_name'),
         'title':           record.get('title'),
