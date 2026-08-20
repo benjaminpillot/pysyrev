@@ -30,6 +30,17 @@ bib:
   scopus:
   pubmed:
 
+  # --- Abstract completion (opt-in, corpus-level) ---
+  # OpenAlex leaves a share of records without an abstract, and no-abstract rows
+  # are dropped by cleaning — recovering them from WoS (looked up by DOI) is
+  # useful even in this OpenAlex-only run since abstracts feed the topic model.
+  # Runs on the merged corpus before the drop; only the abstract is filled, the
+  # referenced_works IDs used for coupling stay intact. Uncomment to activate.
+  # abstract_completion:
+  #   - provider: wos
+  #     api_key: ${WOS_API_KEY}
+  #     cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/wos_completion_cache
+
   # --- Merge parameters (duplicates removal across sources) ---
   # merge:
   #   title_similarity: 98         # fuzzy similarity threshold (0-100) for duplicate detection
