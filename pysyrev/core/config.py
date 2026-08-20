@@ -250,6 +250,31 @@ class MergeConfig(ConfigField):
 
 
 @dataclass
+class ReferenceKeysConfig(ConfigField):
+    """Unify references onto a canonical DOI key space (coupling basis).
+
+    Declared under ``bib.reference_keys``. Presence enables the step: each
+    reference is remapped to its normalized DOI when derivable (native token
+    kept otherwise), so bibliographic coupling holds across merged sources
+    regardless of merge order.
+
+    ``cache``
+        Path to the persistent ``Wxxxx -> DOI`` CSV table. It accumulates across
+        runs; ``None`` = compute in memory only, no persistence.
+    ``resolve_external``
+        When True, OpenAlex ids that point at extra-corpus works (whose DOI is
+        not already known from the corpus rows or the cache) are resolved once
+        via the OpenAlex API and cached. Needs OpenAlex API credentials (reused
+        from ``open_alex.api``). When False, only the free offline mapping runs.
+        The API step is skipped automatically when the corpus has no DOI-bearing
+        references from another source to bridge to (e.g. a pure-OpenAlex run),
+        so the block is safe to leave enabled regardless of the sources used.
+    """
+    cache:            Union[None, str] = None
+    resolve_external: bool             = True
+
+
+@dataclass
 class BibExportConfig(ConfigField):
     """Output configuration for the bib stage.
 
@@ -280,6 +305,7 @@ class BibConfig(ConfigField):
     extract:            ExtractConfig                              = None
     resolve_references: ResolveReferencesConfig                    = None
     merge:              MergeConfig                                = None
+    reference_keys:     Union[None, ReferenceKeysConfig]           = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -323,6 +349,10 @@ class BibConfig(ConfigField):
             self.merge = MergeConfig(**self.merge)
         elif self.merge is None:
             self.merge = MergeConfig()
+
+        # Presence of the block enables the canonical-key step; absence = None.
+        if isinstance(self.reference_keys, dict):
+            self.reference_keys = ReferenceKeysConfig(**self.reference_keys)
 
 
 @dataclass

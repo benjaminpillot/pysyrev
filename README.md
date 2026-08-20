@@ -19,7 +19,8 @@
 ## Features
 
 - **Multi-source ingestion** — Web of Science (file or REST API), OpenAlex (file or REST API), Scopus, PubMed
-- **Automatic deduplication** — fuzzy title matching across sources
+- **Automatic deduplication** — fuzzy title matching across sources, with a configurable source priority (OpenAlex wins by default, keeping its stable IDs; duplicates are aliased so references still resolve)
+- **Canonical reference keys** — optionally remap every reference onto a shared DOI key space so bibliographic coupling holds across merged sources regardless of merge order: intra-corpus and DOI-bearing references map for free, extra-corpus OpenAlex ids are resolved to DOIs via the OpenAlex API and cached (skipped automatically when there is no other-source DOI to bridge to)
 - **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…)
 - **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores

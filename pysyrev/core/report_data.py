@@ -1040,15 +1040,21 @@ def build_report_data(run_dir: str,
         if _networks_df is not None and {"references", "id"}.issubset(_networks_df.columns):
             from pysyrev.core.networks import build_coupling, build_cocitation
             nc = sec.bib_network
+            # Prefer the canonical DOI-keyed references when available: they
+            # unify references across merged sources (see reference_keys). Fall
+            # back to the raw references column otherwise.
+            ref_col = ("reference_keys"
+                       if "reference_keys" in _networks_df.columns
+                       else "references")
             try:
                 _coupling_result = build_coupling(
-                    _networks_df,
+                    _networks_df, ref_col=ref_col,
                     resolution=nc.coupling.resolution, min_size=nc.coupling.min_size)
             except Exception:
                 _coupling_result = None
             try:
                 _cocitation_result = build_cocitation(
-                    _networks_df, min_ref_freq=nc.cocitation.min_ref_freq,
+                    _networks_df, ref_col=ref_col, min_ref_freq=nc.cocitation.min_ref_freq,
                     resolution=nc.cocitation.resolution, min_size=nc.cocitation.min_size)
             except Exception:
                 _cocitation_result = None

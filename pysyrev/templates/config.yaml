@@ -87,6 +87,18 @@ bib:
   #   # completed from WoS). List wos first to restore the old WoS-wins behaviour.
   #   priority: [open_alex, wos, scopus, pubmed]
 
+  # ---- Canonical reference keys (optional; presence enables it) -----------
+  # Remap every reference onto a shared DOI key space so bibliographic coupling
+  # and co-citation hold across merged sources, regardless of merge order. Refs
+  # from the corpus and any DOI-bearing ref map for free; extra-corpus OpenAlex
+  # ids are resolved via the OpenAlex API (credentials reused from open_alex.api)
+  # and cached to disk. Without this block, networks fall back to raw references.
+  # The API step is skipped automatically when there is no other-source DOI to
+  # bridge to (e.g. a pure-OpenAlex run), so it is safe to leave enabled.
+  # reference_keys:
+  #   cache: .cache/openalex_doi.csv   # persistent Wxxxx->DOI table (accumulates)
+  #   resolve_external: true           # false = offline only (no API calls)
+
   # ---- Abstract cleaning (defaults shown) --------------------------------
   # clean:
   #   min_signals_to_reject: 2     # garbage signals needed to drop an abstract

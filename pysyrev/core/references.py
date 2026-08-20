@@ -24,6 +24,13 @@ Resolution runs four passes in decreasing reliability order:
 Output columns (added to a copy of the input DataFrame):
   ``reference_ids``         — '; '-joined internal doc IDs of resolved refs.
   ``unresolved_references`` — '; '-joined raw strings that found no match.
+
+Separately, :func:`complete_reference_keys` produces a ``reference_keys`` column:
+each reference remapped to a **canonical DOI key** (native token kept when no DOI
+is derivable). Unlike ``reference_ids`` — which only links references to other
+corpus documents — this gives the extra-corpus works a shared identity too, so
+bibliographic coupling and co-citation hold across merged sources regardless of
+merge order. See the "Canonical reference keys" section below.
 """
 
 from __future__ import annotations
@@ -31,13 +38,14 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from typing import Optional
+from typing import Dict, Iterable, List, Optional, Set
 
 import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process as rf_process
 from tqdm import tqdm
 
+from pysyrev.core.bib import DOI, ID, REFS
 from pysyrev.core.merge_bibs import (
     _normalize_doi,
     _canonicalize_title,
@@ -338,3 +346,232 @@ def resolve_references(
     df['reference_ids']         = resolved_col
     df['unresolved_references'] = unresolved_col
     return df
+
+
+# ===========================================================================
+# Canonical reference keys — a source-agnostic coupling basis
+# ===========================================================================
+#
+# :func:`resolve_references` above links references to *corpus* documents (for
+# the citation network). This section serves a different need: giving every
+# reference — including the extra-corpus works that carry most of the coupling
+# signal — a single shared identity so bibliographic coupling and co-citation
+# hold across merged sources.
+#
+# The canonical key of a reference is its normalized DOI whenever one can be
+# derived, else the reference's native token kept verbatim (so it still couples
+# within its own source's id space). Because the DOI is the shared key, the
+# coupling basis is independent of which source won the merge.
+#
+# Per reference token:
+#   * OpenAlex work id -> DOI from the ``Wxxxx -> DOI`` table, which is seeded
+#     for free from the corpus rows' own id + doi (covers intra-corpus refs),
+#     extended from a persistent CSV cache, and — only for extra-corpus ids
+#     still missing — resolved once via the OpenAlex API and cached. No DOI on
+#     record -> keep the Wxxxx token.
+#   * raw string carrying a DOI (WoS / Scopus) -> that normalized DOI.
+#   * bare DOI -> normalized.
+#   * anything else -> kept verbatim.
+
+_OPENALEX_ID_RE = re.compile(r'(?:https?://openalex\.org/)?(W\d+)$', re.IGNORECASE)
+_DOI_PREFIX_RE  = re.compile(r'^\s*(?:https?://)?(?:dx\.)?doi\.org/', re.IGNORECASE)
+_BARE_DOI_RE    = re.compile(r'^10\.\d{4,9}/\S+$')
+
+_CACHE_COLS = ('openalex_id', 'doi')   # persistent Wxxxx -> DOI cache schema
+_ID_CHUNK   = 50                       # OpenAlex OR-filter cap for one `|` list
+
+
+def _as_openalex_id(token) -> Optional[str]:
+    """Return the bare OpenAlex work id (``W\\d+``) of *token*, or None."""
+    if not isinstance(token, str):
+        return None
+    m = _OPENALEX_ID_RE.match(token.strip())
+    return m.group(1).upper() if m else None
+
+
+def _normalize_doi_value(doi) -> Optional[str]:
+    """Canonicalize a single DOI: strip the doi.org prefix, lowercase, trim.
+    Returns None for empty / non-DOI input."""
+    if not isinstance(doi, str) or not doi.strip():
+        return None
+    d = _DOI_PREFIX_RE.sub('', doi.strip()).lower().rstrip('.,;')
+    return d or None
+
+
+def _canonical_key(token: str, table: Dict[str, Optional[str]]) -> str:
+    """Map one reference token to its canonical key (see section header)."""
+    tok = token.strip()
+
+    wid = _as_openalex_id(tok)
+    if wid is not None:
+        doi = table.get(wid)
+        return doi if doi else tok       # keep the Wxxxx token when no DOI known
+
+    doi = _extract_ref_doi(tok)          # DOI embedded in a raw citation string
+    if doi:
+        return _normalize_doi_value(doi) or tok
+
+    if _BARE_DOI_RE.match(tok.lower()):  # already a bare DOI
+        return _normalize_doi_value(tok) or tok
+
+    return tok
+
+
+# ---- Wxxxx -> DOI table ----------------------------------------------------
+
+def seed_table_from_dataframe(df: pd.DataFrame,
+                              id_col: str = ID, doi_col: str = DOI) -> Dict[str, str]:
+    """Build a ``{Wxxxx: doi}`` table for free from the corpus rows.
+
+    Every row whose ``id`` is an OpenAlex work id and that carries a DOI yields
+    one entry — this covers all references pointing at documents inside the
+    corpus, with no API call.
+    """
+    table: Dict[str, str] = {}
+    if id_col not in df.columns or doi_col not in df.columns:
+        return table
+    for id_, doi in zip(df[id_col], df[doi_col]):
+        wid = _as_openalex_id(id_)
+        if wid is None:
+            continue
+        norm = _normalize_doi_value(doi)
+        if norm:
+            table[wid] = norm
+    return table
+
+
+def load_cache(path: Optional[str]) -> Dict[str, Optional[str]]:
+    """Load the persistent ``Wxxxx -> DOI`` CSV cache into a dict.
+
+    A blank ``doi`` cell means "resolved, but the work has no DOI" (stored as
+    None) so it is not re-queried. Missing / unreadable file -> empty table.
+    """
+    if not path:
+        return {}
+    try:
+        cache = pd.read_csv(path, dtype=str)
+    except (FileNotFoundError, OSError, pd.errors.EmptyDataError):
+        return {}
+    table: Dict[str, Optional[str]] = {}
+    for wid, doi in zip(cache.get('openalex_id', []), cache.get('doi', [])):
+        w = _as_openalex_id(wid)
+        if w is not None:
+            table[w] = doi if isinstance(doi, str) and doi.strip() else None
+    return table
+
+
+def save_cache(path: Optional[str], table: Dict[str, Optional[str]]) -> None:
+    """Write the whole ``Wxxxx -> DOI`` table to the CSV cache (None -> blank)."""
+    if not path:
+        return
+    rows = [{'openalex_id': wid, 'doi': doi or ''} for wid, doi in sorted(table.items())]
+    pd.DataFrame(rows, columns=_CACHE_COLS).to_csv(path, index=False)
+
+
+# ---- Extra-corpus resolution via the OpenAlex API --------------------------
+
+def resolve_ids_via_openalex(ids: Iterable[str], client,
+                             chunk: int = _ID_CHUNK) -> Dict[str, Optional[str]]:
+    """Resolve OpenAlex work ids to DOIs in batches of *chunk* via ``client``.
+
+    Returns ``{Wxxxx: doi_or_None}`` for every requested id. Ids the API does
+    not return are mapped to None, so they are cached as "no DOI on record" and
+    not queried again.
+    """
+    ids = [w for w in dict.fromkeys(_as_openalex_id(i) for i in ids) if w]
+    out: Dict[str, Optional[str]] = {}
+    for start in range(0, len(ids), chunk):
+        batch = ids[start:start + chunk]
+        filt = 'openalex_id:' + '|'.join(f'https://openalex.org/{w}' for w in batch)
+        page = client._fetch_page({'filter': filt, 'select': 'id,doi', 'per-page': chunk})
+        for rec in page.get('results', []):
+            wid = _as_openalex_id(rec.get('id'))
+            if wid is not None:
+                out[wid] = _normalize_doi_value(rec.get('doi'))
+        for w in batch:                  # ids not returned -> record as None
+            out.setdefault(w, None)
+    return out
+
+
+# ---- Public API ------------------------------------------------------------
+
+def _openalex_ref_ids(df: pd.DataFrame, ref_col: str = REFS) -> Set[str]:
+    """All distinct OpenAlex work ids appearing in the references column."""
+    ids: Set[str] = set()
+    for val in df[ref_col]:
+        if not isinstance(val, str):
+            continue
+        for tok in val.split(';'):
+            wid = _as_openalex_id(tok)
+            if wid is not None:
+                ids.add(wid)
+    return ids
+
+
+def _has_bridgeable_dois(df: pd.DataFrame, ref_col: str = REFS) -> bool:
+    """True if any reference is a DOI-bearing token that is *not* an OpenAlex id.
+
+    Resolving extra-corpus OpenAlex ids to DOIs only bridges anything when
+    another source contributes references already expressed as DOIs (WoS /
+    Scopus strings, or bare DOIs). On a pure-OpenAlex corpus there is nothing to
+    bridge to, so the API step is pure cost with no coupling gain and is skipped.
+    """
+    for val in df[ref_col]:
+        if not isinstance(val, str):
+            continue
+        for tok in val.split(';'):
+            tok = tok.strip()
+            if not tok or _as_openalex_id(tok) is not None:
+                continue
+            if _extract_ref_doi(tok) or _BARE_DOI_RE.match(tok.lower()):
+                return True
+    return False
+
+
+def add_reference_keys(df: pd.DataFrame, table: Dict[str, Optional[str]],
+                       ref_col: str = REFS,
+                       out_col: str = 'reference_keys') -> pd.DataFrame:
+    """Add *out_col*: each doc's references remapped to canonical keys."""
+    df = df.copy()
+    keyed: List[Optional[str]] = []
+    for val in df[ref_col]:
+        if not isinstance(val, str) or not val.strip():
+            keyed.append(None)
+            continue
+        keys = [_canonical_key(tok, table) for tok in val.split(';') if tok.strip()]
+        keyed.append('; '.join(keys) if keys else None)
+    df[out_col] = keyed
+    return df
+
+
+def complete_reference_keys(df: pd.DataFrame,
+                            cache_path: Optional[str] = None,
+                            client=None,
+                            resolve_external: bool = True,
+                            ref_col: str = REFS,
+                            out_col: str = 'reference_keys') -> pd.DataFrame:
+    """Compute the canonical ``reference_keys`` column for *df*.
+
+    1. Seed the ``Wxxxx -> DOI`` table from the corpus rows (free) and the
+       persistent CSV cache.
+    2. If *resolve_external* and *client* is given, resolve the OpenAlex ids
+       still missing (extra-corpus works) via the API and update the cache.
+    3. Remap every reference to its canonical key into *out_col*.
+
+    *client* is an :class:`OpenAlexClient`; when None (or *resolve_external* is
+    False) only the free, offline mapping is applied — extra-corpus OpenAlex ids
+    without a cached DOI keep their ``Wxxxx`` token.
+    """
+    table: Dict[str, Optional[str]] = load_cache(cache_path)
+    table.update(seed_table_from_dataframe(df))   # corpus rows override the cache
+
+    # Only pay for API resolution when another source contributes DOI-bearing
+    # references to bridge to; a pure-OpenAlex corpus needs none (its Wxxxx are
+    # already a consistent key space).
+    if resolve_external and client is not None and _has_bridgeable_dois(df, ref_col):
+        missing = _openalex_ref_ids(df, ref_col=ref_col) - table.keys()
+        if missing:
+            table.update(resolve_ids_via_openalex(missing, client))
+            save_cache(cache_path, table)
+
+    return add_reference_keys(df, table, ref_col=ref_col, out_col=out_col)
