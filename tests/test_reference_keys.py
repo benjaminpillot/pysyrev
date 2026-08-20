@@ -42,13 +42,15 @@ class TestTokenNormalization:
 
 class TestSeedTable:
 
-    def test_seeds_only_openalex_rows_with_doi(self):
+    def test_seeds_every_source_row_with_doi(self):
         df = pd.DataFrame({
             "id":  ["https://openalex.org/W1", "https://openalex.org/W2", "WOS:000123"],
             "doi": ["https://doi.org/10.1000/AAA", None, "10.1000/ccc"],
         })
-        # W2 has no DOI, WOS row is not an OpenAlex id -> only W1 is seeded.
-        assert R.seed_table_from_dataframe(df) == {"W1": "10.1000/aaa"}
+        # Agnostic seed: every row with a DOI is keyed by its id (OpenAlex ids
+        # normalized to bare Wxxxx, other schemes kept verbatim). W2 has no DOI.
+        assert R.seed_table_from_dataframe(df) == {
+            "W1": "10.1000/aaa", "WOS:000123": "10.1000/ccc"}
 
 
 class TestCanonicalMapping:
@@ -124,6 +126,11 @@ class _FakeOpenAlexClient:
         return {"results": results}
 
 
+def _oa_resolvers(client):
+    """Wire a fake client into the {scheme: ids->{id:doi}} resolver map."""
+    return {"openalex": lambda ids: R.resolve_ids_via_openalex(ids, client)}
+
+
 class TestApiResolution:
 
     def test_resolve_and_record_missing_as_none(self):
@@ -152,7 +159,7 @@ class TestCompleteReferenceKeys:
         })
         # W1 is seeded from the corpus (free); W999 must come from the API.
         client = _FakeOpenAlexClient({"W999": "10.9999/ext"})
-        out = R.complete_reference_keys(df, cache_path=cache, client=client)
+        out = R.complete_reference_keys(df, cache_path=cache, resolvers=_oa_resolvers(client))
         keys = out["reference_keys"].tolist()
         assert keys[0] == "10.1000/aaa; 10.9999/ext"
         assert keys[1] == "10.1000/aaa"
@@ -168,7 +175,7 @@ class TestCompleteReferenceKeys:
             "references": ["https://openalex.org/W1; https://openalex.org/W999"],
         })
         client = _FakeOpenAlexClient({"W999": "10.9999/ext"})
-        out = R.complete_reference_keys(df, cache_path=None, client=client)
+        out = R.complete_reference_keys(df, cache_path=None, resolvers=_oa_resolvers(client))
         assert client.calls == 0
         assert out["reference_keys"].tolist() == ["10.1000/aaa; https://openalex.org/W999"]
 
@@ -184,7 +191,7 @@ class TestCompleteReferenceKeys:
             ],
         })
         client = _FakeOpenAlexClient({"W999": "10.9999/ext"})
-        out = R.complete_reference_keys(df, cache_path=None, client=client)
+        out = R.complete_reference_keys(df, cache_path=None, resolvers=_oa_resolvers(client))
         assert client.calls == 1
         assert out["reference_keys"].tolist() == ["10.9999/ext", "10.1000/zzz"]
 
@@ -194,7 +201,19 @@ class TestCompleteReferenceKeys:
             "doi": ["10.1000/aaa"],
             "references": ["https://openalex.org/W999"],
         })
-        out = R.complete_reference_keys(df, cache_path=None, client=None,
-                                        resolve_external=False)
-        # No client -> extra-corpus id keeps its raw token.
+        out = R.complete_reference_keys(df, cache_path=None, resolve_external=False)
+        # No resolver -> extra-corpus id keeps its raw token.
         assert out["reference_keys"].tolist() == ["https://openalex.org/W999"]
+
+    def test_no_resolver_for_scheme_keeps_token_even_when_bridgeable(self, tmp_path):
+        # A WoS DOI is present (bridgeable) but no OpenAlex resolver is wired in
+        # (e.g. no API credentials): the extra-corpus Wxxxx keeps its token, the
+        # WoS DOI still maps. Agnostic: a scheme without a resolver is just skipped.
+        df = pd.DataFrame({
+            "id":  ["https://openalex.org/W1", "WOS:1"],
+            "doi": ["10.1000/aaa", "10.1000/wos"],
+            "references": ["https://openalex.org/W999", "Author, DOI 10.1000/zzz"],
+        })
+        out = R.complete_reference_keys(df, cache_path=None, resolvers={})
+        assert out["reference_keys"].tolist() == [
+            "https://openalex.org/W999", "10.1000/zzz"]

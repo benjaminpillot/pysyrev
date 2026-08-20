@@ -38,7 +38,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Callable, Dict, Iterable, List, Optional, Set
 
 import numpy as np
 import pandas as pd
@@ -358,26 +358,30 @@ def resolve_references(
 # signal — a single shared identity so bibliographic coupling and co-citation
 # hold across merged sources.
 #
-# The canonical key of a reference is its normalized DOI whenever one can be
+# The canonical key of a reference is its normalized **DOI** whenever one can be
 # derived, else the reference's native token kept verbatim (so it still couples
-# within its own source's id space). Because the DOI is the shared key, the
-# coupling basis is independent of which source won the merge.
+# within its own id space). Because the DOI is the shared key, the coupling basis
+# is independent of which source won the merge, and of which sources are used.
 #
-# Per reference token:
-#   * OpenAlex work id -> DOI from the ``Wxxxx -> DOI`` table, which is seeded
-#     for free from the corpus rows' own id + doi (covers intra-corpus refs),
-#     extended from a persistent CSV cache, and — only for extra-corpus ids
-#     still missing — resolved once via the OpenAlex API and cached. No DOI on
-#     record -> keep the Wxxxx token.
-#   * raw string carrying a DOI (WoS / Scopus) -> that normalized DOI.
-#   * bare DOI -> normalized.
+# The design is source-agnostic. Two of the three ways a token gets a DOI are
+# generic; only the third — turning an *opaque, extra-corpus* id into a DOI —
+# needs source-specific knowledge, isolated in the ``_ID_SCHEMES`` registry:
+#   * the token is (or points at) a corpus document -> its DOI, looked up in the
+#     ``id -> DOI`` table seeded for free from every corpus row's id + doi,
+#     whatever the source (generic).
+#   * the token carries a DOI (WoS / Scopus raw string, bare DOI, doi.org URL)
+#     -> that normalized DOI (generic).
+#   * the token is an opaque id of a *known scheme* (OpenAlex ``Wxxxx`` today;
+#     Scopus EID / PMID could be added) pointing outside the corpus -> resolved
+#     once to a DOI by that scheme's resolver and cached. No DOI on record, or no
+#     resolver available -> the token is kept verbatim.
 #   * anything else -> kept verbatim.
 
 _OPENALEX_ID_RE = re.compile(r'(?:https?://openalex\.org/)?(W\d+)$', re.IGNORECASE)
 _DOI_PREFIX_RE  = re.compile(r'^\s*(?:https?://)?(?:dx\.)?doi\.org/', re.IGNORECASE)
 _BARE_DOI_RE    = re.compile(r'^10\.\d{4,9}/\S+$')
 
-_CACHE_COLS = ('openalex_id', 'doi')   # persistent Wxxxx -> DOI cache schema
+_CACHE_COLS = ('reference_id', 'doi')  # persistent id -> DOI cache schema
 _ID_CHUNK   = 50                       # OpenAlex OR-filter cap for one `|` list
 
 
@@ -387,6 +391,41 @@ def _as_openalex_id(token) -> Optional[str]:
         return None
     m = _OPENALEX_ID_RE.match(token.strip())
     return m.group(1).upper() if m else None
+
+
+# Reference-id schemes: scheme name -> a normalizer that returns the token's
+# canonical id form if it belongs to the scheme, else None. This is the only
+# source-specific knowledge in this section; a matching resolver (built by the
+# caller, e.g. from API credentials) turns those canonical ids into DOIs.
+_ID_SCHEMES: Dict[str, Callable[[object], Optional[str]]] = {
+    'openalex': _as_openalex_id,
+}
+
+
+def _normalize_id(token) -> Optional[str]:
+    """Canonical id of *token* if it matches any known scheme, else None."""
+    if not isinstance(token, str):
+        return None
+    for normalize in _ID_SCHEMES.values():
+        nid = normalize(token)
+        if nid is not None:
+            return nid
+    return None
+
+
+def _id_key(token) -> Optional[str]:
+    """Table key for *token*: its canonical scheme id, else the raw token.
+
+    Falling back to the raw token means references expressed as a source's native
+    id still match a corpus row keyed by that same id, even for a scheme we do not
+    otherwise recognise.
+    """
+    if not isinstance(token, str):
+        return None
+    tok = token.strip()
+    if not tok:
+        return None
+    return _normalize_id(tok) or tok
 
 
 def _normalize_doi_value(doi) -> Optional[str]:
@@ -402,10 +441,9 @@ def _canonical_key(token: str, table: Dict[str, Optional[str]]) -> str:
     """Map one reference token to its canonical key (see section header)."""
     tok = token.strip()
 
-    wid = _as_openalex_id(tok)
-    if wid is not None:
-        doi = table.get(wid)
-        return doi if doi else tok       # keep the Wxxxx token when no DOI known
+    hit = table.get(_id_key(tok))        # points at a known / resolved id?
+    if hit:
+        return hit
 
     doi = _extract_ref_doi(tok)          # DOI embedded in a raw citation string
     if doi:
@@ -417,31 +455,29 @@ def _canonical_key(token: str, table: Dict[str, Optional[str]]) -> str:
     return tok
 
 
-# ---- Wxxxx -> DOI table ----------------------------------------------------
+# ---- id -> DOI table -------------------------------------------------------
 
 def seed_table_from_dataframe(df: pd.DataFrame,
                               id_col: str = ID, doi_col: str = DOI) -> Dict[str, str]:
-    """Build a ``{Wxxxx: doi}`` table for free from the corpus rows.
+    """Build an ``{id: doi}`` table for free from the corpus rows.
 
-    Every row whose ``id`` is an OpenAlex work id and that carries a DOI yields
-    one entry — this covers all references pointing at documents inside the
-    corpus, with no API call.
+    Every row that carries a DOI yields one entry, keyed by its id (whatever the
+    source) — this covers all references pointing at documents inside the corpus,
+    with no API call.
     """
     table: Dict[str, str] = {}
     if id_col not in df.columns or doi_col not in df.columns:
         return table
     for id_, doi in zip(df[id_col], df[doi_col]):
-        wid = _as_openalex_id(id_)
-        if wid is None:
-            continue
+        key = _id_key(id_)
         norm = _normalize_doi_value(doi)
-        if norm:
-            table[wid] = norm
+        if key and norm:
+            table[key] = norm
     return table
 
 
 def load_cache(path: Optional[str]) -> Dict[str, Optional[str]]:
-    """Load the persistent ``Wxxxx -> DOI`` CSV cache into a dict.
+    """Load the persistent ``id -> DOI`` CSV cache into a dict.
 
     A blank ``doi`` cell means "resolved, but the work has no DOI" (stored as
     None) so it is not re-queried. Missing / unreadable file -> empty table.
@@ -453,30 +489,31 @@ def load_cache(path: Optional[str]) -> Dict[str, Optional[str]]:
     except (FileNotFoundError, OSError, pd.errors.EmptyDataError):
         return {}
     table: Dict[str, Optional[str]] = {}
-    for wid, doi in zip(cache.get('openalex_id', []), cache.get('doi', [])):
-        w = _as_openalex_id(wid)
-        if w is not None:
-            table[w] = doi if isinstance(doi, str) and doi.strip() else None
+    for rid, doi in zip(cache.get('reference_id', []), cache.get('doi', [])):
+        key = _id_key(rid)
+        if key is not None:
+            table[key] = doi if isinstance(doi, str) and doi.strip() else None
     return table
 
 
 def save_cache(path: Optional[str], table: Dict[str, Optional[str]]) -> None:
-    """Write the whole ``Wxxxx -> DOI`` table to the CSV cache (None -> blank)."""
+    """Write the whole ``id -> DOI`` table to the CSV cache (None -> blank)."""
     if not path:
         return
-    rows = [{'openalex_id': wid, 'doi': doi or ''} for wid, doi in sorted(table.items())]
+    rows = [{'reference_id': rid, 'doi': doi or ''} for rid, doi in sorted(table.items())]
     pd.DataFrame(rows, columns=_CACHE_COLS).to_csv(path, index=False)
 
 
-# ---- Extra-corpus resolution via the OpenAlex API --------------------------
+# ---- Extra-corpus resolution (source-specific resolvers) -------------------
 
 def resolve_ids_via_openalex(ids: Iterable[str], client,
                              chunk: int = _ID_CHUNK) -> Dict[str, Optional[str]]:
-    """Resolve OpenAlex work ids to DOIs in batches of *chunk* via ``client``.
+    """OpenAlex resolver: map OpenAlex work ids to DOIs in batches of *chunk*.
 
     Returns ``{Wxxxx: doi_or_None}`` for every requested id. Ids the API does
     not return are mapped to None, so they are cached as "no DOI on record" and
-    not queried again.
+    not queried again. This is the ``'openalex'`` entry of the scheme registry;
+    the caller wires it up with a live :class:`OpenAlexClient`.
     """
     ids = [w for w in dict.fromkeys(_as_openalex_id(i) for i in ids) if w]
     out: Dict[str, Optional[str]] = {}
@@ -495,33 +532,35 @@ def resolve_ids_via_openalex(ids: Iterable[str], client,
 
 # ---- Public API ------------------------------------------------------------
 
-def _openalex_ref_ids(df: pd.DataFrame, ref_col: str = REFS) -> Set[str]:
-    """All distinct OpenAlex work ids appearing in the references column."""
+def _scheme_ref_ids(df: pd.DataFrame, normalize: Callable[[object], Optional[str]],
+                    ref_col: str = REFS) -> Set[str]:
+    """Distinct canonical ids of one scheme appearing in the references column."""
     ids: Set[str] = set()
     for val in df[ref_col]:
         if not isinstance(val, str):
             continue
         for tok in val.split(';'):
-            wid = _as_openalex_id(tok)
-            if wid is not None:
-                ids.add(wid)
+            nid = normalize(tok)
+            if nid is not None:
+                ids.add(nid)
     return ids
 
 
 def _has_bridgeable_dois(df: pd.DataFrame, ref_col: str = REFS) -> bool:
-    """True if any reference is a DOI-bearing token that is *not* an OpenAlex id.
+    """True if any reference is a DOI-bearing token that is *not* a known id.
 
-    Resolving extra-corpus OpenAlex ids to DOIs only bridges anything when
-    another source contributes references already expressed as DOIs (WoS /
-    Scopus strings, or bare DOIs). On a pure-OpenAlex corpus there is nothing to
-    bridge to, so the API step is pure cost with no coupling gain and is skipped.
+    Resolving extra-corpus ids to DOIs only bridges anything when another source
+    contributes references already expressed as DOIs (WoS / Scopus strings, or
+    bare DOIs). When the whole corpus references only same-scheme ids (e.g. a
+    pure-OpenAlex run) there is nothing to bridge to, so the API step is pure cost
+    with no coupling gain and is skipped.
     """
     for val in df[ref_col]:
         if not isinstance(val, str):
             continue
         for tok in val.split(';'):
             tok = tok.strip()
-            if not tok or _as_openalex_id(tok) is not None:
+            if not tok or _normalize_id(tok) is not None:
                 continue
             if _extract_ref_doi(tok) or _BARE_DOI_RE.match(tok.lower()):
                 return True
@@ -546,32 +585,41 @@ def add_reference_keys(df: pd.DataFrame, table: Dict[str, Optional[str]],
 
 def complete_reference_keys(df: pd.DataFrame,
                             cache_path: Optional[str] = None,
-                            client=None,
+                            resolvers: Optional[Dict[str, Callable]] = None,
                             resolve_external: bool = True,
                             ref_col: str = REFS,
                             out_col: str = 'reference_keys') -> pd.DataFrame:
     """Compute the canonical ``reference_keys`` column for *df*.
 
-    1. Seed the ``Wxxxx -> DOI`` table from the corpus rows (free) and the
-       persistent CSV cache.
-    2. If *resolve_external* and *client* is given, resolve the OpenAlex ids
-       still missing (extra-corpus works) via the API and update the cache.
+    1. Seed the ``id -> DOI`` table for free from the corpus rows (any source)
+       and from the persistent CSV cache.
+    2. If *resolve_external*, for each id scheme with a supplied resolver, resolve
+       the extra-corpus ids of that scheme still missing a DOI, and cache them.
     3. Remap every reference to its canonical key into *out_col*.
 
-    *client* is an :class:`OpenAlexClient`; when None (or *resolve_external* is
-    False) only the free, offline mapping is applied — extra-corpus OpenAlex ids
-    without a cached DOI keep their ``Wxxxx`` token.
+    *resolvers* maps an ``_ID_SCHEMES`` name (e.g. ``'openalex'``) to a callable
+    ``ids -> {id: doi_or_None}`` — the caller builds these from API credentials
+    (see :func:`resolve_ids_via_openalex`). When empty (or *resolve_external* is
+    False) only the free, offline mapping is applied: extra-corpus ids without a
+    cached DOI keep their native token.
     """
+    resolvers = resolvers or {}
     table: Dict[str, Optional[str]] = load_cache(cache_path)
     table.update(seed_table_from_dataframe(df))   # corpus rows override the cache
 
     # Only pay for API resolution when another source contributes DOI-bearing
-    # references to bridge to; a pure-OpenAlex corpus needs none (its Wxxxx are
-    # already a consistent key space).
-    if resolve_external and client is not None and _has_bridgeable_dois(df, ref_col):
-        missing = _openalex_ref_ids(df, ref_col=ref_col) - table.keys()
-        if missing:
-            table.update(resolve_ids_via_openalex(missing, client))
+    # references to bridge to (see _has_bridgeable_dois).
+    if resolve_external and resolvers and _has_bridgeable_dois(df, ref_col):
+        changed = False
+        for name, resolve in resolvers.items():
+            normalize = _ID_SCHEMES.get(name)
+            if normalize is None:
+                continue
+            missing = _scheme_ref_ids(df, normalize, ref_col=ref_col) - table.keys()
+            if missing:
+                table.update(resolve(missing))
+                changed = True
+        if changed:
             save_cache(cache_path, table)
 
     return add_reference_keys(df, table, ref_col=ref_col, out_col=out_col)

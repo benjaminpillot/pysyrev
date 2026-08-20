@@ -9,7 +9,8 @@ from pysyrev.core.bib import (fetch_citations, generate_bib, generate_oa_bib,
 from pysyrev.core.mappers import from_openalex_result, from_wos_result
 from pysyrev.core.references import (resolve_references as _resolve_references,
                                      flag_shared_unresolved_references as _flag_unresolved,
-                                     complete_reference_keys as _complete_reference_keys)
+                                     complete_reference_keys as _complete_reference_keys,
+                                     resolve_ids_via_openalex as _resolve_ids_via_openalex)
 from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
 from pysyrev.core.clean import clean_doi, clean_abstracts
@@ -308,18 +309,19 @@ class BibDataset:
         )
         return self
 
-    def complete_reference_keys(self, cache_path=None, client=None,
+    def complete_reference_keys(self, cache_path=None, resolvers=None,
                                 resolve_external=True):
         """Add a ``reference_keys`` column: references remapped to canonical
         DOI keys (a source-agnostic coupling basis).
 
-        See :func:`pysyrev.core.references.complete_reference_keys`. Mutates the
+        See :func:`pysyrev.core.references.complete_reference_keys`. *resolvers*
+        maps an id-scheme name to an ``ids -> {id: doi}`` callable. Mutates the
         underlying dataset in place and returns ``self``.
         """
         self._bib_dataset = _complete_reference_keys(
             self._bib_dataset,
             cache_path=cache_path,
-            client=client,
+            resolvers=resolvers,
             resolve_external=resolve_external,
         )
         return self
@@ -435,23 +437,13 @@ class BibDataset:
         # Canonical reference keys: remap every reference onto a shared DOI space
         # so bibliographic coupling/co-citation hold across the merged sources,
         # independent of merge order. Intra-corpus and DOI-bearing references map
-        # for free; extra-corpus OpenAlex ids are resolved via the OpenAlex API
-        # (credentials reused from open_alex.api) and cached to disk.
+        # for free; extra-corpus opaque ids are resolved per id scheme by the
+        # resolvers built below (OpenAlex today) and cached to disk.
         cfg_rk = config.reference_keys
         if cfg_rk is not None:
-            client = None
-            oa = config.open_alex
-            has_oa_api = isinstance(oa, OpenAlexSourceConfig) and oa.api is not None
-            if cfg_rk.resolve_external and has_oa_api:
-                client = OpenAlexClient(api_key=oa.api.api_key, email=oa.api.email)
-            elif cfg_rk.resolve_external:
-                warnings.warn(
-                    "reference_keys.resolve_external is set but no OpenAlex API "
-                    "credentials are available (open_alex.api); extra-corpus "
-                    "OpenAlex ids will keep their raw Wxxxx token instead of a DOI.",
-                    UserWarning, stacklevel=2)
+            resolvers = cls._reference_key_resolvers(config) if cfg_rk.resolve_external else {}
             merged = merged.complete_reference_keys(
-                cache_path=cfg_rk.cache, client=client,
+                cache_path=cfg_rk.cache, resolvers=resolvers,
                 resolve_external=cfg_rk.resolve_external)
 
         # resolve_references runs before extract_documents so that:
@@ -501,6 +493,24 @@ class BibDataset:
             merged.to_csv(config.export.dataset)
 
         return merged
+
+    @staticmethod
+    def _reference_key_resolvers(config: BibConfig) -> dict:
+        """Build the ``{id_scheme: ids -> {id: doi}}`` resolvers for
+        :meth:`complete_reference_keys` from the configured sources.
+
+        Each id scheme that can resolve extra-corpus ids to DOIs registers here
+        from its own credentials. OpenAlex is the only scheme implemented today;
+        further sources (Scopus, PubMed…) would add their resolver the same way.
+        A scheme whose credentials are missing is simply absent — those ids then
+        keep their native token.
+        """
+        resolvers: dict = {}
+        oa = config.open_alex
+        if isinstance(oa, OpenAlexSourceConfig) and oa.api is not None:
+            client = OpenAlexClient(api_key=oa.api.api_key, email=oa.api.email)
+            resolvers['openalex'] = partial(_resolve_ids_via_openalex, client=client)
+        return resolvers
 
     @classmethod
     def _from_source_config(cls, config) -> 'BibDataset':

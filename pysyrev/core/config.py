@@ -262,13 +262,15 @@ class ReferenceKeysConfig(ConfigField):
         Path to the persistent ``Wxxxx -> DOI`` CSV table. It accumulates across
         runs; ``None`` = compute in memory only, no persistence.
     ``resolve_external``
-        When True, OpenAlex ids that point at extra-corpus works (whose DOI is
-        not already known from the corpus rows or the cache) are resolved once
-        via the OpenAlex API and cached. Needs OpenAlex API credentials (reused
-        from ``open_alex.api``). When False, only the free offline mapping runs.
-        The API step is skipped automatically when the corpus has no DOI-bearing
-        references from another source to bridge to (e.g. a pure-OpenAlex run),
-        so the block is safe to leave enabled regardless of the sources used.
+        When True, references that are opaque source ids pointing at extra-corpus
+        works (whose DOI is not already known from the corpus rows or the cache)
+        are resolved once to a DOI by that id scheme's resolver and cached. Each
+        scheme uses its own credentials — OpenAlex (reused from ``open_alex.api``)
+        is the only one implemented today; a scheme without credentials is
+        skipped and its ids keep their native token. When False, only the free
+        offline mapping runs. The resolution step is skipped automatically when
+        the corpus has no DOI-bearing references from another source to bridge to
+        (e.g. a pure-OpenAlex run), so the block is safe to leave enabled.
     """
     cache:            Union[None, str] = None
     resolve_external: bool             = True
