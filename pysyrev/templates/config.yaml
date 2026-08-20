@@ -60,20 +60,23 @@ bib:
     #     publication_year: '2015-2024'
     #     type: article
     #   cache_dir: /path/to/oa_cache/
-    # ---- Abstract completion (opt-in) --------------------------------------
-    # OpenAlex has no abstract for a share of its records. Add this block to
-    # recover those abstracts from Web of Science (looked up by DOI) before
-    # no-abstract rows are dropped. Its presence enables completion; omit it to
-    # skip. Only the abstract is filled — the OpenAlex referenced_works IDs used
-    # for coupling networks are left intact. Requires a WoS Expanded API key.
-    # Further completion providers (e.g. scopus_completion) can be added here
-    # later the same way.
-    # wos_completion:
-    #   api_key: ${WOS_API_KEY}
-    #   cache_dir: /path/to/wos_completion_cache/   # omit to disable caching
 
   # scopus:
   # pubmed:
+
+  # ---- Abstract completion (opt-in, corpus-level) ------------------------
+  # Any source can leave abstracts missing (OpenAlex notably), and no-abstract
+  # rows are dropped by cleaning. Add steps to recover those abstracts from an
+  # external provider (looked up by DOI) on the merged corpus, before the drop.
+  # A list of provider steps, run in order — a later provider only fills
+  # abstracts still missing after the earlier ones. Only the abstract is filled;
+  # references/IDs used for coupling networks are left intact. `provider: wos` is
+  # the only backend today (needs a WoS Expanded API key); scopus / pubmed can
+  # register their own the same way.
+  # abstract_completion:
+  #   - provider: wos
+  #     api_key: ${WOS_API_KEY}
+  #     cache_dir: /path/to/wos_completion_cache/   # omit to disable caching
 
   # ---- Duplicate removal across sources (defaults shown) -----------------
   # merge:

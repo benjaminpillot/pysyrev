@@ -34,12 +34,19 @@ class BibDataset:
     _bib_dataset = None
     _cross_id_map: dict  # {dropped_id: kept_id} built during merge
 
-    # Completion strategies available for this source, keyed by the config
-    # sub-block (attribute on the source config) that enables them. Each value
-    # is ``(provider_label, factory)`` where ``factory(cfg)`` turns that config
-    # block into a ``(dataframe, show_progress) -> int`` completer. Empty on the
-    # base class; subclasses declare the providers they support.
-    _COMPLETERS: dict = {}
+    # Abstract-completion backends, keyed by the ``provider`` name used in a
+    # ``bib.abstract_completion`` entry. Each value is ``(provider_label,
+    # factory)`` where ``factory(cfg)`` turns an AbstractCompletionConfig into a
+    # ``(dataframe, show_progress) -> int`` completer. Completion is corpus-level,
+    # so the registry lives on the base class. Add a backend here to enable it —
+    # from_config needs no change.
+    _COMPLETERS: dict = {
+        "wos": ("WoS", lambda cfg: partial(
+            complete_abstracts_from_wos,
+            api_key=cfg.api_key,
+            session_file=f"{cfg.cache_dir}/session.json" if cfg.cache_dir else None,
+        )),
+    }
 
     def __init__(self, bibfile=None, bib_dataset=None):
         """
@@ -185,18 +192,23 @@ class BibDataset:
             print(f"{provider} completion: recovered {recovered} missing abstract(s)")
         return self
 
-    def apply_completions(self, source_config, verbose=True):
-        """Apply every completion sub-block present on *source_config*.
+    def apply_completions(self, completions, verbose=True):
+        """Run each abstract-completion step in *completions* on this dataset.
 
-        Iterates this class's ``_COMPLETERS`` registry: for each declared
-        provider whose config sub-block is set, build its completer and run it.
-        Absent sub-blocks are skipped. Returns self so it chains after
-        :meth:`from_config`.
+        *completions* is the ``bib.abstract_completion`` list
+        (:class:`AbstractCompletionConfig` entries). Each entry's ``provider`` is
+        looked up in the ``_COMPLETERS``
+        registry and its completer run in order, so a later provider only fills
+        abstracts still missing after the earlier ones. Must be called before
+        :meth:`clean_and_drop`, which drops no-abstract rows. Returns self.
         """
-        for attr, (provider, factory) in self._COMPLETERS.items():
-            cfg = getattr(source_config, attr, None)
-            if cfg:
-                self.complete_abstracts(factory(cfg), provider=provider, verbose=verbose)
+        for cfg in completions or []:
+            provider, factory = self._COMPLETERS.get(cfg.provider, (None, None))
+            if factory is None:
+                raise ValueError(
+                    f"Unknown completion provider {cfg.provider!r}; "
+                    f"available: {sorted(self._COMPLETERS)}")
+            self.complete_abstracts(factory(cfg), provider=provider, verbose=verbose)
         return self
 
     def fetch_citations(self):
@@ -388,14 +400,7 @@ class BibDataset:
         by_source: dict = {}
 
         if config.open_alex:
-            # Completion sub-blocks (e.g. wos_completion) enrich the OpenAlex
-            # records before merge/clean, so abstracts OpenAlex left bare are
-            # recovered rather than dropped as no-abstract rows. Only the
-            # abstract is touched; OpenAlex IDs are preserved. Which providers
-            # run is declared in OpenAlexDataset._COMPLETERS.
-            open_alex = OpenAlexDataset.from_config(config.open_alex)
-            open_alex.apply_completions(config.open_alex)
-            by_source['open_alex'] = open_alex
+            by_source['open_alex'] = OpenAlexDataset.from_config(config.open_alex)
         if config.wos:
             by_source['wos'] = WosDataset.from_config(config.wos)
         if config.scopus:
@@ -426,6 +431,14 @@ class BibDataset:
                 scorer                = _SCORER_MAP[cfg_merge.scorer],
             )
         )
+
+        # Corpus-level abstract completion: recover abstracts any source left
+        # bare (looked up by DOI from an external provider) before clean_and_drop
+        # drops no-abstract rows. Runs on the merged corpus, so it is source-
+        # agnostic and does not repeat lookups for deduplicated records. Only the
+        # abstract is filled; references/IDs used for coupling are preserved.
+        if config.abstract_completion:
+            merged = merged.apply_completions(config.abstract_completion)
 
         cfg_clean = config.clean
         merged = merged.clean_and_drop(
@@ -566,17 +579,6 @@ class WosDataset(BibDataset):
 class OpenAlexDataset(BibDataset):
 
     _db = "scopus"
-
-    # Abstract-completion providers available for OpenAlex-sourced records:
-    # config sub-block -> (label, factory building a (df, show_progress) -> int
-    # completer). Add a provider here to enable it — from_config needs no change.
-    _COMPLETERS = {
-        "wos_completion": ("WoS", lambda cfg: partial(
-            complete_abstracts_from_wos,
-            api_key=cfg.api_key,
-            session_file=f"{cfg.cache_dir}/session.json" if cfg.cache_dir else None,
-        )),
-    }
 
     @classmethod
     def from_config(cls, config: OpenAlexSourceConfig) -> 'OpenAlexDataset':

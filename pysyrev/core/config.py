@@ -136,27 +136,33 @@ class WosSourceConfig(ConfigField):
 
 
 @dataclass
-class WosCompletionConfig(ConfigField):
-    """Complete a source's missing abstracts from Web of Science, by DOI.
+class AbstractCompletionConfig(ConfigField):
+    """One abstract-completion step: recover missing abstracts from an external
+    provider, looked up by DOI.
 
-    Declared as a completion sub-block of a primary source (e.g. under
-    ``open_alex``). Its mere presence enables completion: any record the
-    primary source left without an abstract is looked up in WoS Expanded via
-    its DOI and the recovered abstract is filled in. Only the ``abstract``
-    column is touched — the primary source's references/IDs (e.g. OpenAlex
-    ``referenced_works``, used for coupling networks) are left intact. Omit the
-    whole block to skip completion. Requires a WoS Expanded API key.
+    Declared under ``bib.abstract_completion`` as a list — completion is
+    corpus-level, not tied to any one source, since any source can leave
+    abstracts missing. Each entry names a ``provider`` and its credentials.
+    Entries run in order on the merged corpus (before no-abstract rows are
+    dropped), so a later provider only fills abstracts still missing after the
+    earlier ones. Only the ``abstract`` column is touched — references/IDs used
+    for coupling networks are left intact.
+
+    ``provider`` selects the backend: ``wos`` is the only one implemented today;
+    ``scopus`` / ``pubmed`` would register their own backend the same way.
     """
-    api_key:   Union[None, str] = None   # typically `${WOS_API_KEY}`
-    cache_dir: Union[None, str] = None   # optional WoS session cache
+    provider:  Union[None, str] = None   # 'wos' today; 'scopus' / 'pubmed' planned
+    api_key:   Union[None, str] = None    # typically `${WOS_API_KEY}` etc.
+    cache_dir: Union[None, str] = None    # optional provider session cache
 
     def __post_init__(self):
         super().__post_init__()
+        if not self.provider:
+            raise ValueError(
+                "an abstract_completion entry needs a `provider:` (e.g. 'wos')")
         if not self.api_key:
             raise ValueError(
-                "wos_completion is set but no `api_key:` is given "
-                "(a WoS Expanded API key is required)"
-            )
+                f"abstract_completion provider {self.provider!r} needs an `api_key:`")
 
 
 @dataclass
@@ -179,13 +185,11 @@ class OpenAlexSourceConfig(ConfigField):
     """One OpenAlex source: either a file path, or an API config. Exactly
     one of `file` / `api` must be set.
 
-    Optional completion sub-blocks enrich the records this source returns from
-    other providers. ``wos_completion`` fills missing abstracts from Web of
-    Science; further providers (e.g. Scopus) can be added the same way."""
+    Abstract completion is no longer declared here: it is corpus-level, under
+    ``bib.abstract_completion`` (see :class:`AbstractCompletionConfig`)."""
     source:         str = 'file'  # 'file' or 'api'
     file:           Union[None, str] = None
     api:            Union[None, OpenAlexApiConfig] = None
-    wos_completion: Union[None, WosCompletionConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -197,9 +201,6 @@ class OpenAlexSourceConfig(ConfigField):
             raise ValueError("OpenAlex source is 'api' but no `api:` block is set")
         if self.source not in ('file', 'api'):
             raise ValueError(f"Unknown OpenAlex source {self.source!r}; expected 'file' or 'api'")
-        # Presence of the completion sub-block enables it; absence leaves it None.
-        if isinstance(self.wos_completion, dict):
-            self.wos_completion = WosCompletionConfig(**self.wos_completion)
 
 
 @dataclass
@@ -307,7 +308,8 @@ class BibConfig(ConfigField):
     extract:            ExtractConfig                              = None
     resolve_references: ResolveReferencesConfig                    = None
     merge:              MergeConfig                                = None
-    reference_keys:     Union[None, ReferenceKeysConfig]           = None
+    reference_keys:      Union[None, ReferenceKeysConfig]              = None
+    abstract_completion: Union[None, List[AbstractCompletionConfig]]   = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -355,6 +357,15 @@ class BibConfig(ConfigField):
         # Presence of the block enables the canonical-key step; absence = None.
         if isinstance(self.reference_keys, dict):
             self.reference_keys = ReferenceKeysConfig(**self.reference_keys)
+
+        # Corpus-level abstract completion: a list of provider steps run on the
+        # merged corpus. Presence enables it; absence leaves it None.
+        if self.abstract_completion is not None:
+            self.abstract_completion = [
+                c if isinstance(c, AbstractCompletionConfig)
+                else AbstractCompletionConfig(**c)
+                for c in self.abstract_completion
+            ]
 
 
 @dataclass
