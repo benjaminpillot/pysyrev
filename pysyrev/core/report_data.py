@@ -270,22 +270,63 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     color_labels = {t: _topic_label(t, topic_labels)
                     for t in set(topics.tolist()) if t != -1}
 
+    from pysyrev.core.references import (
+        _extract_ref_doi, _normalize_doi_value, _BARE_DOI_RE)
+
     meta = df.drop_duplicates("id").set_index("id") if df is not None else None
 
     def _meta(nid, col, default="-"):
-        if meta is not None and nid in meta.index:
+        if meta is not None and nid in meta.index and col in meta.columns:
             v = meta.at[nid, col]
             if v is not None and not (isinstance(v, float) and np.isnan(v)):
                 return v
         return default
 
+    def _ref_doi(tok):
+        """Normalized DOI of a token (raw citation, doi.org URL, or bare DOI),
+        or None when it carries no DOI (e.g. an opaque OpenAlex id)."""
+        if tok is None or (isinstance(tok, float) and np.isnan(tok)):
+            return None
+        tok = str(tok).strip()
+        if not tok:
+            return None
+        d = _extract_ref_doi(tok)
+        if d:
+            return _normalize_doi_value(d)
+        if _BARE_DOI_RE.match(tok.lower()):
+            return _normalize_doi_value(tok)
+        return None
+
+    # In-corpus works keyed by their normalized DOI → title, so a reference node
+    # expressed as a DOI (canonical reference_keys) resolves to its corpus title.
+    doi_to_title = {}
+    if meta is not None and "title" in meta.columns and "doi" in meta.columns:
+        for dval, tval in zip(meta["doi"], meta["title"]):
+            nd = _ref_doi(dval)
+            if nd and isinstance(tval, str) and tval.strip():
+                doi_to_title[nd] = tval
+
+    def _title_doi(nid):
+        """(title, doi) for a node: from the corpus by id (documents and
+        in-corpus cited references), else from the reference key's own DOI
+        (title looked up when the cited work is in-corpus), else ('—', '—') for
+        an extra-corpus opaque id."""
+        if meta is not None and nid in meta.index:                # in corpus by id
+            t = _meta(nid, "title", None)
+            return (str(t)[:70] if t else "—", _ref_doi(_meta(nid, "doi", None)) or "—")
+        d = _ref_doi(nid)                                         # reference key = DOI
+        if d:
+            t = doi_to_title.get(d)
+            return (str(t)[:70] if t else "—", d)
+        return ("—", "—")                                         # extra-corpus opaque id
+
     strength = result.W.sum(axis=1)
     hover = []
     for nid, comm, tp, st in zip(result.node_ids, result.labels, topics, strength):
-        title_txt = str(_meta(nid, "title", nid))[:70]
+        title_txt, doi_txt = _title_doi(nid)
         tlabel = color_labels.get(int(tp), "—")
         hover.append(
-            f"<b>{title_txt}</b><br>Year: {_meta(nid, 'year')}<br>"
+            f"<b>{title_txt}</b><br>DOI: {doi_txt}<br>Year: {_meta(nid, 'year')}<br>"
             f"Community: {'C%d' % comm if comm >= 0 else 'tail'}<br>"
             f"Topic: {tlabel}<br>Strength: {st:.3g}"
         )
@@ -323,8 +364,10 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     for i in order:
         nid = result.node_ids[i]
         comm = int(result.labels[i])
+        title_txt, doi_txt = _title_doi(nid)
         rows.append([
-            str(_meta(nid, "title", nid))[:70],
+            title_txt,
+            doi_txt,
             f"{strength[i]:.3g}",
             f"C{comm}" if comm >= 0 else "-",
             color_labels.get(int(topics[i]), "-"),
@@ -333,9 +376,9 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
         sub_content.append({
             "type": "table",
             "title": f"Top 10 {node_kind}s by strength",
-            "headers": [node_kind.capitalize(), "Strength", "Community", "Topic"],
+            "headers": ["Title", "DOI", "Strength", "Community", "Topic"],
             "rows": rows,
-            "col_widths": [8.5, 1.8, 2.2, 4.5],
+            "col_widths": [6.0, 3.2, 1.4, 1.6, 3.8],
         })
 
     if color_mode == "topic":

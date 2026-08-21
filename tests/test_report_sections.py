@@ -653,3 +653,58 @@ class TestBuildReportData:
         # The LLM label appears in the summary table rows or subsection titles
         all_text = str(topics_sec)
         assert "MyLabel0" in all_text
+
+
+# =============================================================================
+# Network table — Title + DOI columns
+# =============================================================================
+
+class TestNetworkTableTitleDoi:
+    """The top-N-by-strength table must show Title + DOI, not raw node ids.
+
+    Resolution order: corpus by id (documents, in-corpus cited refs by their
+    id) → the reference key's own DOI (title looked up when the cited work is in
+    corpus) → em dash for an extra-corpus opaque id.
+    """
+
+    def _df(self):
+        return pd.DataFrame({
+            "id":    ["https://openalex.org/W1", "https://openalex.org/W2"],
+            "title": ["Justice in energy models", "Grid decarbonization"],
+            "doi":   ["https://doi.org/10.1000/AAA", "10.1000/bbb"],
+            "year":  [2020, 2021], "cited_by": [5, 3],
+        })
+
+    def _table(self, node_ids):
+        from pysyrev.core.report_data import _build_network_subsection
+        from pysyrev.core.networks.common import NetworkResult
+        n = len(node_ids)
+        W = np.ones((n, n)) - np.eye(n)
+        res = NetworkResult(node_ids=node_ids, W=W,
+                            labels=np.zeros(n, dtype=int),
+                            coords=np.zeros((n, 2)), modularity=0.0)
+        sub = _build_network_subsection(
+            res, self._df(), None, None, title="Co-citation",
+            filename_prefix="cc", node_kind="reference", count_label="References",
+            k=2, color_mode="community", export_to=None)
+        return [b for b in sub["blocks"] if b.get("type") == "table"][0]
+
+    def test_headers_are_title_doi(self):
+        tbl = self._table(["https://openalex.org/W1", "https://openalex.org/W2"])
+        assert tbl["headers"] == ["Title", "DOI", "Strength", "Community", "Topic"]
+
+    def test_in_corpus_by_id_resolves_title_and_normalized_doi(self):
+        tbl = self._table(["https://openalex.org/W1", "https://openalex.org/W2"])
+        by_title = {r[0]: r[1] for r in tbl["rows"]}
+        assert by_title["Justice in energy models"] == "10.1000/aaa"  # doi.org stripped
+
+    def test_reference_expressed_as_doi_resolves_corpus_title(self):
+        # A cited reference given as a DOI that matches an in-corpus work.
+        tbl = self._table(["10.1000/bbb", "https://openalex.org/W1"])
+        by_doi = {r[1]: r[0] for r in tbl["rows"]}
+        assert by_doi["10.1000/bbb"] == "Grid decarbonization"
+
+    def test_extra_corpus_opaque_id_is_dash(self):
+        tbl = self._table(["https://openalex.org/W999", "https://openalex.org/W1"])
+        row = next(r for r in tbl["rows"] if r[0] == "—")
+        assert row[1] == "—"
