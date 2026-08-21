@@ -36,9 +36,9 @@ bib:
   # useful even in this OpenAlex-only run since abstracts feed the topic model.
   # Runs on the merged corpus before the drop; only the abstract is filled, the
   # referenced_works IDs used for coupling stay intact. Uncomment to activate.
-  # abstract_completion:
-  #   - provider: wos
-  #     api_key: ${WOS_API_KEY}
+  abstract_completion:
+    - provider: wos
+      api_key: ${WOS_API_KEY}
   #     cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/wos_completion_cache
 
   # --- Merge parameters (duplicates removal across sources) ---
@@ -262,11 +262,16 @@ topic_model:
   # default = 10
   keep_n_results : 25
 
+  # ---- Desired number of topics -------------------
+  # [min, max] band, the sole knob for topic granularity: the min_topic_size grid
+  # is auto-derived from the corpus size to aim at it, and only models with a
+  # topic count in the band are kept. For ~200 docs, [5, 15] targets
+  # min_topic_size ~[13, 40].
+  desired_topics : [5, 15]
+
 # ---- HDBSCAN parameters -------------------------
   hdbscan:
-    min_topic_size_range : [4, 52]
     min_sample_range : [2, 20]
-    topic_size_step : 4
     min_sample_step : 2
 #    cluster_selection_method : leaf
 #    metric : euclidean
