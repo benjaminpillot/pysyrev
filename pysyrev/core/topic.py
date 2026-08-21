@@ -26,6 +26,50 @@ def _compute_distance(distance, *values):
 _META_COLS = ["id", "year", "cited_by", "document_type", "title", "doi"]
 
 
+def derive_min_topic_size_range(n_docs, topic_range, n_steps=8):
+    """Derive an HDBSCAN ``min_topic_size`` grid aimed at a desired topic band.
+
+    HDBSCAN's ``min_cluster_size`` (our ``min_topic_size``) trades off inversely
+    against the number of topics: bigger clusters -> fewer topics. A first-order
+    estimate is ``min_cluster_size ~= n_docs / nb_topics``, so a desired band
+    ``[t_min, t_max]`` maps to a ``min_topic_size`` range ``[n_docs / t_max,
+    n_docs / t_min]``. This only *aims* the grid; the exact band is enforced
+    afterwards by filtering results (see ``topic_modeling``'s ``topic_range``),
+    because outliers and UMAP structure make the mapping approximate.
+
+    Returns ``([lo, hi], step)`` with ``lo >= 2`` and ``step >= 1``, the grid
+    spanning roughly *n_steps* values.
+    """
+    t_min, t_max = topic_range
+    lo = max(2, round(n_docs / t_max))
+    hi = max(lo, round(n_docs / t_min))
+    step = max(1, round((hi - lo) / max(1, n_steps - 1)))
+    return [lo, hi], step
+
+
+def filter_to_topic_band(results, topic_range):
+    """Keep only rows of *results* whose ``nb_topics`` is within *topic_range*.
+
+    This is the guarantee behind ``desired_topics``: the derived grid merely aims
+    at the band, this filter enforces it. If nothing lands in-band (band
+    unreachable with the explored grid), warn and return *results* unchanged so
+    the run still produces output.
+    """
+    if topic_range is None:
+        return results
+    lo, hi = topic_range
+    in_band = results[(results["nb_topics"] >= lo) & (results["nb_topics"] <= hi)]
+    if in_band.empty:
+        print(
+            f"[topic_modeling] Warning: no model produced a topic count in "
+            f"[{lo}, {hi}] (got {sorted(results['nb_topics'].unique())}). "
+            f"Keeping the best-ranked models regardless — widen desired_topics "
+            f"or adjust the corpus/params."
+        )
+        return results
+    return in_band
+
+
 def clean_dataset(dataset, allow_abbrev, show_progress):
     abstract_corpus = np.asarray(dataset["abstract"])
     title_corpus = np.asarray(dataset["title"])
@@ -54,7 +98,8 @@ def topic_modeling(dataset,
                    purity_scorer,
                    keep_n_results,
                    show_progress,
-                   surviving_indices=None):
+                   surviving_indices=None,
+                   topic_range=None):
 
     # cluster_sel_method = bertopic_model.hdbscan_model.clusterselection_method
 
@@ -165,6 +210,9 @@ def topic_modeling(dataset,
         "distance"                      : distance,
         "model"                         : topic_models
     }).sort_values(by="distance", ascending=True)
+
+    # Keep only models whose topic count falls in the desired band (if set).
+    results = filter_to_topic_band(results, topic_range)
 
     best_results = results.iloc[:keep_n_results]
 

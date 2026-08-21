@@ -23,7 +23,8 @@ from sentence_transformers import SentenceTransformer
 from umap import UMAP
 
 from pysyrev.core.config import TopicModelConfig
-from pysyrev.core.topic import clean_dataset, topic_modeling
+from pysyrev.core.topic import (clean_dataset, topic_modeling,
+                                derive_min_topic_size_range)
 from pysyrev.core.topic_labels import load_cached_labels, save_labels
 
 
@@ -127,14 +128,18 @@ class TopicModel:
     export_dir:           str
     n_neighbors:          List[int]
     n_components:         List[int]
-    min_topic_size_range: List[int]
-    min_sample_range:     List[int]
-    topic_size_step:      int
-    min_sample_step:      int
-    keep_n_results:       int
-    ranking_scorer:       str
-    purity_scorer:        str
-    run_name:             Union[None, str]
+    # desired_topics is the user-facing knob (config: hdbscan.desired_topics);
+    # min_topic_size_range / topic_size_step are internal — derived from it at
+    # run() time, or set directly when constructing TopicModel without a band.
+    desired_topics:       Optional[List[int]] = None  # [min, max] band, or None
+    min_topic_size_range: Optional[List[int]] = None  # internal; None = derive
+    topic_size_step:      int = 1                      # internal
+    min_sample_range:     List[int] = field(default_factory=lambda: [2, 2])
+    min_sample_step:      int = 1
+    keep_n_results:       int = 10
+    ranking_scorer:       str = "u_mass"
+    purity_scorer:        str = "c_v"
+    run_name:             Union[None, str] = None
     labeler_config:       Optional[object] = None  # TopicLabelerConfig or None
     best_model_index:     int = 0
     overwrite:            bool = False
@@ -192,9 +197,8 @@ class TopicModel:
             export_dir           = tc.export.export_dir,
             n_neighbors          = tc.umap.n_neighbors,
             n_components         = tc.umap.n_components,
-            min_topic_size_range = tc.hdbscan.min_topic_size_range,
+            desired_topics       = tc.desired_topics,
             min_sample_range     = tc.hdbscan.min_sample_range,
-            topic_size_step      = tc.hdbscan.topic_size_step,
             min_sample_step      = tc.hdbscan.min_sample_step,
             keep_n_results       = tc.keep_n_results,
             ranking_scorer       = tc.coherence_scorer.ranking,
@@ -267,6 +271,25 @@ class TopicModel:
             f"[TopicModel] {len(dataset)} documents in dataset → "
             f"{len(cleans_docs)} survived preprocessing."
         )
+
+        # Topic granularity: when a desired topic-count band is set (the normal
+        # path via config), auto-derive the HDBSCAN min_topic_size grid from the
+        # surviving-doc count to aim at it; topic_modeling then filters kept
+        # models to the band. Without a band, fall back to an explicit internal
+        # min_topic_size_range (set when constructing TopicModel directly).
+        min_topic_size_range = self.min_topic_size_range
+        topic_size_step = self.topic_size_step
+        if self.desired_topics is not None:
+            min_topic_size_range, topic_size_step = derive_min_topic_size_range(
+                len(cleans_docs), self.desired_topics)
+            print(
+                f"[TopicModel] desired_topics={self.desired_topics} → "
+                f"min_topic_size_range={min_topic_size_range} step={topic_size_step}"
+            )
+        elif min_topic_size_range is None:
+            raise ValueError(
+                "TopicModel needs either desired_topics or an explicit "
+                "min_topic_size_range.")
         embeddings = self.bertopic_model.embedding_model.encode(
             cleans_docs, show_progress_bar=show_progress,
         )
@@ -278,9 +301,9 @@ class TopicModel:
             embeddings,
             self.n_neighbors,
             self.n_components,
-            self.min_topic_size_range,
+            min_topic_size_range,
             self.min_sample_range,
-            self.topic_size_step,
+            topic_size_step,
             self.min_sample_step,
             str(run_dir),
             self.nr_repr_docs,
@@ -290,6 +313,7 @@ class TopicModel:
             self.keep_n_results,
             show_progress,
             surviving_indices,
+            self.desired_topics,
         )
         if self.labeler_config is not None:
             self._label_selected_model()

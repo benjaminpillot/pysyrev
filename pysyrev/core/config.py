@@ -370,9 +370,12 @@ class BibConfig(ConfigField):
 
 @dataclass
 class HDBSCANConfig(ConfigField):
-    min_topic_size_range:     List[int] = field(default_factory=lambda: [2, 2])
+    # Topic granularity is driven by topic_model.desired_topics, not by raw
+    # min_topic_size bounds: the ``min_topic_size`` grid is auto-derived from the
+    # corpus size to aim at that band (see topic.derive_min_topic_size_range).
+    # min_topic_size_range / topic_size_step are therefore internal (on
+    # TopicModel), not user-facing.
     min_sample_range:         List[int] = field(default_factory=lambda: [2, 2])
-    topic_size_step:          int       = 1
     min_sample_step:          int       = 1
     cluster_selection_method: str       = 'leaf'
     metric:                   str       = 'euclidean'
@@ -523,6 +526,8 @@ class TopicModelConfig(ConfigField):
     distance:            str                                    = "euclidean"
     keep_n_results:      int                                    = 10
     best_model_index:    int                                    = 0
+    desired_topics:      List[int]                              = field(
+        default_factory=lambda: [5, 15])
     coherence_scorer:    CoherenceScorerConfig                  = None
     hdbscan:             HDBSCANConfig                          = None
     umap:                UMAPConfig                             = None
@@ -533,6 +538,17 @@ class TopicModelConfig(ConfigField):
 
     def __post_init__(self):
         super().__post_init__()
+
+        # Desired topic-count band [min, max]: the sole user-facing knob for topic
+        # granularity. The HDBSCAN min_topic_size grid is auto-derived from the
+        # corpus size to aim at it, and only models whose topic count lands in the
+        # band are kept (see topic.derive_min_topic_size_range / topic_modeling).
+        band = list(self.desired_topics)
+        if len(band) != 2 or band[0] < 1 or band[1] < band[0]:
+            raise ValueError(
+                f"desired_topics must be [min, max] with 1 <= min <= max; "
+                f"got {self.desired_topics!r}")
+        self.desired_topics = band
 
         if isinstance(self.export, dict):
             self.export = TopicExportConfig(**self.export)

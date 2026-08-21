@@ -260,16 +260,23 @@ topic_model:
   keep_n_results: 10
   best_model_index: 0      # index in best_results.csv (0 = best ranked model)
 
+  # ---- Desired number of topics ------------------------------------------
+  # [min, max] band: the sole knob for topic granularity. The HDBSCAN
+  # min_topic_size grid is auto-derived from the corpus size to aim at it
+  # (min_cluster_size ~= N / nb_topics), and only models whose topic count lands
+  # in the band are kept. Default [5, 15].
+  desired_topics: [5, 15]
+
   # ---- Coherence scorers (defaults shown) --------------------------------
   # coherence_scorer:
   #   ranking: u_mass             # ranks all configurations (fast)
   #   purity: c_v                 # scores the best configurations (slower)
 
   # ---- HDBSCAN clustering ------------------------------------------------
+  # Topic granularity is driven by desired_topics above; min_topic_size is
+  # internal. Only the min_samples grid and HDBSCAN internals are exposed here.
   hdbscan:
-    min_topic_size_range: [10, 50]    # [min, max] grid-search bounds
     min_sample_range: [2, 10]
-    topic_size_step: 4
     min_sample_step: 2
     # cluster_selection_method: leaf
     # metric: euclidean
