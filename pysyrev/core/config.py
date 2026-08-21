@@ -680,6 +680,7 @@ class CompositeConfig(ConfigField):
     relevance_mode:    str  = "blend"   # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
     drop_current_year: bool = True      # drop the incomplete current year from the cit/yr denominator
     current_year:      Union[None, int] = None  # reference year; None = latest year in the corpus
+    split_current_year: bool = False    # separate current-year "research fronts" (2-axis) from the historical 3-axis list
 
     def __post_init__(self):
         super().__post_init__()

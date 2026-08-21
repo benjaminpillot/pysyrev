@@ -898,10 +898,21 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     else:
         selection_label = ""
 
+    # Composite split: current-year papers (relevance axis dropped) are pulled out
+    # of the historical 3-axis list into a separate "research fronts" table, so a
+    # 2-axis paper is never ranked against 3-axis ones.
+    id_col = next((c for c in ["id", "ID"] if c in br_wo.columns), None)
+    comp_split = (sel_cfg.selection_by == "composite" and bool(_composite_detail)
+                  and sel_cfg.composite.split_current_year and id_col is not None)
+    front_ids = ({i for i, d in _composite_detail.items() if d.get("relevance_dropped")}
+                 if comp_split else set())
+
     selected_parts = []
     for topic_id in sorted(br_wo["Topic"].unique()):
         topic_df = br_wo[br_wo["Topic"] == topic_id].copy()
         filt     = topic_df[topic_df["year"] >= sel_cfg.min_year]
+        if front_ids:                       # historical list = non-front papers only
+            filt = filt[~filt[id_col].isin(front_ids)]
 
         # Reviews
         is_review = (
@@ -1036,6 +1047,44 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     ]
     if annex_msg:
         blocks.append({"type": "paragraph", "text": annex_msg})
+
+    # Research fronts: the current-year cohort, ranked on 2 axes, shown separately.
+    if comp_split and front_ids:
+        fronts_df = br_wo[br_wo[id_col].isin(front_ids)].copy()
+        det = _composite_detail
+        for col, key in [("composite_score", "score"), ("centrality", "centrality"),
+                         ("representativeness", "representativeness")]:
+            fronts_df[col] = fronts_df[id_col].map(lambda i: (det.get(i) or {}).get(key))
+        front_rows = []
+        for topic_id in sorted(fronts_df["Topic"].unique()):
+            tdf = fronts_df[fronts_df["Topic"] == topic_id].sort_values(
+                "composite_score", ascending=False)
+            n_f = max(1, round(sel_cfg.proportion_per_topic * len(tdf)))
+            for _, row in tdf.head(n_f).iterrows():
+                tid = int(row["Topic"])
+                front_rows.append([
+                    str(tid), _topic_label(tid, topic_labels),
+                    str(row.get("title", "-"))[:100],
+                    _fmt_year(row.get("year")), _fmt_cit(row.get("cited_by")),
+                    _fmt_axis(row.get("composite_score")),
+                    _fmt_axis(row.get("centrality")),
+                    _fmt_axis(row.get("representativeness")),
+                ])
+        if front_rows:
+            blocks.append({
+                "type":       "table",
+                "title":      f"Research fronts — current-year papers ({len(front_rows)})",
+                "headers":    ["Topic", "Label", "Title", "Year", "Cit.",
+                               "Score", "Cent.", "Typ."],
+                "rows":       front_rows,
+                "col_widths": [1.0, 2.6, 6.0, 0.9, 0.9, 1.2, 1.2, 1.2],
+            })
+            blocks.append({"type": "paragraph", "text": (
+                "Research fronts are the current (incomplete) year's papers, ranked on "
+                "centrality + typicality only — the citation-relevance axis needs a "
+                "complete year and is not yet meaningful for them. They are kept out of "
+                "the historical 3-axis list above so a 2-axis score is never compared "
+                "against a 3-axis one.")})
 
     return {"title": f"{section_n}. Paper selection", "blocks": blocks}
 

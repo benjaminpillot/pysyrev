@@ -106,6 +106,7 @@ def aggregate_axes(vals, wts, mode: str = "mean", cheby_rho: float = 0.05) -> fl
 def top_papers_3axis(records, labels, W, n: int = 3, weights=None,
                      current_year: Optional[int] = None, typicality=None,
                      relevance_mode: str = "blend", drop_current_year: bool = True,
+                     split_current_year: bool = False,
                      aggregate: str = "mean", text_of: Optional[Callable] = None,
                      year_key: str = "publication_year",
                      cite_key: str = "cited_by_count") -> dict:
@@ -131,6 +132,12 @@ def top_papers_3axis(records, labels, W, n: int = 3, weights=None,
               from the citations/year denominator, so a paper is divided by its number
               of *complete* elapsed years; when False the running year is kept in the
               denominator and every paper is scored on all three axes.
+    split_current_year : when True, current-year papers (the ones whose relevance axis
+              is dropped) are returned in a SEPARATE ``"fronts"`` structure rather than
+              mixed into the per-cluster ranking, and each cohort is truncated to *n*
+              independently. This separates the established literature (scored on all
+              three axes) from the in-progress research fronts (centrality + typicality
+              only), instead of ranking a 2-axis paper against 3-axis ones.
     aggregate : ``"mean"`` | ``"gmean"`` | ``"chebyshev"`` (see :func:`aggregate_axes`).
     text_of : callable ``record -> str`` giving the text used for thematic typicality
               (``None`` → ``title`` + ``_abstract``). Ignored when *typicality* is given.
@@ -140,11 +147,14 @@ def top_papers_3axis(records, labels, W, n: int = 3, weights=None,
     Returns
     -------
     dict
-        ``{cluster: [row, ...]}`` where each row is a dict with ``index, score,
-        centrality, relevance, representativeness, relevance_dropped,
-        cited_by_count, cites_per_year``, sorted best-first. For a current-year
-        paper ``relevance`` and ``cites_per_year`` are ``None`` and
-        ``relevance_dropped`` is ``True``.
+        With *split_current_year* False (default): ``{cluster: [row, ...]}`` where
+        each row is a dict with ``index, score, centrality, relevance,
+        representativeness, relevance_dropped, cited_by_count, cites_per_year``,
+        sorted best-first. For a current-year paper ``relevance`` and
+        ``cites_per_year`` are ``None`` and ``relevance_dropped`` is ``True``.
+        With *split_current_year* True: ``{"historical": {cluster: [...]},
+        "fronts": {cluster: [...]}}`` — same row dicts, current-year papers moved
+        to ``"fronts"``.
     """
     import igraph as ig
 
@@ -182,7 +192,7 @@ def top_papers_3axis(records, labels, W, n: int = 3, weights=None,
     w = np.array(weights, dtype=float)
     w = w / w.sum()
 
-    out = {}
+    out, out_hist, out_front = {}, {}, {}
     for cl in sorted(set(int(l) for l in labels if l >= 0)):
         idx = [i for i in range(len(records)) if labels[i] == cl]
         p_pr, p_wd = pctl_within(idx, pr), pctl_within(idx, wdeg)
@@ -208,5 +218,12 @@ def top_papers_3axis(records, labels, W, n: int = 3, weights=None,
                              cited_by_count=int(raw[gi]),
                              cites_per_year=(None if no_relevance[gi] else float(cyr[gi]))))
         rows.sort(key=lambda d: d["score"], reverse=True)
-        out[cl] = rows[:n]
+        if split_current_year:
+            # partition BEFORE truncation so each cohort gets its own top-n
+            out_hist[cl]  = [r for r in rows if not r["relevance_dropped"]][:n]
+            out_front[cl] = [r for r in rows if r["relevance_dropped"]][:n]
+        else:
+            out[cl] = rows[:n]
+    if split_current_year:
+        return {"historical": out_hist, "fronts": out_front}
     return out

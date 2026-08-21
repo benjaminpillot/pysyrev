@@ -276,6 +276,42 @@ class TestCompositeSelection:
         with pytest.raises(ValueError):
             CompositeConfig(weights=[1, 1])
 
+    def test_split_current_year_adds_a_research_fronts_table(self):
+        # Synthetic corpus with a clear current-year cohort so the split is
+        # deterministic regardless of the fixture data's years.
+        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.networks.common import NetworkResult
+        ids = [f"W{i}" for i in range(6)]
+        bt = pd.DataFrame({
+            "id": ids, "ID": ids,
+            "year": [2019, 2020, 2021, 2022, 2026, 2026],
+            "cited_by": [80, 60, 40, 20, 3, 1],
+            "document_type": ["article"] * 6,
+            "title": [f"Paper {i}" for i in range(6)],
+            "doi": [f"10.1/{i}" for i in range(6)],
+            "Topic": [0] * 6,
+            "Document": [f"energy justice model {i}" for i in range(6)],
+        })
+        W = np.ones((6, 6)) - np.eye(6)
+        coupling = NetworkResult(node_ids=ids, W=W, labels=np.zeros(6, int),
+                                 coords=np.zeros((6, 2)), modularity=0.1)
+        cfg = PaperSelectionConfig(
+            min_year=2015, proportion_per_topic=1.0, selection_by="composite",
+            export_annex=False,
+            composite=CompositeConfig(split_current_year=True, current_year=2026))
+        sec = _build_paper_selection_section(bt, None, None, cfg, None, 6,
+                                             coupling_result=coupling)
+        tables = _blocks_of_type(sec, "table")
+        titles = [t["title"] for t in tables]
+        assert any(t.startswith("Paper reading list") for t in titles)
+        fronts = next(t for t in tables if t["title"].startswith("Research fronts"))
+        # Fronts are 2-axis: no relevance column, and only current-year rows.
+        assert "Rel." not in fronts["headers"]
+        assert all(r[3] == "2026" for r in fronts["rows"])   # Year column
+        # Historical list excludes the current-year fronts.
+        reading = next(t for t in tables if t["title"].startswith("Paper reading list"))
+        assert all(r[3] != "2026" for r in reading["rows"])  # Year column
+
 
 # =============================================================================
 # _build_temporal_section
