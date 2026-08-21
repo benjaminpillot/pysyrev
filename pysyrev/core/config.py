@@ -597,22 +597,22 @@ class TopicsSectionConfig(ConfigField):
 @dataclass
 class CouplingPanelConfig(ConfigField):
     """Coupling network panel (document × document)."""
-    resolution: float = 0.7        # Leiden resolution (higher → more, smaller communities)
+    resolution_range: List[float] = field(default_factory=lambda: [0.4, 1.2])  # [min, max]: sweep and keep the best-modularity partition
+    resolution_step:  float = 0.1  # step of the resolution sweep
     min_size:   int   = 5          # communities smaller than this → uncoupled tail
     backbone_k: int   = 3          # draw only each node's k strongest couplings
     color_by:   str   = "topic"    # "topic" | "community"
-    hulls:      bool  = True        # outline Leiden communities (only when colouring by topic)
 
 
 @dataclass
 class CocitationPanelConfig(ConfigField):
     """Co-citation network panel (reference × reference)."""
     min_ref_freq: int   = 2         # keep references cited by at least this many documents
-    resolution:   float = 0.7       # Leiden resolution
+    resolution_range: List[float] = field(default_factory=lambda: [0.4, 1.2])  # [min, max]: sweep and keep the best-modularity partition
+    resolution_step:  float = 0.1   # step of the resolution sweep
     min_size:     int   = 5         # communities smaller than this → tail
     backbone_k:   int   = 3         # draw only each node's k strongest co-citations
     color_by:     str   = "community"  # "topic" | "community"
-    hulls:        bool  = True      # outline Leiden communities (only when colouring by topic)
 
 
 @dataclass

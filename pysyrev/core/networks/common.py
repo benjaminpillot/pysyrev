@@ -13,6 +13,7 @@ This module holds the type-agnostic *analysis* pieces (rendering lives in
   * :func:`reference_sets`     — each document's set of cited references.
   * :class:`NetworkResult`     — the (node_ids, W, labels, coords, modularity) bundle.
   * :func:`leiden_communities` — modularity communities on any weighted ``W``.
+  * :func:`leiden_best_resolution` — sweep the resolution, keep the best partition.
   * :func:`force_layout`       — weighted Fruchterman-Reingold / DRL layout on ``W``.
   * :func:`backbone_edges`     — each node's ``k`` strongest edges (kills the hairball).
   * :func:`cluster_terms`      — distinguishing TF-IDF terms per community.
@@ -79,6 +80,8 @@ class NetworkResult:
     coords:     np.ndarray
     modularity: float
     terms:      dict = field(default_factory=dict)   # {community: [top terms]}
+    resolution: Optional[float] = None               # Leiden resolution actually used
+    resolution_sweep: Optional[list] = None          # [(resolution, modularity, n_communities)]
 
     @property
     def n_nodes(self) -> int:
@@ -148,6 +151,50 @@ def leiden_communities(W: np.ndarray, resolution: float = 0.5,
     sizes = {c: int((labels == c).sum()) for c in set(labels.tolist())}
     labels = np.array([c if sizes[c] >= min_size else -1 for c in labels])
     return labels, float(part.modularity)
+
+
+def resolution_grid(resolution_range: Sequence[float],
+                    step: float = 0.1) -> List[float]:
+    """Inclusive ``[min, max]`` grid of resolutions with the given *step*."""
+    lo, hi = float(resolution_range[0]), float(resolution_range[1])
+    if step <= 0 or hi < lo:
+        return [lo]
+    n = int(round((hi - lo) / step))
+    return [round(lo + i * step, 6) for i in range(n + 1)]
+
+
+def leiden_best_resolution(W: np.ndarray, resolutions: Sequence[float],
+                           seed: int = 7, min_size: int = 5
+                           ) -> Tuple[np.ndarray, float, float, list]:
+    """Sweep Leiden ``resolution`` and keep the partition with the best structure.
+
+    Modularity Q is not monotone in the resolution: it peaks at some intermediate
+    value and falls as the graph over-fragments. This runs :func:`leiden_communities`
+    for each resolution (cheap — the expensive layout runs once, downstream, on the
+    winner) and selects by two criteria, in order:
+
+      1. prefer partitions that actually have >= 2 real (non-tail) communities —
+         a single blob or an all-tail split is not a community structure;
+      2. among those, take the highest modularity.
+
+    If no resolution yields >= 2 communities, the highest-Q partition is returned
+    regardless (with its low Q honestly reported): a low ceiling across the whole
+    sweep means the corpus lacks coupling structure, not that a knob is mis-set.
+
+    Returns ``(labels, modularity, resolution, sweep)`` where *sweep* is the list
+    of ``(resolution, modularity, n_communities)`` triples, best last-wins ties.
+    """
+    best = None
+    sweep = []
+    for r in resolutions:
+        labels, Q = leiden_communities(W, resolution=r, seed=seed, min_size=min_size)
+        n_comm = len({c for c in labels.tolist() if c >= 0})
+        sweep.append((float(r), float(Q), int(n_comm)))
+        key = (n_comm >= 2, Q)
+        if best is None or key > best[0]:
+            best = (key, labels, float(Q), float(r))
+    _, labels, Q, r = best
+    return labels, Q, r, sweep
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 """
 Plotly rendering for the reworked bibliographic networks.
 
-Kept apart from :mod:`.common` (pure analysis) so the rendering dependencies
-(plotly, scipy for hulls) stay isolated. Plotly is used throughout so the report
-can embed both a static PNG (for the PDF) and an interactive HTML graph.
+Kept apart from :mod:`.common` (pure analysis) so the rendering dependency
+(plotly) stays isolated. Plotly is used throughout so the report can embed both
+a static PNG (for the PDF) and an interactive HTML graph.
 
 Every network type shares this drawing code — the layout and communities it
 visualises are produced upstream in :mod:`.common`.
@@ -23,7 +23,6 @@ _PALETTE = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 _TAIL_COLOR = "#D6D6D6"
-_HULL_COLOR = "#9AA0A6"
 _EDGE_COLOR = "#CFCFCF"
 
 
@@ -34,28 +33,6 @@ def _node_sizes(W: np.ndarray, size_min: float = 6.0, size_max: float = 22.0,
     lv = np.log1p(strength)
     lmax = float(lv.max()) or 1.0
     return size_min + (size_max - size_min) * (lv / lmax) ** exponent
-
-
-def _hull_polygons(coords, labels):
-    """Yield (community, polygon_xy, centroid_xy) for each community >= 3 nodes."""
-    try:
-        from scipy.spatial import ConvexHull
-    except ImportError:
-        return
-    labels = np.asarray(labels)
-    for c in sorted(set(labels.tolist())):
-        if c < 0:
-            continue
-        pts = coords[labels == c]
-        if len(pts) < 3:
-            continue
-        try:
-            hull = ConvexHull(pts)
-        except Exception:
-            continue
-        poly = pts[hull.vertices]
-        poly = np.vstack([poly, poly[0]])
-        yield c, poly, (pts[:, 0].mean(), pts[:, 1].mean())
 
 
 def _edge_traces(coords, bb):
@@ -93,7 +70,6 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  title: Optional[str] = None,
                  color_by: Optional[np.ndarray] = None,
                  color_labels: Optional[dict] = None,
-                 community_hulls: bool = False,
                  hover_text: Optional[List[str]] = None,
                  width: int = 900, height: int = 650):
     """Build a Plotly figure of a network: backbone edges under nodes.
@@ -104,10 +80,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
       Leiden community; the ``-1`` tail is faint.
     * **By external attribute** (``color_by`` = array row-aligned to *coords*,
       e.g. BERTopic topics) — nodes coloured by that attribute, so you read the
-      *topic composition of each bibliographic community*. The spatial blobs
-      still come from the coupling layout; set ``community_hulls=True`` to
-      outline the Leiden communities as regions. ``color_labels`` maps values to
-      legend names.
+      *topic composition of each bibliographic community*. The spatial clusters
+      still come from the coupling layout (strongly-coupled papers sit together).
+      ``color_labels`` maps values to legend names.
 
     Node size scales with coupling strength (weighted degree, log). ``hover_text``
     (row-aligned to *coords*) sets per-node hover; ``seed_mask`` rings seed nodes.
@@ -124,24 +99,6 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     hover = hover_text if hover_text is not None else [f"node {i}" for i in range(n)]
 
     data = list(_edge_traces(coords, backbone_edges(W, labels, k=k)))
-
-    # Community hulls (only meaningful when nodes are coloured by something else).
-    if color_by is not None and community_hulls:
-        hull_labels_x, hull_labels_y, hull_labels_t = [], [], []
-        for c, poly, (cx, cy) in _hull_polygons(coords, labels):
-            data.append(go.Scatter(
-                x=poly[:, 0], y=poly[:, 1], mode="lines", fill="toself",
-                line=dict(color=_HULL_COLOR, width=1),
-                fillcolor="rgba(154,160,166,0.07)",
-                hoverinfo="none", showlegend=False,
-            ))
-            hull_labels_x.append(cx); hull_labels_y.append(cy); hull_labels_t.append(f"C{c}")
-        if hull_labels_t:
-            data.append(go.Scatter(
-                x=hull_labels_x, y=hull_labels_y, mode="text",
-                text=hull_labels_t, textfont=dict(color=_HULL_COLOR, size=12),
-                hoverinfo="none", showlegend=False,
-            ))
 
     def _marker_trace(idx, color, name):
         return go.Scatter(

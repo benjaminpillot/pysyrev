@@ -244,7 +244,7 @@ def _export_network_html(fig, export_to, label):
 
 def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
                               title, filename_prefix, node_kind, count_label,
-                              k, color_mode, hulls, export_to):
+                              k, color_mode, export_to):
     """Render one computed network (coupling or co-citation) as a subsection.
 
     *result* is a :class:`NetworkResult`; *df* supplies node metadata
@@ -294,7 +294,6 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     fig = plot_network(
         result.coords, result.labels, result.W, k=k,
         color_by=color_by, color_labels=color_labels,
-        community_hulls=(hulls and color_mode == "topic"),
         hover_text=hover, title=None,
     )
 
@@ -302,17 +301,22 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     n_backbone = len(backbone_edges(result.W, result.labels, k=k))
     n_full     = int((result.W > 0).sum() // 2)
     connected  = int((strength > 0).sum())
-    sub_content = [{
-        "type": "key_value",
-        "items": [
-            {"key": count_label,               "value": result.n_nodes},
-            {"key": f"Connected {node_kind}s", "value": f"{connected} ({connected / result.n_nodes:.0%})"},
-            {"key": "Leiden communities",      "value": result.n_communities},
-            {"key": "Modularity",              "value": f"{result.modularity:.3f}"},
-            {"key": "Edges",                   "value": n_full},
-            {"key": f"Backbone edges (k={k})", "value": n_backbone},
-        ],
-    }]
+    kv_items = [
+        {"key": count_label,               "value": result.n_nodes},
+        {"key": f"Connected {node_kind}s", "value": f"{connected} ({connected / result.n_nodes:.0%})"},
+        {"key": "Leiden communities",      "value": result.n_communities},
+        {"key": "Modularity",              "value": f"{result.modularity:.3f}"},
+    ]
+    if getattr(result, "resolution", None) is not None:
+        res_val = f"{result.resolution:.2f}"
+        if getattr(result, "resolution_sweep", None):
+            res_val += f" (selected by max modularity over {len(result.resolution_sweep)} values)"
+        kv_items.append({"key": "Leiden resolution", "value": res_val})
+    kv_items += [
+        {"key": "Edges",                   "value": n_full},
+        {"key": f"Backbone edges (k={k})", "value": n_backbone},
+    ]
+    sub_content = [{"type": "key_value", "items": kv_items}]
 
     order = np.argsort(strength)[::-1][:10]
     rows = []
@@ -335,12 +339,15 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
         })
 
     if color_mode == "topic":
-        caption = ("Layout and blobs come from the network structure; node colour "
-                   "is the BERTopic topic, so each community's topic mix is visible. "
-                   "Node size scales with strength; grey nodes are unconnected.")
+        caption = ("Layout comes from the coupling structure (strongly-coupled "
+                   "papers sit together); node colour is the BERTopic topic, so "
+                   "each community's topic mix is visible. Node size scales with "
+                   "strength; grey nodes are unconnected.")
     else:
-        caption = ("Layout, blobs and colour all come from the network structure "
-                   "(Leiden communities). Node size scales with strength.")
+        caption = ("Layout and colour both come from the network structure "
+                   "(Leiden communities on the coupling graph, so communities "
+                   "read as spatially separated clusters). Node size scales with "
+                   "strength.")
     sub_content.append({
         "type": "plotly", "figure": fig,
         "caption": caption, "filename_prefix": filename_prefix,
@@ -446,7 +453,7 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         title="Bibliographic coupling", filename_prefix="bibliographic_coupling",
         node_kind="document", count_label="Documents",
         k=cfg.coupling.backbone_k, color_mode=cfg.coupling.color_by,
-        hulls=cfg.coupling.hulls, export_to=export_to,
+        export_to=export_to,
     )
     if coupling_sub is not None:
         sub_blocks.append(coupling_sub)
@@ -456,7 +463,7 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         title="Co-citation", filename_prefix="co_citation",
         node_kind="reference", count_label="References",
         k=cfg.cocitation.backbone_k, color_mode=cfg.cocitation.color_by,
-        hulls=cfg.cocitation.hulls, export_to=export_to,
+        export_to=export_to,
     )
     if cocitation_sub is not None:
         sub_blocks.append(cocitation_sub)
@@ -1049,13 +1056,17 @@ def build_report_data(run_dir: str,
             try:
                 _coupling_result = build_coupling(
                     _networks_df, ref_col=ref_col,
-                    resolution=nc.coupling.resolution, min_size=nc.coupling.min_size)
+                    resolution_range=nc.coupling.resolution_range,
+                    resolution_step=nc.coupling.resolution_step,
+                    min_size=nc.coupling.min_size)
             except Exception:
                 _coupling_result = None
             try:
                 _cocitation_result = build_cocitation(
                     _networks_df, ref_col=ref_col, min_ref_freq=nc.cocitation.min_ref_freq,
-                    resolution=nc.cocitation.resolution, min_size=nc.cocitation.min_size)
+                    resolution_range=nc.cocitation.resolution_range,
+                    resolution_step=nc.cocitation.resolution_step,
+                    min_size=nc.cocitation.min_size)
             except Exception:
                 _cocitation_result = None
 

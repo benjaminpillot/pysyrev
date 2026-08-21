@@ -353,18 +353,18 @@ topic_model:
 #   #     n_repr_docs_per_topic: 5   # representative documents shown per topic
 #   #   bib_network:                # coupling + co-citation + connectivity panels
 #   #     coupling:                 # document × document (Salton + Leiden, coloured by topic)
-#   #       resolution: 0.7         # Leiden resolution; higher → more, smaller communities (default: 0.7)
+#   #       resolution_range: [0.4, 1.2]  # sweep Leiden resolutions and keep the best-modularity partition (default: [0.4, 1.2])
+#   #       resolution_step: 0.1    # step of the sweep (default: 0.1)
 #   #       min_size: 5             # communities smaller than this fall into the uncoupled tail (default: 5)
 #   #       backbone_k: 3           # draw only each node's k strongest couplings (default: 3)
 #   #       color_by: topic         # topic | community (default: topic)
-#   #       hulls: true             # outline Leiden communities when colouring by topic (default: true)
 #   #     cocitation:               # reference × reference (Salton + Leiden)
 #   #       min_ref_freq: 2         # keep references cited by at least this many documents (default: 2)
-#   #       resolution: 0.7         # Leiden resolution (default: 0.7)
+#   #       resolution_range: [0.4, 1.2]  # sweep Leiden resolutions and keep the best-modularity partition (default: [0.4, 1.2])
+#   #       resolution_step: 0.1    # step of the sweep (default: 0.1)
 #   #       min_size: 5             # communities smaller than this fall into the tail (default: 5)
 #   #       backbone_k: 3           # draw only each node's k strongest co-citations (default: 3)
 #   #       color_by: community     # topic | community (default: community)
-#   #       hulls: true             # outline Leiden communities when colouring by topic (default: true)
 #   #     connectivity:             # mean coupling between groups
 #   #       by: topic               # topic | community — group the coupling nodes by this (default: topic)
 #   #       scale: 1000             # rescales the tiny coupling values for readability (default: 1000)
