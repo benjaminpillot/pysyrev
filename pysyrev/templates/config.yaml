@@ -273,8 +273,13 @@ topic_model:
   #   purity: c_v                 # scores the best configurations (slower)
 
   # ---- HDBSCAN clustering ------------------------------------------------
-  # Topic granularity is driven by desired_topics above; min_topic_size is
-  # internal. Only the min_samples grid and HDBSCAN internals are exposed here.
+  # Topic granularity is driven by desired_topics above (min_topic_size is
+  # derived and internal). What is left here is min_samples: it tunes how
+  # conservative the clustering is — its first-order effect is on the OUTLIER
+  # fraction and cluster stability, not on the topic count (that effect is
+  # indirect and non-monotone). So it is swept as a small grid and the coherence
+  # ranking picks the best; the desired_topics filter still prunes any of its
+  # combinations that fall out of band.
   hdbscan:
     min_sample_range: [2, 10]
     min_sample_step: 2
@@ -283,6 +288,13 @@ topic_model:
     # prediction_data: true
 
   # ---- UMAP dimensionality reduction -------------------------------------
+  # UMAP shapes the embedding manifold before clustering: n_neighbors trades
+  # local vs global structure (low -> fragmented, more clusters; high -> broader,
+  # fewer), n_components sets the reduced dimensionality (mostly separability /
+  # noise). Both influence the topic count, but non-deterministically and
+  # non-invertibly (they interact with HDBSCAN and the embedding geometry), so
+  # they are swept as small grids rather than derived — the desired_topics filter
+  # keeps only the in-band results.
   umap:
     n_neighbors: [5, 10]              # grid-search values
     n_components: [5, 10, 15]
