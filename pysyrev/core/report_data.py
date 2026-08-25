@@ -874,20 +874,24 @@ def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, sec
 def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
                       weights=None, relevance_mode="blend",
                       drop_current_year=True, current_year=None):
-    """Three-axis ranking of papers within their topic, keyed by document id.
+    """Three-axis ranking of papers within their Leiden coupling community,
+    keyed by document id.
 
     Returns ``{doc_id: {score, centrality, relevance, representativeness,
-    relevance_dropped}}`` (each axis a within-topic percentile). Combines
-    coupling centrality (PageRank + weighted degree on the coupling matrix),
-    citation relevance (per-year + raw) and thematic representativeness
-    (typicality to the topic's TF-IDF centroid). The ``aggregate``, ``weights``,
-    ``relevance_mode``, ``drop_current_year`` and ``current_year`` knobs are
-    forwarded to :func:`pysyrev.core.paper_ranking.top_papers_3axis`. Empty dict
-    when a prerequisite is missing.
+    relevance_dropped}}`` (each axis a within-community percentile). Faithful to
+    the network-first paradigm: papers are ranked inside their bibliographic-
+    coupling community (``coupling_result.labels``), not inside the global
+    BERTopic topic. Combines coupling centrality (PageRank + weighted degree on
+    the coupling matrix), citation relevance (per-year + raw) and thematic
+    representativeness (typicality to the *community*'s text centroid). The
+    ``aggregate``, ``weights``, ``relevance_mode``, ``drop_current_year`` and
+    ``current_year`` knobs are forwarded to
+    :func:`pysyrev.core.paper_ranking.top_papers_3axis`. Empty dict when a
+    prerequisite is missing.
     """
     if coupling_result is None or coupling_result.n_nodes < 2:
         return {}
-    if bertopic_results is None or "Topic" not in bertopic_results.columns:
+    if bertopic_results is None:
         return {}
     id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
     if id_col is None:
@@ -903,8 +907,9 @@ def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
             return default
 
     node_ids = coupling_result.node_ids
+    comm = np.asarray(coupling_result.labels)   # Leiden community per node (-1 = tail)
     records, labels = [], []
-    for nid in node_ids:
+    for i, nid in enumerate(node_ids):
         if nid in by_id.index:
             row = by_id.loc[nid]
             year = row.get("year")
@@ -913,10 +918,9 @@ def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
                 "cited_by_count": _num(row.get("cited_by")),
                 "_text": str(row.get(text_col) or ""),
             })
-            labels.append(int(_num(row.get("Topic"), -1)))
         else:
             records.append({"publication_year": None, "cited_by_count": 0.0, "_text": ""})
-            labels.append(-1)
+        labels.append(int(comm[i]))
 
     from pysyrev.core.paper_ranking import top_papers_3axis
     top = top_papers_3axis(records, labels, coupling_result.W, n=len(records),
@@ -1166,6 +1170,55 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                 "complete year and is not yet meaningful for them. They are kept out of "
                 "the historical 3-axis list above so a 2-axis score is never compared "
                 "against a 3-axis one.")})
+
+    # Second reading list, organized by Leiden coupling community (its TF-IDF
+    # sub-theme) instead of by topic — the composite scores are community-grounded,
+    # so this is their native grouping. Current-year fronts are excluded (they have
+    # their own table when the split is on).
+    if is_composite and coupling_result is not None:
+        from collections import defaultdict
+        det = _composite_detail
+        doc_comm = {nid: int(c) for nid, c in
+                    zip(coupling_result.node_ids, coupling_result.labels)}
+        terms = getattr(coupling_result, "terms", {}) or {}
+        meta_by_id = bertopic_results.drop_duplicates(id_col).set_index(id_col)
+        by_comm = defaultdict(list)
+        for nid, c in doc_comm.items():
+            if c >= 0 and nid in det and nid not in front_ids:
+                by_comm[c].append(nid)
+        cluster_rows = []
+        for c in sorted(by_comm):
+            docs = sorted(by_comm[c], key=lambda i: det[i]["score"], reverse=True)
+            n_c = max(1, round(sel_cfg.proportion_per_topic * len(docs)))
+            subtheme = ", ".join(terms.get(c, [])[:4])
+            comm_label = f"C{c}" + (f" · {subtheme}" if subtheme else "")
+            for nid in docs[:n_c]:
+                d = det[nid]
+                m = meta_by_id.loc[nid] if nid in meta_by_id.index else None
+                title = str(m.get("title", "-"))[:80] if m is not None else "-"
+                yr = _fmt_year(m.get("year")) if m is not None else "-"
+                ct = _fmt_cit(m.get("cited_by")) if m is not None else "-"
+                rel = "n.d." if d.get("relevance_dropped") else _fmt_axis(d.get("relevance"))
+                cluster_rows.append([
+                    comm_label, title, yr, ct,
+                    _fmt_axis(d.get("score")), _fmt_axis(d.get("centrality")),
+                    rel, _fmt_axis(d.get("representativeness")),
+                ])
+        if cluster_rows:
+            blocks.append({
+                "type":       "table",
+                "title":      f"Reading list by coupling community — {len(cluster_rows)} papers",
+                "headers":    ["Community", "Title", "Year", "Cit.",
+                               "Score", "Cent.", "Rel.", "Typ."],
+                "rows":       cluster_rows,
+                "col_widths": [3.4, 5.2, 0.9, 0.9, 1.1, 1.1, 1.1, 1.3],
+            })
+            blocks.append({"type": "paragraph", "text": (
+                "A second reading list organized by bibliographic-coupling community "
+                "(named by its distinguishing TF-IDF terms) instead of by topic. The "
+                "scores are the same community-grounded three-axis composite — here "
+                "papers are ranked within their coupling community, the composite's "
+                "native grouping.")})
 
     return {"title": f"{section_n}. Paper selection", "blocks": blocks}
 

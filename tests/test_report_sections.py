@@ -815,3 +815,51 @@ class TestCommunityTopicMapping:
         fig = [b for b in sub["blocks"] if b["type"] == "plotly"][0]["figure"]
         assert list(fig.data[0].y) == ["C0", "C1"]           # no C-1
         assert all("Topic -1" not in str(x) for x in fig.data[0].x)
+
+
+class TestCompositeByCommunity:
+    """The composite is grounded in Leiden communities, with a per-community list."""
+
+    def _inputs(self):
+        from pysyrev.core.networks.common import NetworkResult
+        ids = [f"W{i}" for i in range(6)]
+        bt = pd.DataFrame({
+            "id": ids, "ID": ids,
+            "year": [2019, 2020, 2021, 2019, 2020, 2021],
+            "cited_by": [80, 50, 30, 60, 40, 20],
+            "document_type": ["article"] * 6,
+            "title": [f"Paper {i}" for i in range(6)],
+            "doi": [f"10.1/{i}" for i in range(6)],
+            "Topic": [0, 1, 0, 1, 0, 1],
+            "Document": [f"solar wind model {i}" for i in range(6)],
+        })
+        W = np.ones((6, 6)) - np.eye(6)
+        coup = NetworkResult(node_ids=ids, W=W, labels=np.array([0, 0, 0, 1, 1, 1]),
+                             coords=np.zeros((6, 2)), modularity=0.3,
+                             terms={0: ["solar", "photovoltaic"], 1: ["wind", "turbine"]})
+        return bt, coup
+
+    def test_composite_scores_ignore_topic_use_community(self):
+        from pysyrev.core.report_data import _composite_scores
+        bt, coup = self._inputs()
+        det = _composite_scores(coup, bt)
+        assert det                                          # scored
+        # No "Topic" column at all → still scored (grouping is the Leiden community).
+        det2 = _composite_scores(coup, bt.drop(columns=["Topic"]))
+        assert set(det) == set(det2)
+        assert all(abs(det[k]["score"] - det2[k]["score"]) < 1e-9 for k in det)
+
+    def test_per_community_reading_list_present(self):
+        from pysyrev.core.report_data import _build_paper_selection_section
+        bt, coup = self._inputs()
+        cfg = PaperSelectionConfig(min_year=2015, proportion_per_topic=1.0,
+                                   selection_by="composite", export_annex=False)
+        sec = _build_paper_selection_section(bt, None, None, cfg, None, 6,
+                                             coupling_result=coup)
+        tables = _blocks_of_type(sec, "table")
+        clist = next(t for t in tables if "coupling community" in t["title"])
+        assert clist["headers"][0] == "Community"
+        comm_cells = {r[0] for r in clist["rows"]}
+        assert any("solar" in c for c in comm_cells)        # TF-IDF sub-theme in label
+        assert any(c.startswith("C0") for c in comm_cells)
+        assert any(c.startswith("C1") for c in comm_cells)
