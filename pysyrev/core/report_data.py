@@ -1259,9 +1259,14 @@ def build_report_data(run_dir: str,
     if coupling_dataset:
         try:
             _networks_df = pd.read_csv(coupling_dataset, low_memory=False)
-        except Exception:
+        except Exception as e:
+            print(f"[report] networks skipped: cannot read {coupling_dataset!r} ({e!r})")
             _networks_df = None
-        if _networks_df is not None and {"references", "id"}.issubset(_networks_df.columns):
+        if _networks_df is not None and not {"references", "id"}.issubset(_networks_df.columns):
+            print(f"[report] networks skipped: dataset has no 'references'/'id' "
+                  f"columns (found {list(_networks_df.columns)}).")
+            _networks_df = None
+        if _networks_df is not None:
             from pysyrev.core.networks import build_coupling, build_cocitation
             nc = sec.bib_network
             # Prefer the canonical DOI-keyed references when available: they
@@ -1270,13 +1275,19 @@ def build_report_data(run_dir: str,
             ref_col = ("reference_keys"
                        if "reference_keys" in _networks_df.columns
                        else "references")
+            n_with_refs = int(_networks_df[ref_col].apply(
+                lambda v: isinstance(v, str) and bool(v.strip())).sum())
+            if n_with_refs < 2:
+                print(f"[report] networks likely empty: only {n_with_refs} document(s) "
+                      f"carry references in column {ref_col!r}.")
             try:
                 _coupling_result = build_coupling(
                     _networks_df, ref_col=ref_col,
                     resolution_range=nc.coupling.resolution_range,
                     resolution_step=nc.coupling.resolution_step,
                     min_size=nc.coupling.min_size)
-            except Exception:
+            except Exception as e:
+                print(f"[report] coupling network skipped: {e!r}")
                 _coupling_result = None
             try:
                 _cocitation_result = build_cocitation(
@@ -1284,7 +1295,8 @@ def build_report_data(run_dir: str,
                     resolution_range=nc.cocitation.resolution_range,
                     resolution_step=nc.cocitation.resolution_step,
                     min_size=nc.cocitation.min_size)
-            except Exception:
+            except Exception as e:
+                print(f"[report] co-citation network skipped: {e!r}")
                 _cocitation_result = None
 
     # 2. Bibliographic networks (coupling + co-citation) — rendered whenever the

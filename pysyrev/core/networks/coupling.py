@@ -42,8 +42,8 @@ def _cluster_subthemes(df, labels, text_cols=("title", "abstract")) -> dict:
              .agg(". ".join, axis=1).tolist())
     try:
         return cluster_terms(texts, labels)
-    except ValueError:            # empty vocabulary (tiny/sparse corpus)
-        return {}
+    except Exception:             # empty vocabulary / any vectoriser hiccup
+        return {}                 # sub-themes are optional; never break the network
 
 
 def salton_coupling(refsets: Sequence[set]) -> np.ndarray:
