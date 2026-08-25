@@ -351,7 +351,8 @@ async def _review_batch(
                     messages, reviewer.model_id, model_args, response_schema,
                 )
             if n_articles == 1:
-                return [{"evaluation": int(raw["evaluation"]), "reasoning": str(raw["reasoning"])}]
+                return [{"evaluation": int(raw["evaluation"]),
+                         "reasoning": str(raw.get("reasoning", ""))}]
 
             # Accept {"evaluations": [...]} or a bare list
             if isinstance(raw, list):
@@ -363,7 +364,8 @@ async def _review_batch(
 
             if len(evals) != n_articles:
                 raise ValueError(f"Expected {n_articles} evaluations, got {len(evals)}")
-            return [{"evaluation": int(e["evaluation"]), "reasoning": str(e["reasoning"])}
+            return [{"evaluation": int(e["evaluation"]),
+                     "reasoning": str(e.get("reasoning", ""))}
                     for e in evals]
         except Exception as exc:
             last_exc = exc
