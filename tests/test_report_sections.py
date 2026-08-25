@@ -347,6 +347,40 @@ class TestCompositeSelection:
         assert set(csv[csv["cohort"] == "front"]["year"]) == {2026}
         assert 2026 not in set(csv[csv["cohort"] == "historical"]["year"])
 
+    def test_fronts_are_a_proportional_selection_not_all(self, tmp_path):
+        # Many current-year papers, small proportion → the CSV fronts are a
+        # top-N-per-topic selection, not the whole current year, and match the
+        # research-fronts table count.
+        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.networks.common import NetworkResult
+        n = 30
+        ids = [f"W{i}" for i in range(n)]
+        years = [2020 + (i % 5) for i in range(20)] + [2026] * 10   # 20 hist, 10 front
+        bt = pd.DataFrame({
+            "id": ids, "ID": ids, "year": years,
+            "cited_by": [50 - i for i in range(n)],
+            "document_type": ["article"] * n,
+            "title": [f"Paper {i}" for i in range(n)],
+            "doi": [f"10.1/{i}" for i in range(n)],
+            "Topic": [0] * n,
+            "Document": [f"energy model {i}" for i in range(n)],
+        })
+        W = np.ones((n, n)) - np.eye(n)
+        coupling = NetworkResult(node_ids=ids, W=W, labels=np.zeros(n, int),
+                                 coords=np.zeros((n, 2)), modularity=0.1)
+        cfg = PaperSelectionConfig(
+            min_year=2015, proportion_per_topic=0.2, selection_by="composite",
+            export_annex=True, annex_format="csv",
+            composite=CompositeConfig(split_current_year=True, current_year=2026))
+        sec = _build_paper_selection_section(bt, None, None, cfg, str(tmp_path), 6,
+                                             coupling_result=coupling)
+        csv = pd.read_csv(tmp_path / "paper_selection.csv")
+        n_front_csv = int((csv["cohort"] == "front").sum())
+        assert 0 < n_front_csv < 10                      # a selection, not all 10 fronts
+        fronts_table = next(t for t in _blocks_of_type(sec, "table")
+                            if t["title"].startswith("Research fronts"))
+        assert len(fronts_table["rows"]) == n_front_csv  # table and CSV agree
+
 
 # =============================================================================
 # _build_temporal_section

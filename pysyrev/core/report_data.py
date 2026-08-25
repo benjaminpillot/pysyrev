@@ -1073,17 +1073,27 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
             full_df[col] = full_df[id_col].map(lambda i: (det.get(i) or {}).get(key))
 
     # Research fronts frame (current-year cohort), built once and reused for both
-    # the fronts table and the CSV annex. Tag a `cohort` column so the annex holds
-    # historical and front papers in one file, distinguishable by that column.
+    # the fronts table and the CSV annex. It is a per-topic SELECTION — the same
+    # top-N-per-topic proportion as the historical list — so the two cohorts are
+    # comparably sized, not the whole current year. Tag a `cohort` column so the
+    # annex holds both in one file, distinguishable by that column.
     fronts_export = None
     if comp_split and front_ids:
         det = _composite_detail
-        fronts_export = br_wo[br_wo[id_col].isin(front_ids)].copy()
+        fronts_all = br_wo[br_wo[id_col].isin(front_ids)].copy()
         for col, key in [("composite_score", "score"), ("centrality", "centrality"),
                          ("relevance", "relevance"),
                          ("representativeness", "representativeness"),
                          ("_reldrop", "relevance_dropped")]:
-            fronts_export[col] = fronts_export[id_col].map(lambda i: (det.get(i) or {}).get(key))
+            fronts_all[col] = fronts_all[id_col].map(lambda i: (det.get(i) or {}).get(key))
+        parts = []
+        for topic_id in sorted(fronts_all["Topic"].unique()):
+            tdf = fronts_all[fronts_all["Topic"] == topic_id].sort_values(
+                "composite_score", ascending=False)
+            n_f = max(1, round(sel_cfg.proportion_per_topic * len(tdf)))
+            parts.append(tdf.head(n_f))
+        fronts_export = (pd.concat(parts, ignore_index=True) if parts
+                         else fronts_all.iloc[0:0])
         fronts_export["_selection"] = "Research front"
         full_df["cohort"] = "historical"
         fronts_export["cohort"] = "front"
@@ -1169,23 +1179,22 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     if annex_msg:
         blocks.append({"type": "paragraph", "text": annex_msg})
 
-    # Research fronts: the current-year cohort, ranked on 2 axes, shown separately.
+    # Research fronts: the current-year selection (already top-N per topic in
+    # fronts_export), ranked on 2 axes, shown separately.
     if fronts_export is not None:
         front_rows = []
-        for topic_id in sorted(fronts_export["Topic"].unique()):
-            tdf = fronts_export[fronts_export["Topic"] == topic_id].sort_values(
-                "composite_score", ascending=False)
-            n_f = max(1, round(sel_cfg.proportion_per_topic * len(tdf)))
-            for _, row in tdf.head(n_f).iterrows():
-                tid = int(row["Topic"])
-                front_rows.append([
-                    str(tid), _topic_label(tid, topic_labels),
-                    str(row.get("title", "-"))[:100],
-                    _fmt_year(row.get("year")), _fmt_cit(row.get("cited_by")),
-                    _fmt_axis(row.get("composite_score")),
-                    _fmt_axis(row.get("centrality")),
-                    _fmt_axis(row.get("representativeness")),
-                ])
+        ordered = fronts_export.sort_values(
+            ["Topic", "composite_score"], ascending=[True, False])
+        for _, row in ordered.iterrows():
+            tid = int(row["Topic"])
+            front_rows.append([
+                str(tid), _topic_label(tid, topic_labels),
+                str(row.get("title", "-"))[:100],
+                _fmt_year(row.get("year")), _fmt_cit(row.get("cited_by")),
+                _fmt_axis(row.get("composite_score")),
+                _fmt_axis(row.get("centrality")),
+                _fmt_axis(row.get("representativeness")),
+            ])
         if front_rows:
             blocks.append({
                 "type":       "table",
