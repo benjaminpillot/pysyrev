@@ -849,17 +849,3 @@ class TestCompositeByCommunity:
         assert set(det) == set(det2)
         assert all(abs(det[k]["score"] - det2[k]["score"]) < 1e-9 for k in det)
 
-    def test_per_community_reading_list_present(self):
-        from pysyrev.core.report_data import _build_paper_selection_section
-        bt, coup = self._inputs()
-        cfg = PaperSelectionConfig(min_year=2015, proportion_per_topic=1.0,
-                                   selection_by="composite", export_annex=False)
-        sec = _build_paper_selection_section(bt, None, None, cfg, None, 6,
-                                             coupling_result=coup)
-        tables = _blocks_of_type(sec, "table")
-        clist = next(t for t in tables if "coupling community" in t["title"])
-        assert clist["headers"][0] == "Community"
-        comm_cells = {r[0] for r in clist["rows"]}
-        assert any("solar" in c for c in comm_cells)        # TF-IDF sub-theme in label
-        assert any(c.startswith("C0") for c in comm_cells)
-        assert any(c.startswith("C1") for c in comm_cells)

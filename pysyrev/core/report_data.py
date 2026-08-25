@@ -1171,55 +1171,6 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                 "the historical 3-axis list above so a 2-axis score is never compared "
                 "against a 3-axis one.")})
 
-    # Second reading list, organized by Leiden coupling community (its TF-IDF
-    # sub-theme) instead of by topic — the composite scores are community-grounded,
-    # so this is their native grouping. Current-year fronts are excluded (they have
-    # their own table when the split is on).
-    if is_composite and coupling_result is not None:
-        from collections import defaultdict
-        det = _composite_detail
-        doc_comm = {nid: int(c) for nid, c in
-                    zip(coupling_result.node_ids, coupling_result.labels)}
-        terms = getattr(coupling_result, "terms", {}) or {}
-        meta_by_id = bertopic_results.drop_duplicates(id_col).set_index(id_col)
-        by_comm = defaultdict(list)
-        for nid, c in doc_comm.items():
-            if c >= 0 and nid in det and nid not in front_ids:
-                by_comm[c].append(nid)
-        cluster_rows = []
-        for c in sorted(by_comm):
-            docs = sorted(by_comm[c], key=lambda i: det[i]["score"], reverse=True)
-            n_c = max(1, round(sel_cfg.proportion_per_topic * len(docs)))
-            subtheme = ", ".join(terms.get(c, [])[:4])
-            comm_label = f"C{c}" + (f" · {subtheme}" if subtheme else "")
-            for nid in docs[:n_c]:
-                d = det[nid]
-                m = meta_by_id.loc[nid] if nid in meta_by_id.index else None
-                title = str(m.get("title", "-"))[:80] if m is not None else "-"
-                yr = _fmt_year(m.get("year")) if m is not None else "-"
-                ct = _fmt_cit(m.get("cited_by")) if m is not None else "-"
-                rel = "n.d." if d.get("relevance_dropped") else _fmt_axis(d.get("relevance"))
-                cluster_rows.append([
-                    comm_label, title, yr, ct,
-                    _fmt_axis(d.get("score")), _fmt_axis(d.get("centrality")),
-                    rel, _fmt_axis(d.get("representativeness")),
-                ])
-        if cluster_rows:
-            blocks.append({
-                "type":       "table",
-                "title":      f"Reading list by coupling community — {len(cluster_rows)} papers",
-                "headers":    ["Community", "Title", "Year", "Cit.",
-                               "Score", "Cent.", "Rel.", "Typ."],
-                "rows":       cluster_rows,
-                "col_widths": [3.4, 5.2, 0.9, 0.9, 1.1, 1.1, 1.1, 1.3],
-            })
-            blocks.append({"type": "paragraph", "text": (
-                "A second reading list organized by bibliographic-coupling community "
-                "(named by its distinguishing TF-IDF terms) instead of by topic. The "
-                "scores are the same community-grounded three-axis composite — here "
-                "papers are ranked within their coupling community, the composite's "
-                "native grouping.")})
-
     return {"title": f"{section_n}. Paper selection", "blocks": blocks}
 
 
