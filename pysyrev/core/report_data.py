@@ -494,6 +494,65 @@ def _build_connectivity_subsection(coupling_result, bertopic_results,
             "blocks": sub_content}
 
 
+def _build_community_topic_mapping_subsection(coupling_result, bertopic_results,
+                                              topic_labels, export_to):
+    """Mapping of Leiden coupling communities (rows) onto BERTopic topics (cols).
+
+    A heatmap of how each coupling community's documents distribute across the
+    global topics — the croisement between the citation-based communities and the
+    text-based topics. Returns a subsection block, or None when a prerequisite is
+    missing.
+    """
+    from pysyrev.core.networks import community_topic_crosstab, plot_crosstab_heatmap
+
+    if coupling_result is None or coupling_result.n_nodes < 2:
+        return None
+    if bertopic_results is None or "Topic" not in bertopic_results.columns:
+        return None
+    id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
+    if id_col is None:
+        return None
+
+    topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
+    topics = np.array([int(topic_of.get(nid, -1)) for nid in coupling_result.node_ids])
+    labels = np.asarray(coupling_result.labels)
+
+    # Keep real communities (not the uncoupled tail) and real topics (not outliers).
+    keep = (labels >= 0) & (topics >= 0)
+    if keep.sum() < 1:
+        return None
+    ct = community_topic_crosstab(
+        labels[keep], topics[keep],
+        topic_labels={t: _topic_label(t, topic_labels)
+                      for t in set(topics[keep].tolist())})
+    if ct.empty or ct.shape[0] < 1 or ct.shape[1] < 1:
+        return None
+
+    row_labels = [f"C{c}" for c in ct.index]
+    col_labels = [str(c) for c in ct.columns]
+    fig = plot_crosstab_heatmap(
+        ct.values, row_labels, col_labels, title=None,
+        row_title="Coupling community", col_title="Topic")
+
+    sub_content = [
+        {"type": "paragraph",
+         "text": ("How each bibliographic-coupling community (rows) distributes "
+                  "across the global BERTopic topics (columns). A community "
+                  "concentrated in a single topic is thematically focused; one "
+                  "spread across several topics bridges them through shared "
+                  "references.")},
+        {"type": "plotly", "figure": fig,
+         "caption": "Cell = number of documents; darker = more documents.",
+         "filename_prefix": "community_topic_mapping"},
+    ]
+    html_block = _export_network_html(fig, export_to, "Community × topic mapping")
+    if html_block is not None:
+        sub_content.append(html_block)
+
+    return {"type": "subsection", "title": "Community × topic mapping",
+            "blocks": sub_content}
+
+
 def _build_networks_section(df, coupling_result, cocitation_result,
                             bertopic_results, topic_labels, section_cfg,
                             export_to, section_n):
@@ -517,6 +576,11 @@ def _build_networks_section(df, coupling_result, cocitation_result,
     )
     if coupling_sub is not None:
         sub_blocks.append(coupling_sub)
+
+    mapping_sub = _build_community_topic_mapping_subsection(
+        coupling_result, bertopic_results, topic_labels, export_to)
+    if mapping_sub is not None:
+        sub_blocks.append(mapping_sub)
 
     cocitation_sub = _build_network_subsection(
         cocitation_result, df, bertopic_results, topic_labels,

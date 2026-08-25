@@ -22,7 +22,8 @@ from pysyrev.core.networks.connectivity import (
     coupling_inout,
     groups_from_labels,
 )
-from pysyrev.core.networks.plotting import plot_network, plot_connectivity_matrix
+from pysyrev.core.networks.plotting import (
+    plot_network, plot_connectivity_matrix, plot_crosstab_heatmap)
 
 __all__ = [
     "NetworkResult",
@@ -42,4 +43,5 @@ __all__ = [
     "coupling_inout",
     "groups_from_labels",
     "plot_connectivity_matrix",
+    "plot_crosstab_heatmap",
 ]

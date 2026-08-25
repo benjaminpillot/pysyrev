@@ -183,3 +183,37 @@ def plot_connectivity_matrix(M: np.ndarray, labels: List[str],
         plot_bgcolor="white",
     )
     return fig
+
+
+def plot_crosstab_heatmap(M: np.ndarray, row_labels: List[str],
+                          col_labels: List[str], title: Optional[str] = None,
+                          row_title: str = "", col_title: str = "",
+                          colorbar_title: str = "docs"):
+    """Annotated Plotly heatmap of a rectangular contingency table.
+
+    ``M[i,j]`` is the count of documents in row group *i* and column group *j*
+    (e.g. Leiden community × BERTopic topic). Each cell is annotated with its
+    integer count. Returns a ``plotly.graph_objects.Figure``.
+    """
+    import plotly.graph_objects as go
+
+    M = np.asarray(M, dtype=float)
+    text = [[f"{int(v)}" if v else "" for v in row] for row in M]
+    nr, nc = M.shape
+
+    fig = go.Figure(go.Heatmap(
+        z=M, x=col_labels, y=row_labels,
+        text=text, texttemplate="%{text}", textfont=dict(size=10),
+        colorscale="Blues", zmin=0.0,
+        hovertemplate="%{y} × %{x}: %{z:.0f} docs<extra></extra>",
+        colorbar=dict(title=colorbar_title, thickness=12),
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis=dict(side="top", tickangle=-30, automargin=True, title=col_title),
+        yaxis=dict(autorange="reversed", automargin=True, title=row_title),
+        width=max(520, 80 * nc + 240), height=max(360, 70 * nr + 160),
+        margin=dict(l=20, r=20, t=80, b=20),
+        plot_bgcolor="white",
+    )
+    return fig

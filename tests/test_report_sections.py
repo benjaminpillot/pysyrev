@@ -776,3 +776,42 @@ class TestCommunitySubthemesTable:
         sub = self._subsection({})
         assert not any("sub-theme" in b.get("title", "").lower()
                        for b in sub["blocks"] if b.get("type") == "table")
+
+
+class TestCommunityTopicMapping:
+    """The community × topic heatmap crosses Leiden communities with BERTopic topics."""
+
+    def _coupling(self, communities):
+        from pysyrev.core.networks.common import NetworkResult
+        n = len(communities)
+        ids = [f"W{i}" for i in range(n)]
+        W = np.ones((n, n)) - np.eye(n)
+        return NetworkResult(node_ids=ids, W=W, labels=np.array(communities),
+                             coords=np.zeros((n, 2)), modularity=0.2), ids
+
+    def test_heatmap_counts_documents_per_community_topic(self):
+        from pysyrev.core.report_data import _build_community_topic_mapping_subsection
+        coup, ids = self._coupling([0, 0, 0, 1, 1, 1])
+        bt = pd.DataFrame({"id": ids, "Topic": [0, 0, 1, 1, 2, 2]})
+        sub = _build_community_topic_mapping_subsection(coup, bt, None, None)
+        assert sub["title"] == "Community × topic mapping"
+        fig = [b for b in sub["blocks"] if b["type"] == "plotly"][0]["figure"]
+        z = np.asarray(fig.data[0].z)
+        assert z.shape == (2, 3)                    # 2 communities × 3 topics
+        assert z.tolist() == [[2, 1, 0], [0, 1, 2]]
+        assert list(fig.data[0].y) == ["C0", "C1"]
+
+    def test_none_without_bertopic(self):
+        from pysyrev.core.report_data import _build_community_topic_mapping_subsection
+        coup, _ = self._coupling([0, 0, 1, 1])
+        assert _build_community_topic_mapping_subsection(coup, None, None, None) is None
+
+    def test_tail_and_outliers_excluded(self):
+        from pysyrev.core.report_data import _build_community_topic_mapping_subsection
+        # community -1 (tail) and topic -1 (outlier) must not appear.
+        coup, ids = self._coupling([0, 0, 1, 1, -1])
+        bt = pd.DataFrame({"id": ids, "Topic": [0, 1, 0, 1, -1]})
+        sub = _build_community_topic_mapping_subsection(coup, bt, None, None)
+        fig = [b for b in sub["blocks"] if b["type"] == "plotly"][0]["figure"]
+        assert list(fig.data[0].y) == ["C0", "C1"]           # no C-1
+        assert all("Topic -1" not in str(x) for x in fig.data[0].x)
