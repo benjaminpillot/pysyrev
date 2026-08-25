@@ -617,8 +617,9 @@ class CocitationPanelConfig(ConfigField):
 
 @dataclass
 class ConnectivityConfig(ConfigField):
-    """Inter-group connectivity matrix panel."""
-    by:    str   = "topic"          # "topic" | "community" — group the coupling nodes by this
+    """Inter-group connectivity matrix panels (rendered for BOTH topic and
+    community groupings)."""
+    by:    str   = "topic"          # deprecated / ignored — both topic and community panels are rendered
     scale: float = 1000.0           # rescales the tiny coupling values for readability
 
 

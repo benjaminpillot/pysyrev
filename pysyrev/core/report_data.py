@@ -420,39 +420,18 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     return {"type": "subsection", "title": title, "blocks": sub_content}
 
 
-def _build_connectivity_subsection(coupling_result, bertopic_results,
-                                   topic_labels, section_cfg, export_to):
-    """Inter-group connectivity: mean bibliographic coupling between topics (or
-    Leiden communities), from the coupling matrix. A heatmap plus a per-group
-    internal/outward table. Grouping by topic is the informative use — it tests
-    whether topics share references (are intellectually connected) or are siloed.
-    Returns a subsection block, or None when fewer than two groups exist.
+def _connectivity_panel(W, groups, unit, scale, export_to):
+    """One inter-group connectivity subsection for a precomputed grouping.
+
+    *groups* is a list of ``(label, idx_array)``; *unit* is ``"topic"`` or
+    ``"community"``. A heatmap of mean bibliographic coupling between groups plus
+    a per-group internal/outward table. Returns None when fewer than two
+    non-empty groups exist.
     """
     from pysyrev.core.networks import (
         inter_cluster_matrix, corpus_baseline, coupling_inout,
-        groups_from_labels, plot_connectivity_matrix,
+        plot_connectivity_matrix,
     )
-
-    if coupling_result is None or coupling_result.n_nodes < 2:
-        return None
-
-    by    = section_cfg.connectivity.by
-    scale = section_cfg.connectivity.scale
-    W     = coupling_result.W
-
-    if by == "community":
-        groups = groups_from_labels(coupling_result.labels)
-        unit   = "community"
-    else:
-        topic_of = {}
-        if bertopic_results is not None and "Topic" in bertopic_results.columns:
-            id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
-            if id_col:
-                topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
-        topics = np.array([int(topic_of.get(nid, -1)) for nid in coupling_result.node_ids])
-        groups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
-                  for t in sorted(x for x in set(topics.tolist()) if x != -1)]
-        unit = "topic"
 
     groups = [(lab, idx) for lab, idx in groups if len(idx) > 0]
     if len(groups) < 2:
@@ -492,6 +471,46 @@ def _build_connectivity_subsection(coupling_result, bertopic_results,
     return {"type": "subsection",
             "title": f"{unit.capitalize()} connectivity",
             "blocks": sub_content}
+
+
+def _build_connectivity_subsections(coupling_result, bertopic_results,
+                                    topic_labels, section_cfg, export_to):
+    """Both connectivity panels — by BERTopic topic and by Leiden community.
+
+    Topic connectivity tests whether the global topics share references; community
+    connectivity does the same for the coupling communities themselves. Returns a
+    list of subsection blocks (0-2), skipping a grouping with fewer than two
+    non-empty groups.
+    """
+    if coupling_result is None or coupling_result.n_nodes < 2:
+        return []
+
+    scale = section_cfg.connectivity.scale
+    W     = coupling_result.W
+    panels = []
+
+    # By BERTopic topic.
+    topic_of = {}
+    if bertopic_results is not None and "Topic" in bertopic_results.columns:
+        id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
+        if id_col:
+            topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
+    if topic_of:
+        topics = np.array([int(topic_of.get(nid, -1)) for nid in coupling_result.node_ids])
+        tgroups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
+                   for t in sorted(x for x in set(topics.tolist()) if x != -1)]
+        panel = _connectivity_panel(W, tgroups, "topic", scale, export_to)
+        if panel is not None:
+            panels.append(panel)
+
+    # By Leiden coupling community.
+    from pysyrev.core.networks import groups_from_labels
+    cgroups = groups_from_labels(coupling_result.labels)
+    panel = _connectivity_panel(W, cgroups, "community", scale, export_to)
+    if panel is not None:
+        panels.append(panel)
+
+    return panels
 
 
 def _build_community_topic_mapping_subsection(coupling_result, bertopic_results,
@@ -592,10 +611,8 @@ def _build_networks_section(df, coupling_result, cocitation_result,
     if cocitation_sub is not None:
         sub_blocks.append(cocitation_sub)
 
-    connectivity_sub = _build_connectivity_subsection(
-        coupling_result, bertopic_results, topic_labels, cfg, export_to)
-    if connectivity_sub is not None:
-        sub_blocks.append(connectivity_sub)
+    sub_blocks.extend(_build_connectivity_subsections(
+        coupling_result, bertopic_results, topic_labels, cfg, export_to))
 
     if not sub_blocks:
         return None

@@ -365,8 +365,8 @@ topic_model:
 #   #       min_size: 5             # communities smaller than this fall into the tail (default: 5)
 #   #       backbone_k: 3           # draw only each node's k strongest co-citations (default: 3)
 #   #       color_by: community     # topic | community (default: community)
-#   #     connectivity:             # mean coupling between groups
-#   #       by: topic               # topic | community — group the coupling nodes by this (default: topic)
+#   #     connectivity:             # mean coupling between groups (both topic AND community panels are rendered)
+#   #       by: topic               # deprecated / ignored — both groupings are shown
 #   #       scale: 1000             # rescales the tiny coupling values for readability (default: 1000)
 #   #   temporal:
 #   #     variants: [absolute, normalized, weighted]

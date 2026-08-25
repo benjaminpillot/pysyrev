@@ -152,14 +152,16 @@ class TestBuildNetworksSection:
         cfg = BibNetworkSectionConfig()
         assert _build_networks_section(None, None, None, None, None, cfg, None, 2) is None
 
-    def test_two_networks_produce_two_subsections(self, reviewed_dataset_path,
-                                                  tiny_bertopic_results):
+    def test_both_network_subsections_present(self, reviewed_dataset_path,
+                                              tiny_bertopic_results):
         cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3), cocitation=CocitationPanelConfig(min_size=3))
         df, coupling, cocitation = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, cocitation,
                                       tiny_bertopic_results, None, cfg, None, 2)
         assert sec is not None
-        assert len(_subsections(sec)) == 2
+        titles = [s["title"] for s in _subsections(sec)]
+        assert "Bibliographic coupling" in titles
+        assert "Co-citation" in titles
 
     def test_title_contains_section_number(self, reviewed_dataset_path):
         cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3), cocitation=CocitationPanelConfig(min_size=3))
@@ -179,14 +181,16 @@ class TestBuildNetworksSection:
         assert {"Documents", "Modularity"}.issubset(keys)
         assert _blocks_of_type(subs[0], "table")
 
-    def test_only_coupling_when_cocitation_absent(self, reviewed_dataset_path):
+    def test_no_topic_connectivity_without_topics(self, reviewed_dataset_path):
         cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3))
         df, coupling, _ = self._results(reviewed_dataset_path)
         sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
-        # no topics passed → no connectivity panel either
-        assert len(_subsections(sec)) == 1
+        titles = [s["title"] for s in _subsections(sec)]
+        assert "Bibliographic coupling" in titles
+        assert "Topic connectivity" not in titles      # no topics passed
+        # Community connectivity is topic-independent and may still appear.
 
-    def test_connectivity_panel_present_with_matching_topics(self, reviewed_dataset_path):
+    def test_both_connectivity_panels_with_matching_topics(self, reviewed_dataset_path):
         cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3))
         df, coupling, _ = self._results(reviewed_dataset_path)
         # BERTopic-style results whose ids match the corpus → topic groups exist
@@ -195,6 +199,7 @@ class TestBuildNetworksSection:
         sec = _build_networks_section(df, coupling, None, bt, None, cfg, None, 2)
         titles = [s["title"] for s in _subsections(sec)]
         assert "Topic connectivity" in titles
+        assert "Community connectivity" in titles
 
 
 class TestConnectivityMatrix:
