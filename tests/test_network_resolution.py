@@ -79,3 +79,39 @@ class TestBuildCouplingSweep:
                            resolution=0.7, min_size=2)
         assert r.resolution == 0.7
         assert r.resolution_sweep is None
+
+
+class TestClusterSubthemes:
+    """build_coupling populates NetworkResult.terms with per-community TF-IDF."""
+
+    def _df(self):
+        rows = []
+        blocks = {0: ("solar photovoltaic panel", "rooftop feed-in tariff"),
+                  1: ("wind turbine offshore", "capacity factor grid"),
+                  2: ("hydrogen electrolysis storage", "fuel cell power")}
+        for b, (a, c) in blocks.items():
+            pool = [f"{b}_r{k}" for k in range(4)]
+            for i in range(10):
+                rows.append({"id": f"W{b}_{i}",
+                             "title": a + " energy transition",
+                             "abstract": c + " policy model",
+                             "references": "; ".join(pool[:3])})
+        return pd.DataFrame(rows)
+
+    def test_terms_populated_per_community(self):
+        r = build_coupling(self._df(), ref_col="references",
+                           resolution_range=[0.3, 1.5], resolution_step=0.2,
+                           min_size=3)
+        assert r.terms                                   # non-empty
+        assert set(r.terms) <= set(int(c) for c in np.unique(r.labels) if c >= 0)
+        # Distinct blocks yield distinct top terms.
+        joined = {c: " ".join(t) for c, t in r.terms.items()}
+        assert any("solar" in v for v in joined.values())
+        assert any("wind" in v or "turbine" in v for v in joined.values())
+
+    def test_missing_text_columns_give_empty_terms(self):
+        df = pd.DataFrame({"id": [f"W{i}" for i in range(6)],
+                           "references": ["a; b", "a; b", "a; c",
+                                          "x; y", "x; y", "x; z"]})
+        r = build_coupling(df, ref_col="references", resolution=0.7, min_size=2)
+        assert r.terms == {}

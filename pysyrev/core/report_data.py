@@ -381,6 +381,23 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
             "col_widths": [6.0, 3.2, 1.4, 1.6, 3.8],
         })
 
+    # Per-community TF-IDF sub-themes: each Leiden community's own thematic field,
+    # independent of the BERTopic topics (the skill's network-first naming).
+    terms = getattr(result, "terms", None)
+    if terms:
+        comm_size = {c: int((result.labels == c).sum()) for c in terms}
+        term_rows = [
+            [f"C{c}", str(comm_size.get(c, 0)), ", ".join(terms[c][:10])]
+            for c in sorted(terms)
+        ]
+        sub_content.append({
+            "type": "table",
+            "title": "Community sub-themes (distinguishing TF-IDF terms)",
+            "headers": ["Community", "Docs", "Top terms"],
+            "rows": term_rows,
+            "col_widths": [1.6, 1.2, 14.0],
+        })
+
     if color_mode == "topic":
         caption = ("Layout comes from the coupling structure (strongly-coupled "
                    "papers sit together); node colour is the BERTopic topic, so "

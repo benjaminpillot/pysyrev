@@ -744,3 +744,35 @@ class TestNetworkTableTitleDoi:
         tbl = self._table(["https://openalex.org/W999", "https://openalex.org/W1"])
         row = next(r for r in tbl["rows"] if r[0] == "—")
         assert row[1] == "—"
+
+
+class TestCommunitySubthemesTable:
+    """The coupling subsection lists per-community TF-IDF sub-themes when present."""
+
+    def _subsection(self, terms):
+        from pysyrev.core.report_data import _build_network_subsection
+        from pysyrev.core.networks.common import NetworkResult
+        ids = [f"W{i}" for i in range(4)]
+        W = np.array([[0, 1, 0, 0], [1, 0, 0, 0],
+                      [0, 0, 0, 1], [0, 0, 1, 0]], float)
+        res = NetworkResult(node_ids=ids, W=W, labels=np.array([0, 0, 1, 1]),
+                            coords=np.zeros((4, 2)), modularity=0.3, terms=terms)
+        df = pd.DataFrame({"id": ids, "title": ["t"] * 4,
+                           "doi": [f"10.1/{i}" for i in range(4)], "year": [2020] * 4})
+        return _build_network_subsection(
+            res, df, None, None, title="Coupling", filename_prefix="c",
+            node_kind="document", count_label="Documents", k=2,
+            color_mode="community", export_to=None)
+
+    def test_subthemes_table_present_with_terms(self):
+        sub = self._subsection({0: ["solar", "photovoltaic"], 1: ["wind", "turbine"]})
+        tables = [b for b in sub["blocks"] if b.get("type") == "table"]
+        theme = next(t for t in tables if "sub-theme" in t["title"].lower())
+        assert theme["headers"] == ["Community", "Docs", "Top terms"]
+        by_comm = {r[0]: r[2] for r in theme["rows"]}
+        assert "solar" in by_comm["C0"] and "wind" in by_comm["C1"]
+
+    def test_no_subthemes_table_without_terms(self):
+        sub = self._subsection({})
+        assert not any("sub-theme" in b.get("title", "").lower()
+                       for b in sub["blocks"] if b.get("type") == "table")

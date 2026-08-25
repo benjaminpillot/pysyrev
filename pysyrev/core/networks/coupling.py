@@ -18,12 +18,32 @@ import numpy as np
 from pysyrev.core.bib import REFS
 from pysyrev.core.networks.common import (
     NetworkResult,
+    cluster_terms,
     force_layout,
     leiden_best_resolution,
     leiden_communities,
     reference_sets,
     resolution_grid,
 )
+
+
+def _cluster_subthemes(df, labels, text_cols=("title", "abstract")) -> dict:
+    """TF-IDF sub-theme terms per Leiden community, from the docs' text.
+
+    *df* is row-aligned to *labels* (both follow ``reference_sets`` order). Builds
+    one text per document from *text_cols* and delegates to :func:`cluster_terms`.
+    Guarded: a corpus too small/sparse for the vectoriser yields ``{}`` rather
+    than raising, so a coupling network without usable text still builds.
+    """
+    cols = [c for c in text_cols if c in df.columns]
+    if not cols:
+        return {}
+    texts = (df[cols].fillna("").astype(str)
+             .agg(". ".join, axis=1).tolist())
+    try:
+        return cluster_terms(texts, labels)
+    except ValueError:            # empty vocabulary (tiny/sparse corpus)
+        return {}
 
 
 def salton_coupling(refsets: Sequence[set]) -> np.ndarray:
@@ -57,8 +77,9 @@ def build_coupling(df, ref_col: str = REFS, resolution: float = 0.5,
     """Build the full coupling network from a bib DataFrame.
 
     Pipeline: reference sets → Salton matrix → Leiden communities → force
-    layout. Returns a :class:`NetworkResult` bundling node IDs, ``W``, community
-    labels, coordinates, and modularity — ready to inspect or ``.plot()``.
+    layout → per-community TF-IDF sub-themes. Returns a :class:`NetworkResult`
+    bundling node IDs, ``W``, community labels, coordinates, modularity, and
+    ``terms`` (``{community: [top TF-IDF terms]}``) — ready to inspect or plot.
 
     Parameters
     ----------
@@ -89,6 +110,8 @@ def build_coupling(df, ref_col: str = REFS, resolution: float = 0.5,
             W, resolution=resolution, seed=seed, min_size=min_size)
         sweep = None
     coords = force_layout(W, seed=seed, niter=layout_niter)
+    terms = _cluster_subthemes(df, labels)
     return NetworkResult(node_ids=node_ids, W=W, labels=labels,
                          coords=coords, modularity=modularity,
-                         resolution=resolution, resolution_sweep=sweep)
+                         resolution=resolution, resolution_sweep=sweep,
+                         terms=terms)
