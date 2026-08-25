@@ -1072,6 +1072,22 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                          ("_reldrop", "relevance_dropped")]:
             full_df[col] = full_df[id_col].map(lambda i: (det.get(i) or {}).get(key))
 
+    # Research fronts frame (current-year cohort), built once and reused for both
+    # the fronts table and the CSV annex. Tag a `cohort` column so the annex holds
+    # historical and front papers in one file, distinguishable by that column.
+    fronts_export = None
+    if comp_split and front_ids:
+        det = _composite_detail
+        fronts_export = br_wo[br_wo[id_col].isin(front_ids)].copy()
+        for col, key in [("composite_score", "score"), ("centrality", "centrality"),
+                         ("relevance", "relevance"),
+                         ("representativeness", "representativeness"),
+                         ("_reldrop", "relevance_dropped")]:
+            fronts_export[col] = fronts_export[id_col].map(lambda i: (det.get(i) or {}).get(key))
+        fronts_export["_selection"] = "Research front"
+        full_df["cohort"] = "historical"
+        fronts_export["cohort"] = "front"
+
     def _fmt_year(v):
         try:
             return str(int(float(v)))
@@ -1125,8 +1141,11 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         os.makedirs(export_to, exist_ok=True)
         ext      = sel_cfg.annex_format.lower()
         ann_path = os.path.join(export_to, f"paper_selection.{ext}")
+        # Historical + fronts in one file, distinguished by the `cohort` column.
+        src = (pd.concat([full_df, fronts_export], ignore_index=True)
+               if fronts_export is not None else full_df)
         if ext == "csv":
-            export_df = full_df.drop(columns=["_reldrop"], errors="ignore").rename(
+            export_df = src.drop(columns=["_reldrop"], errors="ignore").rename(
                 columns={"_selection": "selection_type",
                          "representativeness": "typicality"})
             export_df.to_csv(ann_path, index=False)
@@ -1136,7 +1155,7 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                 f.write("-" * 120 + "\n")
                 for r in table_rows:
                     f.write(" | ".join(r) + "\n")
-        annex_msg = f"Full selection ({len(full_df)} papers) exported to: {ann_path}"
+        annex_msg = f"Full selection ({len(src)} papers) exported to: {ann_path}"
 
     blocks = [
         {
@@ -1151,15 +1170,10 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         blocks.append({"type": "paragraph", "text": annex_msg})
 
     # Research fronts: the current-year cohort, ranked on 2 axes, shown separately.
-    if comp_split and front_ids:
-        fronts_df = br_wo[br_wo[id_col].isin(front_ids)].copy()
-        det = _composite_detail
-        for col, key in [("composite_score", "score"), ("centrality", "centrality"),
-                         ("representativeness", "representativeness")]:
-            fronts_df[col] = fronts_df[id_col].map(lambda i: (det.get(i) or {}).get(key))
+    if fronts_export is not None:
         front_rows = []
-        for topic_id in sorted(fronts_df["Topic"].unique()):
-            tdf = fronts_df[fronts_df["Topic"] == topic_id].sort_values(
+        for topic_id in sorted(fronts_export["Topic"].unique()):
+            tdf = fronts_export[fronts_export["Topic"] == topic_id].sort_values(
                 "composite_score", ascending=False)
             n_f = max(1, round(sel_cfg.proportion_per_topic * len(tdf)))
             for _, row in tdf.head(n_f).iterrows():

@@ -317,6 +317,36 @@ class TestCompositeSelection:
         reading = next(t for t in tables if t["title"].startswith("Paper reading list"))
         assert all(r[3] != "2026" for r in reading["rows"])  # Year column
 
+    def test_csv_annex_holds_both_cohorts_with_a_cohort_column(self, tmp_path):
+        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.networks.common import NetworkResult
+        ids = [f"W{i}" for i in range(6)]
+        bt = pd.DataFrame({
+            "id": ids, "ID": ids,
+            "year": [2019, 2020, 2021, 2022, 2026, 2026],
+            "cited_by": [80, 60, 40, 20, 3, 1],
+            "document_type": ["article"] * 6,
+            "title": [f"Paper {i}" for i in range(6)],
+            "doi": [f"10.1/{i}" for i in range(6)],
+            "Topic": [0] * 6,
+            "Document": [f"energy model {i}" for i in range(6)],
+        })
+        W = np.ones((6, 6)) - np.eye(6)
+        coupling = NetworkResult(node_ids=ids, W=W, labels=np.zeros(6, int),
+                                 coords=np.zeros((6, 2)), modularity=0.1)
+        cfg = PaperSelectionConfig(
+            min_year=2015, proportion_per_topic=1.0, selection_by="composite",
+            export_annex=True, annex_format="csv",
+            composite=CompositeConfig(split_current_year=True, current_year=2026))
+        _build_paper_selection_section(bt, None, None, cfg, str(tmp_path), 6,
+                                       coupling_result=coupling)
+        csv = pd.read_csv(tmp_path / "paper_selection.csv")
+        assert "cohort" in csv.columns
+        assert set(csv["cohort"]) == {"historical", "front"}
+        # The two 2026 papers are the fronts; the rest are historical.
+        assert set(csv[csv["cohort"] == "front"]["year"]) == {2026}
+        assert 2026 not in set(csv[csv["cohort"] == "historical"]["year"])
+
 
 # =============================================================================
 # _build_temporal_section
