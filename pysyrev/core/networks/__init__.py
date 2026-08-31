@@ -22,8 +22,10 @@ from pysyrev.core.networks.connectivity import (
     coupling_inout,
     groups_from_labels,
 )
-from pysyrev.core.networks.plotting import (
-    plot_network, plot_connectivity_matrix, plot_crosstab_heatmap)
+from pysyrev.core.networks.plotting import plot_network
+# The matrix panels moved to the report-wide figure module; re-exported here so
+# the networks package keeps offering the figures its analyses feed.
+from pysyrev.core.figures import plot_connectivity_matrix, plot_crosstab_heatmap
 
 __all__ = [
     "NetworkResult",
