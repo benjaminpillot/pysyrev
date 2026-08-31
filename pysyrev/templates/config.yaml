@@ -38,8 +38,8 @@
 bib:
 
   # ---- Sources (include at least one) ------------------------------------
-  # Set source: to 'file' or 'api'.  Leave the block blank / remove it to
-  # skip that source.
+  # Set source: to 'file', 'api', or 'seed' (seed expansion — OpenAlex only for
+  # now).  Leave the block blank / remove it to skip that source.
 
   wos:
     source: file                    # 'file' | 'api'
@@ -50,7 +50,7 @@ bib:
     #   cache_dir: /path/to/wos_cache/   # omit to disable caching
 
   open_alex:
-    source: file                    # 'file' | 'api'
+    source: file                    # 'file' | 'api' | 'seed'
     file: /path/to/open_alex.csv    # required when source: file
     # api:                          # required when source: api
     #   api_key: ${OPENALEX_API_KEY}
@@ -59,6 +59,30 @@ bib:
     #   filters:                         # structured filters (combined with AND)
     #     publication_year: '2015-2024'
     #     type: article
+    #   cache_dir: /path/to/oa_cache/
+    #
+    # seed:                         # required when source: seed
+    #   # Build the corpus from a handful of SEED PAPERS instead of a query:
+    #   # the pool is the union of the seeds, the papers citing them, the papers
+    #   # they cite, and the text queries below. Use it when the subfield has
+    #   # no reliable keyword handle. The pool is deliberately over-collected —
+    #   # `extract` below filters it, the `review` stage screens it.
+    #   api_key: ${OPENALEX_API_KEY}
+    #   email: ${OPENALEX_EMAIL}         # optional — enables the polite pool
+    #   file: /path/to/seeds.txt         # ONE DOI PER LINE (# comments allowed)
+    #   seeds: [10.1000/aaa, W2741809807]   # optional inline seeds, merged with the file
+    #   queries:                         # optional title/abstract searches — the
+    #     - agent-based energy transition   # recall backstop for papers with no
+    #     - energy justice modelling        # citation link to any seed.
+    #                                    # One query per line, terms AND-ed and
+    #                                    # stemmed — quote a line to match the
+    #                                    # words in order; results are unioned.
+    #   year_min: 2000                   # retrieval bound (blank = no bound)
+    #   year_max: 2025
+    #   use_forward: true                # papers citing the seeds
+    #   use_backward: true               # papers the seeds cite
+    #   max_per_seed: 600                # cap per seed on forward citations
+    #   max_per_query: 400               # cap per text query
     #   cache_dir: /path/to/oa_cache/
 
   # scopus:

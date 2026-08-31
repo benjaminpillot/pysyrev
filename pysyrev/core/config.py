@@ -166,6 +166,86 @@ class AbstractCompletionConfig(ConfigField):
 
 
 @dataclass
+class SeedExpansionConfig(ConfigField):
+    """Provider-agnostic settings of a ``source: seed`` block.
+
+    Seed expansion builds the corpus from a handful of *seed papers* instead of
+    a single query: the pool is the union of the seeds, the works citing them,
+    the works they cite, and optional text queries (see
+    :mod:`pysyrev.core.seed_expansion`). Use it when a subfield has no reliable
+    keyword handle.
+
+    ``file``
+        Text file listing the seeds, **one DOI per line** (an OpenAlex ``Wxxxx``
+        id also works). Blank lines and ``#`` comments are ignored.
+    ``seeds``
+        Inline seed list, merged with the ones read from ``file``.
+    ``queries``
+        Title/abstract searches in the field's own vocabulary (10-25 is a good
+        range) — the recall backstop for works with no citation link to a seed.
+        Each entry is one query in the provider's search syntax, run
+        separately; the results are unioned. Leave blank to expand on citations
+        only.
+    ``year_min`` / ``year_max``
+        Publication-year window used as a *retrieval* bound on the arms whose
+        provider supports it. Definitive filtering stays with ``bib.extract``,
+        so seeds outside the window still drive the expansion.
+    ``use_forward`` / ``use_backward``
+        Toggle the citation arms. Both off leaves a query-only pool.
+    ``max_per_seed`` / ``max_per_query``
+        Caps on the records pulled per seed (forward citations) and per query.
+        Raise for exhaustive recall, lower for a quick draft.
+
+    The pool is a set of *candidates*, deliberately over-collected: screening it
+    down to the corpus is the ``review`` stage's job.
+    """
+    api_key:       str
+    file:          Union[None, str]       = None
+    seeds:         Union[None, List[str]] = None
+    queries:       Union[None, List[str]] = None
+    year_min:      Union[None, int]       = None
+    year_max:      Union[None, int]       = None
+    use_forward:   bool                   = True
+    use_backward:  bool                   = True
+    max_per_seed:  int                    = 600
+    max_per_query: int                    = 400
+    cache_dir:     Union[None, str]       = None
+
+    #: Former key -> current key. ``phrases`` was renamed because the entries
+    #: are not phrase-matched: their terms are AND-ed, the way any query to the
+    #: provider would be.
+    RENAMED_KEYS = {'phrases': 'queries', 'max_per_phrase': 'max_per_query'}
+
+    @classmethod
+    def from_dict(cls, block: dict) -> 'SeedExpansionConfig':
+        """Build from a YAML block, accepting the pre-rename key spellings."""
+        renamed = {cls.RENAMED_KEYS.get(k, k): v for k, v in block.items()}
+        return cls(**renamed)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.file and not self.seeds:
+            raise ValueError(
+                "A seed source needs a `file:` (one DOI per line) or an inline "
+                "`seeds:` list.")
+
+    def seed_tokens(self) -> List[str]:
+        """The declared seeds: those read from ``file``, then the inline
+        ``seeds``, deduplicated and in declaration order."""
+        from pysyrev.core.seed_expansion import read_seed_file
+        tokens = read_seed_file(self.file) if self.file else []
+        tokens += [str(s).strip() for s in (self.seeds or []) if str(s).strip()]
+        return list(dict.fromkeys(tokens))
+
+
+@dataclass
+class OpenAlexSeedConfig(SeedExpansionConfig):
+    """OpenAlex seed expansion — the generic settings plus the polite-pool
+    email (see :class:`SeedExpansionConfig`)."""
+    email: Union[None, str] = None       # optional, for the polite pool
+
+
+@dataclass
 class OpenAlexApiConfig(ConfigField):
     """Configuration for retrieving works via the OpenAlex API.
 
@@ -182,25 +262,45 @@ class OpenAlexApiConfig(ConfigField):
 
 @dataclass
 class OpenAlexSourceConfig(ConfigField):
-    """One OpenAlex source: either a file path, or an API config. Exactly
-    one of `file` / `api` must be set.
+    """One OpenAlex source: a file path, an API query, or a seed expansion.
+    Exactly one of `file` / `api` / `seed` must be set.
 
     Abstract completion is no longer declared here: it is corpus-level, under
     ``bib.abstract_completion`` (see :class:`AbstractCompletionConfig`)."""
-    source:         str = 'file'  # 'file' or 'api'
+    source:         str = 'file'  # 'file', 'api' or 'seed'
     file:           Union[None, str] = None
     api:            Union[None, OpenAlexApiConfig] = None
+    seed:           Union[None, OpenAlexSeedConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
         if self.source == 'api' and isinstance(self.api, dict):
             self.api = OpenAlexApiConfig(**self.api)
+        if self.source == 'seed' and isinstance(self.seed, dict):
+            self.seed = OpenAlexSeedConfig.from_dict(self.seed)
         if self.source == 'file' and not self.file:
             raise ValueError("OpenAlex source is 'file' but no `file:` path is set")
         if self.source == 'api' and self.api is None:
             raise ValueError("OpenAlex source is 'api' but no `api:` block is set")
-        if self.source not in ('file', 'api'):
-            raise ValueError(f"Unknown OpenAlex source {self.source!r}; expected 'file' or 'api'")
+        if self.source == 'seed' and self.seed is None:
+            raise ValueError("OpenAlex source is 'seed' but no `seed:` block is set")
+        if self.source not in ('file', 'api', 'seed'):
+            raise ValueError(
+                f"Unknown OpenAlex source {self.source!r}; expected 'file', 'api' or 'seed'")
+
+    @property
+    def credentials(self) -> Union[None, OpenAlexApiConfig, OpenAlexSeedConfig]:
+        """The block carrying the OpenAlex credentials, or None for a file
+        source. Lets any consumer needing an OpenAlex client — the
+        reference-key resolver, say — reuse the source's key and email
+        whichever way the source was declared.
+
+        Keyed on ``source`` rather than on whichever block happens to be filled
+        in: a config file commonly keeps an unused block next to the active one
+        (a ``file:`` path alongside ``api:``, say), and only the block naming
+        the active source is parsed into a dataclass.
+        """
+        return {'api': self.api, 'seed': self.seed}.get(self.source)
 
 
 @dataclass

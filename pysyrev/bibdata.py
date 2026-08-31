@@ -15,6 +15,7 @@ from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
 from pysyrev.core.clean import clean_doi, clean_abstracts
 from pysyrev.core.completion import complete_abstracts_from_wos
+from pysyrev.core.seed_expansion import OpenAlexExpander
 from typing import Iterable, List
 
 import pandas as pd
@@ -515,8 +516,10 @@ class BibDataset:
         """
         resolvers: dict = {}
         oa = config.open_alex
-        if isinstance(oa, OpenAlexSourceConfig) and oa.api is not None:
-            client = OpenAlexClient(api_key=oa.api.api_key, email=oa.api.email)
+        credentials = oa.credentials if isinstance(oa, OpenAlexSourceConfig) else None
+        if credentials is not None:
+            client = OpenAlexClient(api_key=credentials.api_key,
+                                    email=credentials.email)
             resolvers['openalex'] = partial(_resolve_ids_via_openalex, client=client)
         return resolvers
 
@@ -527,9 +530,13 @@ class BibDataset:
         * ``source: file`` — delegates to the regular constructor.
         * ``source: api``  — calls :meth:`_from_api_config` (subclass hook)
           to produce a DEFAULT_FIELDS DataFrame, then wraps it in the constructor.
+        * ``source: seed`` — calls :meth:`_from_seed_config`, which runs the
+          source's seed expansion (seeds → candidate pool).
         """
         if config.source == 'file':
             return cls(bibfile=config.file)
+        if config.source == 'seed':
+            return cls(bib_dataset=cls._from_seed_config(config.seed))
         return cls(bib_dataset=cls._from_api_config(config.api))
 
     @classmethod
@@ -541,6 +548,40 @@ class BibDataset:
         raise NotImplementedError(
             f"{cls.__name__} does not support API source. "
             "Override _from_api_config or set `source: file` in the config."
+        )
+
+    @classmethod
+    def _from_seed_config(cls, seed_config, verbose: bool = True) -> pd.DataFrame:
+        """Run the source's seed expansion and return the candidate pool.
+
+        Generic over the provider: :meth:`_seed_expander` builds the backend
+        that knows how to ask this source's API who cites what, and the
+        expansion itself (arms, union, dedup) is the provider-agnostic code in
+        :mod:`pysyrev.core.seed_expansion`. The pool is deliberately
+        over-collected — ``bib.extract`` filters it, ``review`` screens it.
+        """
+        expander = cls._seed_expander(seed_config)
+        result = expander.expand(
+            seed_config.seed_tokens(),
+            queries      = seed_config.queries,
+            year_min     = seed_config.year_min,
+            year_max     = seed_config.year_max,
+            use_forward  = seed_config.use_forward,
+            use_backward = seed_config.use_backward,
+        )
+        if verbose:
+            print(result.summary())
+        return result.dataset
+
+    @classmethod
+    def _seed_expander(cls, seed_config):
+        """Hook: build the :class:`SeedExpander` backend for this source.
+
+        Must be overridden by subclasses that support ``source: seed``.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not support seed expansion. "
+            "Override _seed_expander or set `source: file` in the config."
         )
 
     # ---- properties --------------------------------------------------------
@@ -586,14 +627,28 @@ class OpenAlexDataset(BibDataset):
 
     @classmethod
     def _from_api_config(cls, api_config) -> pd.DataFrame:
-        client = OpenAlexClient(
-            api_key      = api_config.api_key,
-            email        = api_config.email,
-            session_file = (f"{api_config.cache_dir}/session.json"
-                            if api_config.cache_dir else None),
-        )
         return from_openalex_result(
-            client.search(query=api_config.query, filters=api_config.filters)
+            cls._client(api_config).search(query=api_config.query,
+                                           filters=api_config.filters)
+        )
+
+    @classmethod
+    def _seed_expander(cls, seed_config) -> OpenAlexExpander:
+        return OpenAlexExpander(
+            cls._client(seed_config),
+            max_per_seed  = seed_config.max_per_seed,
+            max_per_query = seed_config.max_per_query,
+        )
+
+    @staticmethod
+    def _client(config) -> OpenAlexClient:
+        """OpenAlex client for any block carrying the source's credentials
+        (``api:`` or ``seed:``)."""
+        return OpenAlexClient(
+            api_key      = config.api_key,
+            email        = config.email,
+            session_file = (f"{config.cache_dir}/session.json"
+                            if config.cache_dir else None),
         )
 
     def generate_bib(self, bibfile, **kwargs):

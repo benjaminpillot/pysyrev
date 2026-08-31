@@ -102,6 +102,16 @@ def _map_openalex_record(record: dict) -> dict:
     }
 
 
+def from_openalex_records(records) -> pd.DataFrame:
+    """Convert an iterable of raw OpenAlex works to a DEFAULT_FIELDS DataFrame.
+
+    Use this when the records come from somewhere other than a single search —
+    a seed expansion unions several queries (see
+    :mod:`pysyrev.core.seed_expansion`).
+    """
+    return _to_dataframe([_map_openalex_record(r) for r in records])
+
+
 def from_openalex_result(result) -> pd.DataFrame:
     """Convert an :class:`OpenAlexSearchResult` to a DEFAULT_FIELDS DataFrame.
 
@@ -110,7 +120,7 @@ def from_openalex_result(result) -> pd.DataFrame:
     result : OpenAlexSearchResult
         Raw result returned by :meth:`OpenAlexClient.search`.
     """
-    return _to_dataframe([_map_openalex_record(r) for r in result.records])
+    return from_openalex_records(result.records)
 
 
 # ---------------------------------------------------------------------------

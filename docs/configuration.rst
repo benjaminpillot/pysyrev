@@ -133,7 +133,7 @@ consolidated CSV.
    ``open_alex.source``
       :Type: ``str``
       :Default: ``file``
-      :Values: ``file`` | ``api``
+      :Values: ``file`` | ``api`` | ``seed``
       :Required: yes
 
    ``open_alex.file``
@@ -180,6 +180,112 @@ consolidated CSV.
       :Type: ``str``
       :Default: ``null`` (no caching)
       :Required: no
+
+   ``open_alex.seed``
+      :Type: mapping
+      :Default: —
+      :Required: when ``source: seed``
+
+      **Seed expansion** — build the corpus from a handful of *seed papers*
+      instead of a query.  The candidate pool is the union of four arms: the
+      seeds themselves, the papers **citing** them, the papers they **cite**,
+      and optional text queries.  Use it when a subfield has no reliable
+      keyword handle, or to complement a query-based source (declare both and
+      let ``merge`` deduplicate).
+
+      The pool is deliberately over-collected: it is a set of *candidates*, not
+      a corpus.  ``extract`` filters it on year, document type and language,
+      and the ``review`` stage screens it for scope.
+
+      .. code-block:: yaml
+
+         open_alex:
+           source: seed
+           seed:
+             api_key: ${OPENALEX_API_KEY}
+             email: ${OPENALEX_EMAIL}
+             file: seeds.txt                 # one DOI per line
+             queries:
+               - agent-based energy transition
+               - energy justice modelling
+             year_min: 2000
+
+   ``open_alex.seed.file``
+      :Type: ``str``
+      :Default: ``null``
+      :Required: one of ``file`` / ``seeds``
+
+      Text file listing the seeds, **one DOI per line**.  An OpenAlex work id
+      (``W2741809807``) or a ``doi.org`` / ``openalex.org`` URL works too.
+      Blank lines and lines starting with ``#`` are ignored; anything after the
+      identifier on a line (a title, a note) is skipped.
+
+   ``open_alex.seed.seeds``
+      :Type: list of ``str``
+      :Default: ``null``
+      :Required: one of ``file`` / ``seeds``
+
+      Inline seed list, merged with the identifiers read from ``file``.
+
+   ``open_alex.seed.queries``
+      :Type: list of ``str``
+      :Default: ``null``
+      :Renamed: was ``phrases`` — the old spelling is still accepted
+
+      Title/abstract searches in the field's own vocabulary (10–25 is a good
+      range).  They are the recall backstop: they reach papers that neither
+      cite nor are cited by a seed.  Omit for a citation-only expansion.
+
+      Each entry is *one* OpenAlex search, run with the same engine and the
+      same syntax as an ``api.query``: its terms are **AND-ed**, not matched
+      as a phrase, and matching is stemmed and insensitive to hyphens and
+      plurals (``agent based energy transitions`` and ``agent-based energy
+      transition`` return the same set).  Quote the entry for a phrase match
+      — the words must then appear in that order, though still stemmed, so no
+      match is ever literal — which is far narrower::
+
+          - agent-based energy transition        # ~4800 works
+          - '"agent-based energy transition"'    # 2 works
+
+      ``AND`` / ``OR`` / ``NOT`` are supported inside an entry.  Results are
+      relevance-ranked, so ``max_per_query`` keeps the *best* matches, not
+      an arbitrary slice.  The entries' result sets are then unioned into the
+      pool.
+
+      Three characters are reserved by the OpenAlex filter syntax and do not
+      mean what they appear to: a comma is stripped (it would otherwise be
+      read as a filter separator), ``|`` is an OR between filter values, and
+      a leading ``!`` negates the search.  Spell a disjunction ``OR`` rather
+      than ``|``.
+
+   ``open_alex.seed.year_min`` / ``open_alex.seed.year_max``
+      :Type: ``int``
+      :Default: ``null`` (no bound)
+
+      Publication-year window used as a *retrieval* bound on the arms that
+      support it.  Definitive filtering stays with ``extract``, so seeds
+      outside the window still drive the expansion.
+
+   ``open_alex.seed.use_forward`` / ``open_alex.seed.use_backward``
+      :Type: ``bool``
+      :Default: ``true``
+
+      Toggle the citation arms (papers citing the seeds / papers the seeds
+      cite).  Both off leaves a query-only pool — a plain keyword corpus,
+      useful as a comparison baseline.
+
+   ``open_alex.seed.max_per_seed`` / ``open_alex.seed.max_per_query``
+      :Type: ``int``
+      :Default: ``600`` / ``400``
+      :Renamed: ``max_per_phrase`` — the old spelling is still accepted
+
+      Caps on the records pulled per seed (forward citations) and per text
+      query.  Raise for exhaustive recall, lower for a quick draft: a
+      highly-cited seed can otherwise return tens of thousands of papers.
+
+   ``open_alex.seed.api_key`` / ``open_alex.seed.email`` / ``open_alex.seed.cache_dir``
+      Same meaning as their ``open_alex.api`` counterparts.  These credentials
+      are also reused by ``reference_keys`` when the source is seed-based.
 
 ``clean``
    :Type: mapping
