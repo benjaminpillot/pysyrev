@@ -15,7 +15,13 @@ from pysyrev.core.networks.common import (
     reference_sets,
 )
 from pysyrev.core.networks.coupling import build_coupling, salton_coupling
-from pysyrev.core.networks.cocitation import build_cocitation, cocitation_matrix
+from pysyrev.core.networks.cocitation import (
+    build_cocitation,
+    cluster_profiles,
+    cocitation_matrix,
+    frequent_references,
+    reference_texts,
+)
 from pysyrev.core.networks.connectivity import (
     inter_cluster_matrix,
     corpus_baseline,
@@ -39,7 +45,10 @@ __all__ = [
     "salton_coupling",
     "build_coupling",
     "cocitation_matrix",
+    "frequent_references",
     "build_cocitation",
+    "reference_texts",
+    "cluster_profiles",
     "inter_cluster_matrix",
     "corpus_baseline",
     "coupling_inout",

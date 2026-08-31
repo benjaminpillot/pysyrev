@@ -705,6 +705,45 @@ class CouplingPanelConfig(ConfigField):
 
 
 @dataclass
+class ReferenceMetadataConfig(ConfigField):
+    """Resolve the co-citation nodes back to real works (title, year, authors…).
+
+    Declared under ``…bib_network.cocitation.metadata``; its presence enables the
+    step. A co-citation node is a *reference*, usually outside the corpus, so
+    nothing local knows what it is: without this, the panel's clusters cannot be
+    named and its hover shows only an identifier. With it, each community gets
+    TF-IDF sub-themes, an LLM label, and a most-cited-authors profile — the same
+    treatment the coupling communities already get from their documents' text.
+
+    ``provider`` selects the backend: ``openalex`` is the only one implemented
+    today; another metadata source would register its own fetcher the same way.
+    ``api_key`` / ``email`` are that provider's credentials (for OpenAlex the
+    email is the polite pool, optional but recommended). The report stage carries
+    its own credentials rather than reusing ``bib.open_alex``: a report is
+    commonly re-run on its own, long after the corpus was built.
+
+    ``cache``
+        Persistent ``reference_key -> metadata`` CSV, accumulated across runs;
+        ``None`` = fetch every run, no persistence.
+    ``include_abstracts``
+        Also pull the references' abstracts — richer TF-IDF terms, at a much
+        larger payload and cache. Turning it on does not back-fill abstracts for
+        already-cached references; delete ``cache`` to refetch them.
+    """
+    provider:          str = 'openalex'      # 'openalex' today
+    api_key:           Union[None, str] = None   # typically `${OPENALEX_API_KEY}`
+    email:             Union[None, str] = None   # polite pool
+    cache:             Union[None, str] = None
+    include_abstracts: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.api_key:
+            raise ValueError(
+                f"cocitation.metadata provider {self.provider!r} needs an `api_key:`")
+
+
+@dataclass
 class CocitationPanelConfig(ConfigField):
     """Co-citation network panel (reference × reference)."""
     min_ref_freq: int   = 2         # keep references cited by at least this many documents
@@ -713,6 +752,12 @@ class CocitationPanelConfig(ConfigField):
     min_size:     int   = 5         # communities smaller than this → tail
     backbone_k:   int   = 3         # draw only each node's k strongest co-citations
     color_by:     str   = "community"  # "topic" | "community"
+    metadata:     Union[None, ReferenceMetadataConfig] = None  # resolve node ids to real works
+
+    def __post_init__(self):
+        super().__post_init__()
+        if isinstance(self.metadata, dict):
+            self.metadata = ReferenceMetadataConfig(**self.metadata)
 
 
 @dataclass

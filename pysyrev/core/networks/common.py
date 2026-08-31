@@ -80,6 +80,7 @@ class NetworkResult:
     coords:     np.ndarray
     modularity: float
     terms:      dict = field(default_factory=dict)   # {community: [top terms]}
+    node_meta:  dict = field(default_factory=dict)   # {node_id: metadata} — see references.fetch_reference_metadata
     resolution: Optional[float] = None               # Leiden resolution actually used
     resolution_sweep: Optional[list] = None          # [(resolution, modularity, n_communities)]
 

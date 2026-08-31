@@ -31,10 +31,17 @@ is derivable). Unlike ``reference_ids`` — which only links references to other
 corpus documents — this gives the extra-corpus works a shared identity too, so
 bibliographic coupling and co-citation hold across merged sources regardless of
 merge order. See the "Canonical reference keys" section below.
+
+Both of the above give a reference an *identity*. :func:`fetch_reference_metadata`
+gives it *content* — title, year, authors, venue — by looking the key up through
+a per-scheme fetcher and caching the answer. Co-citation needs this: its nodes
+are references, mostly extra-corpus, so nothing local knows what they are. See
+the "Reference metadata" section at the end.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from collections import Counter
@@ -496,10 +503,23 @@ def load_cache(path: Optional[str]) -> Dict[str, Optional[str]]:
     return table
 
 
+def _ensure_parent_dir(path: str) -> None:
+    """Create the cache file's directory if needed.
+
+    A cache path is configuration, typically relative (``cache/table.csv``), and
+    its directory is not something the user should have to pre-create — pandas
+    raises ``OSError`` rather than creating it.
+    """
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 def save_cache(path: Optional[str], table: Dict[str, Optional[str]]) -> None:
     """Write the whole ``id -> DOI`` table to the CSV cache (None -> blank)."""
     if not path:
         return
+    _ensure_parent_dir(path)
     rows = [{'reference_id': rid, 'doi': doi or ''} for rid, doi in sorted(table.items())]
     pd.DataFrame(rows, columns=_CACHE_COLS).to_csv(path, index=False)
 
@@ -646,3 +666,310 @@ def complete_reference_keys(df: pd.DataFrame,
             save_cache(cache_path, table)
 
     return add_reference_keys(df, table, ref_col=ref_col, out_col=out_col)
+
+
+# ---------------------------------------------------------------------------
+# Reference metadata (title / year / authors / venue)
+# ---------------------------------------------------------------------------
+#
+# The sections above answer "what is this reference?" with an identity — an
+# internal id, or a canonical DOI key. This one answers it with *content*, which
+# a co-citation network needs: its nodes are references, mostly extra-corpus, so
+# nothing local knows their title, year or authors. Without that, a co-citation
+# cluster cannot be named and has no text to derive TF-IDF terms from.
+#
+# Same split of responsibilities as the id -> DOI resolution above: this module
+# owns the generic machinery — routing a key to an id scheme, the persistent
+# cache, filling in the negatives — while each *fetcher* is a plug-in supplied by
+# the caller, holding all the provider-specific knowledge and credentials.
+# OpenAlex (:func:`fetch_metadata_via_openalex`) is the one implemented today.
+
+# The record a fetcher must return per id. A fetcher may leave any field None,
+# but must not invent keys: everything downstream reads exactly these.
+METADATA_FIELDS = ('title', 'doi', 'year', 'authors', 'venue', 'cited_by_count',
+                   'abstract')
+
+_META_CACHE_COLS = ('reference_key',) + METADATA_FIELDS
+
+_AUTHOR_SEP = '; '
+
+
+def _as_doi_key(token) -> Optional[str]:
+    """Normalized DOI of *token*, or None.
+
+    Accepts a bare DOI, a ``doi.org`` URL, or a raw citation string with a DOI
+    embedded in it — every form a reference key can take once ``reference_keys``
+    has (or has not) canonicalised it.
+    """
+    if not isinstance(token, str):
+        return None
+    tok = token.strip()
+    if not tok:
+        return None
+    if _BARE_DOI_RE.match(tok.lower()) or _DOI_PREFIX_RE.match(tok):
+        return _normalize_doi_value(tok)
+    embedded = _extract_ref_doi(tok)
+    return _normalize_doi_value(embedded) if embedded else None
+
+
+# Metadata id schemes: scheme name -> normalizer returning the key's canonical
+# form if it belongs to the scheme, else None. Mirrors ``_ID_SCHEMES`` (used for
+# id -> DOI resolution) but adds ``doi``, which is not one source's id space but
+# the shared one every provider can be queried on. A caller registers a fetcher
+# per scheme it can serve; a scheme with no fetcher is left unresolved.
+_METADATA_SCHEMES: Dict[str, Callable[[object], Optional[str]]] = {
+    'openalex': _as_openalex_id,
+    'doi':      _as_doi_key,
+}
+
+
+def _key_scheme(key) -> Optional[tuple]:
+    """``(scheme, canonical)`` for a reference key, or None when unresolvable.
+
+    Tries each entry of :data:`_METADATA_SCHEMES` in order. A WoS reference
+    string carrying no DOI matches nothing and yields None — it has no queryable
+    identity, so no provider could look it up.
+    """
+    if not isinstance(key, str) or not key.strip():
+        return None
+    for scheme, normalize in _METADATA_SCHEMES.items():
+        canonical = normalize(key)
+        if canonical is not None:
+            return (scheme, canonical)
+    return None
+
+
+def _unknown_metadata() -> dict:
+    """Placeholder for an id no fetcher could resolve — cached so that the key
+    is not queried again on the next run."""
+    return {field: [] if field == 'authors' else None for field in METADATA_FIELDS}
+
+
+# ---- persistent cache ------------------------------------------------------
+
+def load_metadata_cache(path: Optional[str]) -> Dict[str, dict]:
+    """Load the persistent ``canonical id -> metadata`` CSV cache.
+
+    A row whose fields are all blank means "queried, nothing on record"; it is
+    kept so the id is not re-queried. Missing / unreadable file -> empty table.
+    """
+    if not path:
+        return {}
+    try:
+        cache = pd.read_csv(path, dtype=str)
+    except (FileNotFoundError, OSError, pd.errors.EmptyDataError):
+        return {}
+    if 'reference_key' not in cache.columns:
+        return {}
+
+    def _text(row, col):
+        val = row.get(col)
+        return val.strip() if isinstance(val, str) and val.strip() else None
+
+    def _int(row, col):
+        val = _text(row, col)
+        try:
+            return int(float(val)) if val is not None else None
+        except ValueError:
+            return None
+
+    table: Dict[str, dict] = {}
+    for _, row in cache.iterrows():
+        key = _text(row, 'reference_key')
+        if key is None:
+            continue
+        authors = _text(row, 'authors')
+        table[key] = {
+            'title':          _text(row, 'title'),
+            'doi':            _text(row, 'doi'),
+            'year':           _int(row, 'year'),
+            'authors':        authors.split(_AUTHOR_SEP) if authors else [],
+            'venue':          _text(row, 'venue'),
+            'cited_by_count': _int(row, 'cited_by_count'),
+            'abstract':       _text(row, 'abstract'),
+        }
+    return table
+
+
+def save_metadata_cache(path: Optional[str], table: Dict[str, dict]) -> None:
+    """Write the whole ``canonical id -> metadata`` table to the CSV cache."""
+    if not path:
+        return
+    _ensure_parent_dir(path)
+    rows = [{'reference_key':  key,
+             'title':          meta.get('title') or '',
+             'doi':            meta.get('doi') or '',
+             'year':           meta.get('year') if meta.get('year') is not None else '',
+             'authors':        _AUTHOR_SEP.join(meta.get('authors') or []),
+             'venue':          meta.get('venue') or '',
+             'cited_by_count': (meta.get('cited_by_count')
+                                if meta.get('cited_by_count') is not None else ''),
+             'abstract':       meta.get('abstract') or ''}
+            for key, meta in sorted(table.items())]
+    pd.DataFrame(rows, columns=list(_META_CACHE_COLS)).to_csv(path, index=False)
+
+
+# ---- generic entry point ---------------------------------------------------
+
+def fetch_reference_metadata(keys: Iterable[str], fetchers: Dict[str, Callable],
+                             cache_path: Optional[str] = None) -> Dict[str, dict]:
+    """Resolve reference keys to work metadata, provider-agnostically.
+
+    Each key is routed to an id scheme (:func:`_key_scheme`); the ids of a scheme
+    still missing from the cache are handed in one go to that scheme's *fetcher*.
+    Keys with no queryable identity, and keys of a scheme with no registered
+    fetcher, are simply absent from the result.
+
+    Returns ``{key: metadata}`` keyed by the **original** key, so a caller can
+    look up a network's ``node_ids[i]`` directly. An id a fetcher could not
+    resolve maps to an all-None entry rather than being dropped, so the negative
+    answer is cached too and never re-queried.
+
+    Parameters
+    ----------
+    keys : iterable of str
+        Reference keys — typically a co-citation network's ``node_ids``.
+    fetchers : {scheme: callable}
+        One ``ids -> {id: metadata}`` callable per scheme of
+        :data:`_METADATA_SCHEMES` the caller can serve, carrying that provider's
+        credentials and options (see :func:`fetch_metadata_via_openalex`).
+        Metadata dicts must be keyed by :data:`METADATA_FIELDS`.
+    cache_path : str, optional
+        Persistent CSV cache, shared by every scheme (canonical ids do not
+        collide across schemes). Ids already in it are never re-queried; the file
+        is rewritten whenever a fetch adds something. It records what was
+        actually fetched — a fetcher later configured to return richer records
+        does not back-fill already-cached ids, so delete the cache to refetch.
+    """
+    routed: Dict[str, tuple] = {}           # original key -> (scheme, canonical)
+    for key in keys:
+        if key in routed:
+            continue
+        scheme = _key_scheme(key)
+        if scheme is not None and scheme[0] in fetchers:
+            routed[key] = scheme
+
+    table = load_metadata_cache(cache_path)
+    missing: Dict[str, set] = {}
+    for scheme, canonical in routed.values():
+        if canonical not in table:
+            missing.setdefault(scheme, set()).add(canonical)
+
+    if missing:
+        for scheme, ids in missing.items():
+            found = fetchers[scheme](sorted(ids)) or {}
+            for id_ in ids:
+                # Unresolved ids are recorded as such, not left to be re-queried.
+                table[id_] = found.get(id_) or _unknown_metadata()
+        # The fetch has already been paid for: a cache that cannot be written
+        # (read-only path, no permission) costs the *next* run, not this one.
+        try:
+            save_metadata_cache(cache_path, table)
+        except OSError as e:
+            print(f'[references] reference-metadata cache not written to '
+                  f'{cache_path!r} ({e}); this run still uses what was fetched.')
+
+    return {key: table[canonical] for key, (_, canonical) in routed.items()
+            if canonical in table}
+
+
+# ---- OpenAlex fetcher ------------------------------------------------------
+
+# Only the fields the co-citation panels use: `select` keeps the payload small,
+# which matters when a corpus cites tens of thousands of distinct works.
+_META_SELECT = ('id,doi,display_name,publication_year,cited_by_count,'
+                'authorships,primary_location')
+
+
+def _openalex_authors(record: dict) -> List[str]:
+    """Author display names of an OpenAlex work, in authorship order."""
+    names = []
+    for authorship in record.get('authorships') or []:
+        author = authorship.get('author') or {}
+        name = author.get('display_name') or authorship.get('raw_author_name')
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return names
+
+
+def _openalex_venue(record: dict) -> Optional[str]:
+    """Display name of the work's primary source (journal, book series…)."""
+    source = (record.get('primary_location') or {}).get('source') or {}
+    name = source.get('display_name')
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def _openalex_abstract(record: dict) -> Optional[str]:
+    """Rebuild the abstract from OpenAlex's inverted index."""
+    index = record.get('abstract_inverted_index')
+    if not isinstance(index, dict) or not index:
+        return None
+    positions = [(pos, word)
+                 for word, where in index.items()
+                 for pos in (where or [])]
+    positions.sort()
+    return ' '.join(word for _, word in positions).strip() or None
+
+
+def _openalex_metadata(record: dict) -> dict:
+    """One OpenAlex work reduced to :data:`METADATA_FIELDS`."""
+    title = record.get('display_name')
+    year = record.get('publication_year')
+    return {
+        'title':          title.strip() if isinstance(title, str) and title.strip() else None,
+        'doi':            _normalize_doi_value(record.get('doi')),
+        'year':           int(year) if isinstance(year, (int, float)) and year else None,
+        'authors':        _openalex_authors(record),
+        'venue':          _openalex_venue(record),
+        'cited_by_count': record.get('cited_by_count'),
+        'abstract':       _openalex_abstract(record),
+    }
+
+
+def fetch_metadata_via_openalex(ids: Iterable[str], client,
+                                include_abstracts: bool = False,
+                                chunk: int = _ID_CHUNK,
+                                show_progress: bool = True) -> Dict[str, dict]:
+    """OpenAlex metadata fetcher: map canonical ids to work metadata.
+
+    Serves both schemes OpenAlex covers — bare ``Wxxxx`` ids go out as an
+    ``openalex_id:`` filter, anything else as ``doi:`` — so the same callable can
+    be registered for ``'openalex'`` and for ``'doi'``. Ids are queried in OR-ed
+    batches of *chunk*, one request each, exactly like
+    :func:`resolve_ids_via_openalex`; the caller wires it up with a live
+    :class:`OpenAlexClient` (``partial(fetch_metadata_via_openalex, client=…)``).
+
+    Returns ``{id: metadata}`` for the ids OpenAlex returned, keyed by the id
+    form that was asked for. Ids it does not know are absent — the generic layer
+    records the negative.
+
+    *include_abstracts* additionally pulls ``abstract_inverted_index``: richer
+    text for per-community TF-IDF terms, at a much larger payload.
+    """
+    wanted = [i for i in dict.fromkeys(ids) if i]
+    work_ids = [i for i in wanted if _as_openalex_id(i)]
+    dois     = [i for i in wanted if not _as_openalex_id(i)]
+    batches  = [('openalex_id', work_ids[i:i + chunk])
+                for i in range(0, len(work_ids), chunk)]
+    batches += [('doi', dois[i:i + chunk])
+                for i in range(0, len(dois), chunk)]
+
+    select = _META_SELECT + (',abstract_inverted_index' if include_abstracts else '')
+    asked = set(wanted)
+    out: Dict[str, dict] = {}
+    for scheme, batch in tqdm(batches, desc='Reference metadata',
+                              disable=not show_progress or not batches):
+        values = ([f'https://openalex.org/{w}' for w in batch]
+                  if scheme == 'openalex_id' else batch)
+        page = client._fetch_page({'filter': f'{scheme}:' + '|'.join(values),
+                                   'select': select,
+                                   'per-page': len(batch)})
+        for record in page.get('results', []):
+            metadata = _openalex_metadata(record)
+            # A record answers whichever id form was asked for, so index it under
+            # both its OpenAlex id and its DOI — keeping only what was requested.
+            for key in (_as_openalex_id(record.get('id')),
+                        _normalize_doi_value(record.get('doi'))):
+                if key is not None and key in asked:
+                    out[key] = metadata
+    return out

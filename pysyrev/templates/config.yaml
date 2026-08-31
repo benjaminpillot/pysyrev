@@ -413,6 +413,14 @@ topic_model:
 #   #       min_size: 5             # communities smaller than this fall into the tail (default: 5)
 #   #       backbone_k: 3           # draw only each node's k strongest co-citations (default: 3)
 #   #       color_by: community     # topic | community (default: community)
+#   #       metadata:               # resolve the reference nodes to real works — without it the
+#   #                               # clusters cannot be named (they are extra-corpus works the
+#   #                               # corpus knows nothing about). Omit the block to skip the step.
+#   #         provider: openalex    # openalex (default; the only backend today)
+#   #         api_key: ${OPENALEX_API_KEY}
+#   #         email: you@example.com      # polite pool (optional, recommended)
+#   #         cache: cache/reference_metadata.csv  # persists across runs (default: none)
+#   #         include_abstracts: false    # richer TF-IDF terms, much larger payload/cache (default: false)
 #   #     connectivity:             # mean coupling between groups (both topic AND community panels are rendered)
 #   #       by: topic               # deprecated / ignored — both groupings are shown
 #   #       scale: 1000             # rescales the tiny coupling values for readability (default: 1000)
