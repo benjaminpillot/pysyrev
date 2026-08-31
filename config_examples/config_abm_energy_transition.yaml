@@ -1,6 +1,6 @@
 # Path to the .env file. Loaded at the very top of Config.load, so any
 # ${VAR} reference further down in this file is resolved against it.
-env: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/.env
+env: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/.env
 
 bib:
   # WoS source: either a local file (source: file) or the Expanded API
@@ -16,17 +16,17 @@ bib:
 #      cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
   open_alex:
     source: seed    # 'file' or 'api' or 'seed' or leave blank if not to be included
-    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
-    api:
-      api_key: ${OPENALEX_API_KEY}
-      email: ${OPENALEX_EMAIL}                                # optional, polite-pool credit
+#    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
+#    api:
+#      api_key: ${OPENALEX_API_KEY}
+#      email: ${OPENALEX_EMAIL}                                # optional, polite-pool credit
       # Narrowed set (~546 works): justice embedded in energy models. The search
       # covers title+abstract only (not full text); AND/OR/"quotes" are honoured.
-      query: energy transition AND model AND justice
-      filters:                                                # structured filters (combined with AND)
-        publication_year: '2010-2026'                         # aligns with extract.year below
-        type: article
-      cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/OpenAlex_cache
+#      query: energy transition AND model AND justice
+#      filters:                                                # structured filters (combined with AND)
+#        publication_year: '2010-2026'                         # aligns with extract.year below
+#        type: article
+#      cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/OpenAlex_cache
 
     # Seed expansion — inactive as long as `source:` above says 'api'. Set
     # `source: seed` to build the corpus from the seed papers instead of the
@@ -38,7 +38,7 @@ bib:
     seed:
       api_key: ${OPENALEX_API_KEY}
       email: ${OPENALEX_EMAIL}                                # optional, polite-pool credit
-      file: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/REVIEW/seeds.txt
+      file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/seeds.txt
       # seeds: [10.xxxx/your-seed-doi, W2741809807]           # optional inline seeds, merged with the file
       # Text queries: the recall backstop, for papers with no citation link to
       # any seed. Each line is ONE title+abstract search whose terms are AND-ed
@@ -47,23 +47,29 @@ bib:
       # queries are unioned into the pool. Prune or extend once you see what
       # they drag in.
       queries:
-#        - energy justice modelling
-#        - just transition model
-#        - distributional impacts energy transition scenarios
-#        - equity energy system optimisation model
-#        - fairness burden sharing decarbonisation
-#        - procedural justice energy planning
-#        - energy poverty modelling scenarios
-#        - agent-based model household energy equity
-#        - integrated assessment model equity
-#        - distributive justice electricity access model
+        - agent-based model energy transition
+        - agent-based model green transition
+        - agent-based model clean transition
+        - agent-based model sustainability transition
+        - agent-based model net-zero transition
+        - agent-based model electrification
+        - agent-based integrated assessment model climate
+        - socio-technical transition agent-based model
+        - agent-based model hydrogen transition
+        - agent-based model energy policy evaluation
+        - agent-based model renewable energy diffusion
+        - agent-based model solar PV adoption
+        - agent-based model electric vehicle adoption
+        - agent-based model low-carbon energy
+        - agent-based model energy community
+        - agent-based model prosumer
       year_min: 2010                                          # aligns with extract.year below
-      year_max: 2026
+      year_max: 2030
       use_forward: true                                       # papers citing the seeds
       use_backward: true                                      # papers the seeds cite
-      max_per_seed: 600                                       # cap per seed on forward citations
-      max_per_query: 400                                      # cap per text query
-      cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/OpenAlex_cache
+      max_per_seed: 800                                       # cap per seed on forward citations
+      max_per_query: 600                                      # cap per text query
+      cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/OpenAlex_cache
   scopus:
   pubmed:
 
@@ -110,7 +116,7 @@ bib:
 
   # --- Extraction / filtering parameters ---
   extract:
-    include_doc_type:   # leave empty to keep all document types
+    include_doc_type: [article, review]  # leave empty to keep all document types
     exclude_doc_type: [peer review]      # types to remove (fuzzy); takes priority over include_doc_type
     year:                          # min publication year (inclusive)
   #   nb_citations: 0              # min citation count (inclusive)
@@ -131,7 +137,7 @@ bib:
   # Each run is stored in its own sub-directory under export_dir.
   # The review section will automatically pick up the most recent run.
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/BIB_RESULTS/
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/BIB_RESULTS/
     run_name:   # leave blank for auto-timestamp, or set e.g. "may_2026_wos_oa"
 
 
@@ -142,28 +148,55 @@ review: # LLM-based review
   # Each review run is stored in its own sub-directory under export_dir.
   # Downstream sections (bib_network, topic_model) auto-detect the most recent run.
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/AI_REVIEW_RESULTS/
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/AI_REVIEW_RESULTS/
     run_name:   # leave blank for auto-timestamp, or set e.g. "test_run_1"
     cache_dir:  # leave blank to place inside the run directory
-  batch_size : 100
-  api_pause : 30  # time.sleep(api_pause) in order to limit nb of API requests per min during reviewing process
-  max_retries : 2              # Max retries on API error, for all reviewers. Overridable per reviewer.
-  max_concurrent_requests : 10  # Max simultaneous API calls for all reviewers.
-                                # Keep low for Anthropic (5-10); null = default (10). 30 is possible for OpenAI.
-                                # Overridable per reviewer.
-  items_per_call : 25           # Articles sent per API call. Higher values reduce the number of calls
-                                # (backstory sent once per batch). Overridable per reviewer.
+
+  # ---- Execution parameters ----------------------------------------------
+  # batch_size and items_per_call both split the corpus, but at two different
+  # levels — they are not two names for the same thing:
+  #
+  #   dataset
+  #   └─ chunk of `batch_size` articles     SEQUENTIAL, one checkpoint each:
+  #      │                                  the chunk's result is written to
+  #      │                                  cache_dir, then `api_pause` seconds
+  #      │                                  elapse. A re-run reads a chunk
+  #      │                                  already on disk instead of paying
+  #      │                                  for it again. batch_size >= corpus
+  #      │                                  size = one shot, no checkpoints.
+  #      └─ per round, per reviewer         SEQUENTIAL
+  #         └─ call of `items_per_call`     CONCURRENT, up to
+  #            articles                     max_concurrent_requests in flight.
+  #                                         The backstory + criteria are sent
+  #                                         once per call, not once per article.
+  #
+  # So batch_size is about crash-recovery and pacing; items_per_call is about
+  # prompt cost and throughput. PITFALL: items_per_call larger than batch_size
+  # gains nothing — each chunk then collapses into a single API call and
+  # max_concurrent_requests goes unused. Keep batch_size a comfortable multiple
+  # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
+  # calls per chunk, 10 in flight).
+  #
+  batch_size: 100               # articles per checkpoint chunk
+  api_pause: 30.0               # seconds between chunks (rate-limit guard)
+  max_retries: 2                # on API error; overridable per reviewer
+  max_concurrent_requests: 10    # keep 5-10 for Anthropic, up to 30 for OpenAI
+  items_per_call: 25             # articles per API call (backstory sent once)
+
   text_inputs : [title, abstract, keywords]
 #  input_description : article title/abstract/keywords
-  inclusion_criteria : The scope of the study MUST include
-                       the integration of justice aspects within
-                       models or modeling approaches 
-                       FOR addressing energy transition issues.
+  inclusion_criteria : The scope of the study MUST include the use 
+    or development of agent-based models 
+    or agent-based simulations FOR addressing 
+    energy transition issues.
   exclusion_criteria : 1. The scope of the study DOES NOT include
-                      energy transition issues;
-                      2. The scope of the study DOES NOT include models
-                      or modeling approaches
-                      3. The scope of the study DOES NOT include justice aspects
+    agent-based modelling or energy transition issues;
+    2. The focus of the study is on multi-agent systems,
+    intelligent agents or software agents for solving
+    specific problems such as control strategies;
+    3. The study belongs to another very distant
+    scientific field, such as geology, zoology,
+    biology, medicine, biomedical studies, etc.
   sample_size :     # Leave blank if the whole dataset must be processed. Otherwise,
                     # size of the corresponding random sample to withdraw from the dataset
   decision_rule : majority   # majority, mean
@@ -188,23 +221,23 @@ review: # LLM-based review
       reasoning_effort :
       max_retries :                # Leave blank to use the section-level value above.
       max_concurrent_requests :    # Leave blank to use the section-level value above.
-      backstory : Reviewer#1 is a research scientist with strong expertise
-                  in Energy System Modelling for addressing issues related
-                  to Energy Transition and net-zero scenarios. Reviewer#1
-                  specializes in modeling and analyzing complex energy
-                  systems, including renewable integration, grid optimization,
-                  demand forecasting, energy policy analysis, and
-                  techno-economic assessments. A major focus of Reviewer#1 is
-                  literature synthesis and literature reviews — it excels at
-                  identifying key themes, comparing methodologies, summarizing
-                  findings, and highlighting research gaps in energy systems
-                  modeling. Reviewer#1 is highly rigorous  and cautious in its
-                  analysis of input texts and articles. It performs thorough and
-                  contextualized evaluations of abstracts and full papers,
-                  ensuring interpretations are grounded in the methodologies,
-                  assumptions, and scope presented by the original authors.
-                  It avoids oversimplified generalizations and remains critical
-                  of speculative claims or poorly substantiated conclusions.
+      backstory: Reviewer#1 is a research scientist with strong expertise
+        in Energy System Modelling for addressing issues related
+        to Energy Transition and net-zero scenarios. Reviewer#1
+        specializes in modeling and analyzing complex energy
+        systems, including renewable integration, grid optimization,
+        demand forecasting, energy policy analysis, and
+        techno-economic assessments. A major focus of Reviewer#1 is
+        literature synthesis and literature reviews — it excels at
+        identifying key themes, comparing methodologies, summarizing
+        findings, and highlighting research gaps in energy systems
+        modeling. Reviewer#1 is highly rigorous  and cautious in its
+        analysis of input texts and articles. It performs thorough and
+        contextualized evaluations of abstracts and full papers,
+        ensuring interpretations are grounded in the methodologies,
+        assumptions, and scope presented by the original authors.
+        It avoids oversimplified generalizations and remains critical
+        of speculative claims or poorly substantiated conclusions.
       additional_context :
 
     - name : Reviewer#2
@@ -215,51 +248,44 @@ review: # LLM-based review
       max_tokens : 200
       temperature : 0.6
       reasoning_effort :
-      backstory : Reviewer#2 is a seasoned researcher with a PhD in social
-                  sciences, specializing in social sciences for energy research.
-                  Reviewer#2 is an international expert on climate change, 
-                  sustainability and just transition public policy issues. His 
-                  work all has a principal focus on achieving a sustainable and 
-                  just transition to a low-carbon economy, and combines a mix of 
-                  governance, management, policy and economics. His work is based
-                  around 5 key energy justice principles, i.e. distributive, procedural,
-                  restorative, recognition and cosmopolitan. His work on energy 
-                  justice has feature in the world’s top journals such as Nature, 
-                  Nature Energy, Renewable and Sustainable Energy Reviews, 
-                  Energy Policy, Applied Energy and many more. He has presented his
-                  work on energy justice across the world, has written policy 
-                  documents, held conferences and contributed to project 
-                  development in different countries across the world.
-                  It also assists with writing and reviewing research papers, 
-                  grant proposals, and academic presentations involving energy 
-                  justice. Reviewer#2 is collaborative, exploratory, and
-                  methodical in its reasoning. It ensures technical accuracy while
-                  maintaining a tone that invites discussion, experimentation, and
-                  iteration. Reviewer#2 shares relevant methodologies and frameworks
-                  but remains open to alternative approaches and creative exploration.
-                  It avoids rigid judgment, encourages open-ended inquiry, and flags 
-                  assumptions that require clarification or validation.
+      backstory: Reviewer#2 is a seasoned researcher with a PhD in computer
+        science, specializing in agent-based modeling (ABM) and
+        agent-based simulation techniques. Reviewer#2 helps in
+        designing, analyzing, and troubleshooting complex ABMs,
+        drawing from extensive academic and applied research experience.
+        It can help with model formulation, selection of simulation
+        platforms, parameter tuning, validation techniques, and results
+        interpretation. It also assists with writing and reviewing
+        research papers, grant proposals, and academic presentations
+        involving ABM. Reviewer#2 is collaborative, exploratory, and
+        methodical in its reasoning. It ensures technical accuracy while
+        maintaining a tone that invites discussion, experimentation, and
+        iteration. Reviewer#2 shares relevant methodologies and frameworks
+        but remains open to alternative approaches and creative exploration.
+        It can switch between high-level theoretical discussions and practical
+        coding support. It avoids rigid judgment, encourages open-ended
+        inquiry, and flags assumptions that require clarification or validation.
       additional_context :
 
     - name : Reviewer#3
       reasoning :
-      model_id : claude-sonnet-4-5 # gpt-4o-mini
+      model_id : claude-haiku-4-5 # gpt-4o-mini
       host :
       provider : anthropic
       max_tokens : 200
       temperature :
       reasoning_effort : medium
-      backstory : Reviewer#3 is a senior MD-PhD researcher with years of experience
-                  in conducting systematic reviews in social-ecological systems,
-                  Sustainability Science and decarbonisation of the economy. A major
-                  focus of Reviewer#3 is literature synthesis and literature reviews —
-                  it excels at identifying key themes, comparing methodologies,
-                  summarizing findings, and highlighting research gaps in social-ecological
-                  studies. Reviewer#3 is highly rigorous and cautious in its analysis of
-                  input texts and articles. It performs thorough and contextualized
-                  evaluations of abstracts and full papers, ensuring interpretations
-                  are grounded in the methodologies, assumptions, and scope presented
-                  by the original authors.
+      backstory: Reviewer#3 is a senior MD-PhD researcher with years of experience
+        in conducting systematic reviews in social-ecological systems,
+        Sustainability Science and decarbonisation of the economy. A major
+        focus of Reviewer#3 is literature synthesis and literature reviews —
+        it excels at identifying key themes, comparing methodologies,
+        summarizing findings, and highlighting research gaps in social-ecological
+        studies. Reviewer#3 is highly rigorous and cautious in its analysis of
+        input texts and articles. It performs thorough and contextualized
+        evaluations of abstracts and full papers, ensuring interpretations
+        are grounded in the methodologies, assumptions, and scope presented
+        by the original authors.
       additional_context : Two PhD reviewers have already reviewed this article and
                            disagree on how to evaluate it. You can read their evaluation above.
 
@@ -275,7 +301,7 @@ topic_model:
   # Set an explicit path to target a specific run or an external CSV.
   doc_dataset:  # ~/Documents/PRO/ABM_LITERATURE_REVIEW/NOTEBOOKS/merged_wos_openalex_with_abstract_no_duplicate.csv
   export:
-    export_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/TOPIC_MODELING/
+    export_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/TOPIC_MODELING/
     run_name:   # leave blank for auto-timestamp
   # Distance : euclidean, chebyshev ; default = euclidean
   distance: chebyshev
@@ -360,7 +386,7 @@ topic_model:
 #
 topic_report:
 #   # Directory where the PDF and annex files will be written.
-   export_to: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/REPORT/
+   export_to: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/PYSYREV/REPORT/
 #
 #   # run_dir: leave blank to auto-detect the latest topic_model run.
 #   # run_dir: /path/to/TOPIC_MODELING/run_YYYY-MM-DD_HH-MM-SS/
