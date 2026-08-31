@@ -103,6 +103,15 @@ class Pipeline:
             self.review = LLMReview.from_config(self.config.review)
             dataset = self.bib.dataset if self.bib is not None else None
             self.review.run(dataset).save()
+            # Propagate the freshly written reviewed_included.csv to
+            # topic_model.doc_dataset. Config.load auto-detected a doc_dataset
+            # before this run's file existed (a stale/older run, or None). The
+            # topic model trains on self.review.included_docs directly, but the
+            # report recomputes its bibliographic networks from
+            # topic_model.doc_dataset — so without this the networks/composite
+            # sections silently vanish when they read the wrong (or no) file.
+            if self.config.topic_model is not None:
+                self.config.topic_model.doc_dataset = self.review.export.included_docs
 
         if 'topic-model' in ordered:
             from pysyrev.topic_model import TopicModel
