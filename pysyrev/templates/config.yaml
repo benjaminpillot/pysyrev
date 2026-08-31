@@ -452,8 +452,11 @@ topic_model:
 # =============================================================================
 # llm  (optional — used with topic_report)
 # =============================================================================
-# When present, an LLM generates human-readable labels for each topic.
-# Remove this section to skip LLM labelling.
+# When present, an LLM generates human-readable labels — for each BERTopic
+# topic and for each bibliographic-coupling community (its distinguishing
+# TF-IDF sub-theme, shown as an extra "LLM label" column). Both are cached
+# (topic_labels/ and cluster_labels/ under the run dir), so the LLM runs once
+# and not on every report. Remove this section to skip LLM labelling.
 #
 # llm:
 #   provider: anthropic       # anthropic | openai | litellm | ollama

@@ -8,6 +8,7 @@ the runtime class coordinates them and holds instance-level cache.
 import ast
 import glob
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
@@ -213,6 +214,16 @@ def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics, sec
     return {"title": f"{section_n}. Topics", "blocks": blocks}
 
 
+def _slug(label: str) -> str:
+    """Filename-safe slug of a panel title.
+
+    Panel titles carry punctuation that has no business in a filename — the ``×``
+    of "Community × topic mapping", the parentheses of "Community connectivity
+    (co-citation)". Collapse every run of non-alphanumerics into one underscore.
+    """
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+
+
 def _export_network_html(fig, export_to, label):
     """Write an interactive HTML version of a Plotly network figure and return a
     'Interactive version' callout block (or None)."""
@@ -220,7 +231,7 @@ def _export_network_html(fig, export_to, label):
         return None
     import plotly.graph_objects as _go
     os.makedirs(export_to, exist_ok=True)
-    html_name = label.lower().replace(" ", "_") + "_network.html"
+    html_name = _slug(label) + "_network.html"
     html_path = os.path.join(export_to, html_name)
     fig_html = _go.Figure(fig)
     fig_html.update_layout(autosize=True, width=None, height=None)
@@ -242,9 +253,232 @@ def _export_network_html(fig, export_to, label):
     }
 
 
+def _community_repr_titles(result, df, n=5) -> dict:
+    """Top-strength paper titles per Leiden coupling community.
+
+    Anchors the LLM community label with a few concrete papers. Returns
+    ``{community_id: [titles]}``; empty when titles aren't available.
+    """
+    if result is None or df is None or "title" not in df.columns:
+        return {}
+    id_to_title = (df.drop_duplicates("id").set_index("id")["title"].to_dict()
+                   if "id" in df.columns else {})
+    strength = result.W.sum(axis=1)
+    out: dict = {}
+    for comm in set(int(c) for c in result.labels if c >= 0):
+        idx = [i for i in range(len(result.labels))
+               if int(result.labels[i]) == comm]
+        idx.sort(key=lambda i: strength[i], reverse=True)
+        titles = []
+        for i in idx[:n]:
+            t = id_to_title.get(result.node_ids[i])
+            if isinstance(t, str) and t.strip():
+                titles.append(t.strip())
+        if titles:
+            out[comm] = titles
+    return out
+
+
+def _metadata_fetchers(cfg) -> dict:
+    """Build the ``{id_scheme: ids -> {id: metadata}}`` fetchers for
+    :func:`~pysyrev.core.references.fetch_reference_metadata` from *cfg*.
+
+    One provider registers the schemes it can serve, from its own credentials.
+    OpenAlex is the only one implemented today — it answers on both its own ids
+    and DOIs, so it covers both schemes; another metadata source would register
+    here the same way. An unknown provider yields ``{}``, leaving the references
+    unresolved rather than failing the report.
+    """
+    from functools import partial
+
+    if cfg.provider == "openalex":
+        from pysyrev.core.api.openalex_client import OpenAlexClient
+        from pysyrev.core.references import fetch_metadata_via_openalex
+        client = OpenAlexClient(api_key=cfg.api_key, email=cfg.email)
+        fetch = partial(fetch_metadata_via_openalex, client=client,
+                        include_abstracts=cfg.include_abstracts)
+        return {"openalex": fetch, "doi": fetch}
+
+    print(f"[report] unknown reference-metadata provider {cfg.provider!r}; "
+          f"co-citation nodes left unresolved.")
+    return {}
+
+
+def _cocitation_metadata(df, ref_col, cocitation_cfg) -> dict:
+    """Resolve the co-citation nodes to real works, per the panel's config.
+
+    Returns ``{reference_key: metadata}``, or ``{}`` when the step is not
+    configured. The node set is derived up front from the reference sets
+    (:func:`~pysyrev.core.networks.frequent_references`) so only the references
+    that will actually become nodes are looked up — the once-cited long tail,
+    which ``min_ref_freq`` drops anyway, is never queried.
+
+    Like every other enrichment here, a failure degrades rather than propagates:
+    the co-citation panel still renders, just with unnamed clusters.
+    """
+    cfg = getattr(cocitation_cfg, "metadata", None)
+    if cfg is None:
+        return {}
+    try:
+        from pysyrev.core.networks import frequent_references, reference_sets
+        from pysyrev.core.references import fetch_reference_metadata
+
+        fetchers = _metadata_fetchers(cfg)
+        if not fetchers:
+            return {}
+        _, refsets = reference_sets(df, ref_col=ref_col)
+        keys, _ = frequent_references(refsets, min_ref_freq=cocitation_cfg.min_ref_freq)
+        if not keys:
+            return {}
+        meta = fetch_reference_metadata(keys, fetchers, cache_path=cfg.cache)
+        resolved = sum(1 for m in meta.values() if m.get("title"))
+        print(f"[report] co-citation node metadata: {resolved}/{len(keys)} "
+              f"references resolved via {cfg.provider}.")
+        return meta
+    except Exception as e:
+        print(f"[report] co-citation node metadata skipped "
+              f"(network still rendered): {e!r}")
+        return {}
+
+
+def _cocitation_repr_titles(result, n=5) -> dict:
+    """Top-strength reference titles per Leiden co-citation community.
+
+    The co-citation counterpart of :func:`_community_repr_titles`: titles come
+    from the resolved node metadata rather than the corpus, since the references
+    are mostly extra-corpus. Empty when the metadata step did not run.
+    """
+    meta = getattr(result, "node_meta", None)
+    if result is None or not meta:
+        return {}
+    from pysyrev.core.networks import cluster_profiles
+    profiles = cluster_profiles(result.node_ids, result.labels, result.W, meta,
+                                top_works=n)
+    out = {}
+    for comm, profile in profiles.items():
+        titles = [w["title"] for w in profile["works"] if w.get("title")]
+        if titles:
+            out[comm] = titles
+    return out
+
+
+def _label_communities(run_dir, result, config, repr_docs, kind):
+    """Human-readable labels for one network's Leiden communities, cached on disk.
+
+    Returns ``{community_id: label}`` or None. The LLM runs only on a cache miss
+    (the cache is keyed on a hash of the community sub-theme terms), so an
+    unchanged partition never triggers a call — the point of doing this once,
+    not on every report. Coupling and co-citation therefore share the cache
+    without colliding: different terms, different key.
+    """
+    if config is None or result is None:
+        return None
+    terms = getattr(result, "terms", None)
+    if not terms:
+        return None
+    from pysyrev.core.topic_labels import (
+        load_cached_cluster_labels, save_cluster_labels)
+
+    cached = load_cached_cluster_labels(run_dir, terms)
+    if cached is not None:
+        return cached
+    # The LLM label is optional enrichment: it must never break the networks
+    # section or the whole report. Any failure (API error, rate limit, bad
+    # response) degrades to no labels — the section still renders with the raw
+    # TF-IDF terms. On success the labels are cached so the call happens once.
+    try:
+        from pysyrev.core.llm import label_clusters
+        print(f"Generating human-readable {kind}-community labels via LLM…")
+        labels = label_clusters(terms, config, repr_docs=repr_docs)
+        path = save_cluster_labels(run_dir, terms, labels)
+        print(f"{kind.capitalize()}-community labels saved to: {path}")
+        return labels
+    except Exception as e:
+        print(f"[report] community labels skipped (network still rendered): {e!r}")
+        return None
+
+
+def _label_coupling_communities(run_dir, coupling_result, networks_df, config):
+    """Labels for the coupling communities, anchored on their papers' titles."""
+    return _label_communities(
+        run_dir, coupling_result, config,
+        repr_docs=_community_repr_titles(coupling_result, networks_df),
+        kind="coupling")
+
+
+def _label_cocitation_communities(run_dir, cocitation_result, config):
+    """Labels for the co-citation communities, anchored on the most co-cited
+    references' titles. Only possible once the node metadata is resolved."""
+    return _label_communities(
+        run_dir, cocitation_result, config,
+        repr_docs=_cocitation_repr_titles(cocitation_result),
+        kind="co-citation")
+
+
+def _community_profile_blocks(result, node_meta) -> list:
+    """Who and when each community is made of — for a network of references.
+
+    Once the co-citation nodes are resolved to real works, a community can be
+    read as an intellectual base: the authors it keeps citing, the venues that
+    carry it, and the period it spans. Returns ``[]`` when no node metadata is
+    available (i.e. every network but a metadata-enabled co-citation one).
+    """
+    if not node_meta:
+        return []
+    from pysyrev.core.networks import cluster_profiles
+
+    profiles = cluster_profiles(result.node_ids, result.labels, result.W, node_meta)
+    if not profiles:
+        return []
+
+    rows = []
+    for comm in sorted(profiles):
+        p = profiles[comm]
+        span = (f"{p['year_range'][0]}–{p['year_range'][1]}"
+                if p["year_range"] else "-")
+        rows.append([
+            f"C{comm}",
+            f"{p['n_known']}/{p['n_refs']}",
+            f"{p['median_year']} ({span})" if p["median_year"] else "-",
+            ", ".join(name for name, _ in p["authors"][:6]) or "-",
+            ", ".join(name for name, _ in p["venues"]) or "-",
+        ])
+    blocks = [{
+        "type": "table",
+        "title": "Community profiles (most co-cited authors and venues)",
+        "headers": ["Community", "Resolved", "Median year (span)",
+                    "Most co-cited authors", "Main venues"],
+        "rows": rows,
+        "col_widths": [1.3, 1.3, 2.4, 6.0, 5.0],
+    }]
+
+    # The handful of works each community is actually built on — the concrete
+    # anchor behind the terms and the author counts.
+    work_rows = []
+    for comm in sorted(profiles):
+        for w in profiles[comm]["works"][:3]:
+            first = (w.get("authors") or ["—"])[0]
+            work_rows.append([
+                f"C{comm}",
+                str(w.get("title") or "—")[:80],
+                first,
+                str(w.get("year") or "-"),
+                f"{w['strength']:.3g}",
+            ])
+    if work_rows:
+        blocks.append({
+            "type": "table",
+            "title": "Most co-cited works per community",
+            "headers": ["Community", "Title", "First author", "Year", "Strength"],
+            "rows": work_rows,
+            "col_widths": [1.3, 7.4, 3.2, 1.0, 1.4],
+        })
+    return blocks
+
+
 def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
                               title, filename_prefix, node_kind, count_label,
-                              k, color_mode, export_to):
+                              k, color_mode, export_to, cluster_labels=None):
     """Render one computed network (coupling or co-citation) as a subsection.
 
     *result* is a :class:`NetworkResult`; *df* supplies node metadata
@@ -306,27 +540,41 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
             if nd and isinstance(tval, str) and tval.strip():
                 doi_to_title[nd] = tval
 
+    # Resolved metadata for extra-corpus reference nodes (co-citation only, and
+    # only when the metadata step ran) — the corpus itself knows nothing of them.
+    node_meta = getattr(result, "node_meta", None) or {}
+
     def _title_doi(nid):
         """(title, doi) for a node: from the corpus by id (documents and
-        in-corpus cited references), else from the reference key's own DOI
-        (title looked up when the cited work is in-corpus), else ('—', '—') for
-        an extra-corpus opaque id."""
+        in-corpus cited references), else from the resolved reference metadata,
+        else from the reference key's own DOI (title looked up when the cited
+        work is in-corpus), else ('—', '—') for an unresolved opaque id."""
         if meta is not None and nid in meta.index:                # in corpus by id
             t = _meta(nid, "title", None)
             return (str(t)[:70] if t else "—", _ref_doi(_meta(nid, "doi", None)) or "—")
-        d = _ref_doi(nid)                                         # reference key = DOI
-        if d:
-            t = doi_to_title.get(d)
-            return (str(t)[:70] if t else "—", d)
-        return ("—", "—")                                         # extra-corpus opaque id
+        entry = node_meta.get(nid) or {}
+        d = _ref_doi(nid) or entry.get("doi")     # the key's own DOI, else the resolved one
+        t = entry.get("title") or doi_to_title.get(d)
+        return (str(t)[:70] if t else "—", d or "—")
+
+    def _year(nid):
+        """Publication year of a node — the corpus row's, else the resolved
+        reference metadata's."""
+        y = _meta(nid, "year", None)
+        if y is None:
+            y = (node_meta.get(nid) or {}).get("year")
+        return y if y is not None else "-"
 
     strength = result.W.sum(axis=1)
     hover = []
     for nid, comm, tp, st in zip(result.node_ids, result.labels, topics, strength):
         title_txt, doi_txt = _title_doi(nid)
         tlabel = color_labels.get(int(tp), "—")
+        authors = ", ".join((node_meta.get(nid) or {}).get("authors") or [])[:80]
         hover.append(
-            f"<b>{title_txt}</b><br>DOI: {doi_txt}<br>Year: {_meta(nid, 'year')}<br>"
+            f"<b>{title_txt}</b><br>"
+            + (f"{authors}<br>" if authors else "")
+            + f"DOI: {doi_txt}<br>Year: {_year(nid)}<br>"
             f"Community: {'C%d' % comm if comm >= 0 else 'tail'}<br>"
             f"Topic: {tlabel}<br>Strength: {st:.3g}"
         )
@@ -386,17 +634,30 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     terms = getattr(result, "terms", None)
     if terms:
         comm_size = {c: int((result.labels == c).sum()) for c in terms}
-        term_rows = [
-            [f"C{c}", str(comm_size.get(c, 0)), ", ".join(terms[c][:10])]
-            for c in sorted(terms)
-        ]
+        use_llm = bool(cluster_labels)
+        term_rows = []
+        for c in sorted(terms):
+            row = [f"C{c}", str(comm_size.get(c, 0))]
+            if use_llm:
+                row.append(str(cluster_labels.get(int(c), "—")))
+            row.append(", ".join(terms[c][:10]))
+            term_rows.append(row)
+        size_header = "Docs" if node_kind == "document" else "Refs"
+        if use_llm:
+            headers    = ["Community", size_header, "LLM label", "Top terms"]
+            col_widths = [1.4, 1.0, 4.6, 9.8]
+        else:
+            headers    = ["Community", size_header, "Top terms"]
+            col_widths = [1.6, 1.2, 14.0]
         sub_content.append({
             "type": "table",
             "title": "Community sub-themes (distinguishing TF-IDF terms)",
-            "headers": ["Community", "Docs", "Top terms"],
+            "headers": headers,
             "rows": term_rows,
-            "col_widths": [1.6, 1.2, 14.0],
+            "col_widths": col_widths,
         })
+
+    sub_content.extend(_community_profile_blocks(result, node_meta))
 
     if color_mode == "topic":
         caption = ("Layout comes from the coupling structure (strongly-coupled "
@@ -420,26 +681,68 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     return {"type": "subsection", "title": title, "blocks": sub_content}
 
 
-def _connectivity_panel(W, groups, unit, scale, export_to):
+_UNIT_PLURALS = {"topic": "topics", "community": "communities"}
+
+
+# Vocabulary of one connectivity panel. The matrix machinery is metric-agnostic —
+# inter_cluster_matrix averages blocks of any weighted W — so only the prose
+# differs between a coupling W (how much two groups cite the same works) and a
+# co-citation W (how often two groups' references are cited together).
+_CONNECTIVITY_KINDS = {
+    "coupling": {
+        "metric":   "bibliographic coupling",
+        "basis":    "shared references",
+        "colorbar": "mean coupling",
+        "offdiag":  "how much two {units} share references",
+        "darker":   "stronger shared-reference overlap",
+        "profile":  ("A {unit} with high internal and low outward coupling (below "
+                     "baseline) is a self-contained / weakly integrated theme."),
+    },
+    "cocitation": {
+        "metric":   "co-citation",
+        "basis":    "documents citing both references",
+        "colorbar": "mean co-citation",
+        "offdiag":  "how often the references of two {units} are cited together",
+        "darker":   "more frequent co-citation",
+        "profile":  ("A {unit} with high internal and low outward co-citation (below "
+                     "baseline) is an intellectual base mobilised on its own, rarely "
+                     "alongside the others."),
+    },
+}
+
+
+def _connectivity_panel(W, groups, unit, scale, export_to,
+                        kind="coupling", title=None):
     """One inter-group connectivity subsection for a precomputed grouping.
 
     *groups* is a list of ``(label, idx_array)``; *unit* is ``"topic"`` or
-    ``"community"``. A heatmap of mean bibliographic coupling between groups plus
-    a per-group internal/outward table. Returns None when fewer than two
-    non-empty groups exist.
+    ``"community"``; *kind* selects the metric's vocabulary from
+    :data:`_CONNECTIVITY_KINDS` (``W`` is a coupling or a co-citation matrix).
+    A heatmap of the mean weight between groups plus a per-group
+    internal/outward table. Returns None when fewer than two non-empty groups
+    exist.
+
+    *title* overrides the subsection title; it also drives the exported HTML
+    filename, so two panels of the same *unit* over different networks must not
+    share one.
     """
     from pysyrev.core.networks import (
         inter_cluster_matrix, corpus_baseline, coupling_inout,
-        plot_connectivity_matrix,
     )
+    from pysyrev.core.figures import plot_connectivity_matrix
 
     groups = [(lab, idx) for lab, idx in groups if len(idx) > 0]
     if len(groups) < 2:
         return None
 
+    words  = _CONNECTIVITY_KINDS[kind]
+    title  = title or f"{unit.capitalize()} connectivity"
+    units  = _UNIT_PLURALS.get(unit, unit + "s")
+
     M, labs = inter_cluster_matrix(W, groups, scale=scale)
     base    = corpus_baseline(W, scale=scale)
-    fig     = plot_connectivity_matrix(M, labs, baseline=base, title=None)
+    fig     = plot_connectivity_matrix(M, labs, baseline=base, title=None,
+                                       colorbar_title=words["colorbar"])
 
     rows = []
     for i, lab in enumerate(labs):
@@ -450,65 +753,79 @@ def _connectivity_panel(W, groups, unit, scale, export_to):
 
     sub_content = [
         {"type": "paragraph",
-         "text": (f"Mean bibliographic coupling between {unit}s (shared references, "
+         "text": (f"Mean {words['metric']} between {units} ({words['basis']}, "
                   f"scaled ×{int(scale)}). The diagonal is each {unit}'s internal "
-                  f"cohesion; off-diagonal cells show how much two {unit}s share "
-                  f"references. Corpus baseline: <b>{base:.2f}</b>.")},
+                  f"cohesion; off-diagonal cells show "
+                  f"{words['offdiag'].format(unit=unit, units=units)}. "
+                  f"Corpus baseline: <b>{base:.2f}</b>.")},
         {"type": "plotly", "figure": fig,
-         "caption": (f"Darker = stronger shared-reference overlap. A {unit} with high "
-                     f"internal and low outward coupling (below baseline) is a "
-                     f"self-contained / weakly integrated theme."),
-         "filename_prefix": f"{unit}_connectivity"},
+         "caption": (f"Darker = {words['darker']}. "
+                     + words["profile"].format(unit=unit, units=units)),
+         "filename_prefix": _slug(title)},
         {"type": "table",
-         "title": f"Internal vs outward coupling per {unit}",
+         "title": f"Internal vs outward {words['metric']} per {unit}",
          "headers": [unit.capitalize(), "Internal", "Outward", "Profile"],
          "rows": rows, "col_widths": [7.0, 3.0, 3.0, 4.0]},
     ]
-    html_block = _export_network_html(fig, export_to, f"{unit} connectivity")
+    html_block = _export_network_html(fig, export_to, title)
     if html_block is not None:
         sub_content.append(html_block)
 
-    return {"type": "subsection",
-            "title": f"{unit.capitalize()} connectivity",
-            "blocks": sub_content}
+    return {"type": "subsection", "title": title, "blocks": sub_content}
 
 
-def _build_connectivity_subsections(coupling_result, bertopic_results,
-                                    topic_labels, section_cfg, export_to):
-    """Both connectivity panels — by BERTopic topic and by Leiden community.
+def _build_connectivity_subsections(coupling_result, cocitation_result,
+                                    bertopic_results, topic_labels, section_cfg,
+                                    export_to):
+    """The connectivity panels — by BERTopic topic, then by Leiden community for
+    each network that has one.
 
-    Topic connectivity tests whether the global topics share references; community
-    connectivity does the same for the coupling communities themselves. Returns a
-    list of subsection blocks (0-2), skipping a grouping with fewer than two
-    non-empty groups.
+    Topic connectivity tests whether the global topics share references. Community
+    connectivity asks the same of the communities themselves, once per network:
+    for coupling, whether two groups of papers cite the same works; for
+    co-citation, whether two intellectual bases are mobilised together by the same
+    documents. Both readings matter and they are not interchangeable, so they are
+    rendered as sibling panels rather than one.
+
+    There is deliberately no topic panel for co-citation: its nodes are
+    references, mostly extra-corpus, which carry no BERTopic topic.
+
+    Returns a list of subsection blocks (0-3), skipping any grouping with fewer
+    than two non-empty groups.
     """
-    if coupling_result is None or coupling_result.n_nodes < 2:
-        return []
+    from pysyrev.core.networks import groups_from_labels
 
     scale = section_cfg.connectivity.scale
-    W     = coupling_result.W
     panels = []
 
-    # By BERTopic topic.
-    topic_of = {}
-    if bertopic_results is not None and "Topic" in bertopic_results.columns:
-        id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
-        if id_col:
-            topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
-    if topic_of:
-        topics = np.array([int(topic_of.get(nid, -1)) for nid in coupling_result.node_ids])
-        tgroups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
-                   for t in sorted(x for x in set(topics.tolist()) if x != -1)]
-        panel = _connectivity_panel(W, tgroups, "topic", scale, export_to)
+    # By BERTopic topic — coupling only (topics are a property of documents).
+    if coupling_result is not None and coupling_result.n_nodes >= 2:
+        topic_of = {}
+        if bertopic_results is not None and "Topic" in bertopic_results.columns:
+            id_col = next((c for c in ["id", "ID"] if c in bertopic_results.columns), None)
+            if id_col:
+                topic_of = dict(zip(bertopic_results[id_col], bertopic_results["Topic"]))
+        if topic_of:
+            topics = np.array([int(topic_of.get(nid, -1))
+                               for nid in coupling_result.node_ids])
+            tgroups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
+                       for t in sorted(x for x in set(topics.tolist()) if x != -1)]
+            panel = _connectivity_panel(coupling_result.W, tgroups, "topic", scale,
+                                        export_to, kind="coupling")
+            if panel is not None:
+                panels.append(panel)
+
+    # By Leiden community, once per network.
+    for result, kind, label in ((coupling_result, "coupling", "coupling"),
+                                (cocitation_result, "cocitation", "co-citation")):
+        if result is None or result.n_nodes < 2:
+            continue
+        panel = _connectivity_panel(
+            result.W, groups_from_labels(result.labels), "community", scale,
+            export_to, kind=kind,
+            title=f"Community connectivity ({label})")
         if panel is not None:
             panels.append(panel)
-
-    # By Leiden coupling community.
-    from pysyrev.core.networks import groups_from_labels
-    cgroups = groups_from_labels(coupling_result.labels)
-    panel = _connectivity_panel(W, cgroups, "community", scale, export_to)
-    if panel is not None:
-        panels.append(panel)
 
     return panels
 
@@ -522,7 +839,8 @@ def _build_community_topic_mapping_subsection(coupling_result, bertopic_results,
     text-based topics. Returns a subsection block, or None when a prerequisite is
     missing.
     """
-    from pysyrev.core.networks import community_topic_crosstab, plot_crosstab_heatmap
+    from pysyrev.core.networks import community_topic_crosstab
+    from pysyrev.core.figures import plot_crosstab_heatmap
 
     if coupling_result is None or coupling_result.n_nodes < 2:
         return None
@@ -574,14 +892,16 @@ def _build_community_topic_mapping_subsection(coupling_result, bertopic_results,
 
 def _build_networks_section(df, coupling_result, cocitation_result,
                             bertopic_results, topic_labels, section_cfg,
-                            export_to, section_n):
+                            export_to, section_n, cluster_labels=None,
+                            cocitation_labels=None):
     """Section — bibliographic coupling and co-citation networks.
 
     Coupling and co-citation are recomputed from the reviewed dataset's raw
     references (Salton / co-citation matrix → Leiden communities → backbone
     layout) and rendered with Plotly; coupling is coloured by BERTopic topic (the
-    croisement). A third panel gives the inter-topic connectivity matrix (mean
-    coupling between topics). Citation is intentionally not rendered yet.
+    croisement). Connectivity panels follow: one by topic, then one per network by
+    Leiden community (see :func:`_build_connectivity_subsections`). Citation is
+    intentionally not rendered yet.
     """
     cfg = section_cfg
     sub_blocks = []
@@ -591,7 +911,7 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         title="Bibliographic coupling", filename_prefix="bibliographic_coupling",
         node_kind="document", count_label="Documents",
         k=cfg.coupling.backbone_k, color_mode=cfg.coupling.color_by,
-        export_to=export_to,
+        export_to=export_to, cluster_labels=cluster_labels,
     )
     if coupling_sub is not None:
         sub_blocks.append(coupling_sub)
@@ -606,13 +926,14 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         title="Co-citation", filename_prefix="co_citation",
         node_kind="reference", count_label="References",
         k=cfg.cocitation.backbone_k, color_mode=cfg.cocitation.color_by,
-        export_to=export_to,
+        export_to=export_to, cluster_labels=cocitation_labels,
     )
     if cocitation_sub is not None:
         sub_blocks.append(cocitation_sub)
 
     sub_blocks.extend(_build_connectivity_subsections(
-        coupling_result, bertopic_results, topic_labels, cfg, export_to))
+        coupling_result, cocitation_result, bertopic_results, topic_labels,
+        cfg, export_to))
 
     if not sub_blocks:
         return None
@@ -806,8 +1127,8 @@ def _build_topic_characteristics_section(bertopic_results, topic_labels,
 
 def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, section_n):
     """Section — cosine similarity heatmap with optional hierarchical clustering."""
-    import plotly.graph_objects as go
     from sklearn.metrics.pairwise import cosine_similarity as cos_sim_fn
+    from pysyrev.core.figures import plot_similarity_matrix
     from scipy.cluster.hierarchy import linkage, leaves_list
     from scipy.spatial.distance import squareform
 
@@ -850,39 +1171,45 @@ def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, sec
                     distfun=lambda data: scipy_pdist(data, metric="cosine"),
                     linkagefun=lambda d: linkage(d, method="ward"),
                 )
+                # Same tick angle, background and margins as the heatmap below,
+                # so both figures of the section read as one pair.
                 fig_dend.update_layout(
-                    title="Topic similarity — Dendrogram",
+                    title=None,
                     width=900, height=380,
-                    xaxis={"tickangle": -45},
+                    xaxis={"tickangle": -30, "automargin": True},
+                    margin=dict(l=20, r=20, t=40, b=20),
+                    plot_bgcolor="white",
                 )
                 sub_blocks.append({
                     "type": "plotly", "figure": fig_dend,
-                    "caption": "Hierarchical clustering dendrogram (Ward, cosine distance).",
+                    "caption": "Hierarchical clustering dendrogram (Ward, cosine distance). "
+                               "It sets the row/column order of the heatmap below.",
+                    "filename_prefix": "topic_similarity_dendrogram",
                 })
             except Exception:
                 pass
 
-    # Reorder heatmap
+    # Reorder heatmap. The diagonal is blanked: a topic's similarity to itself
+    # is 1 by construction and would flatten the colour scale of everything else.
     cos_plot = cos_mat.copy()
     np.fill_diagonal(cos_plot, np.nan)
     cos_plot       = cos_plot[np.ix_(order, order)]
     heat_labels    = [labels[i] for i in order]
 
-    fig_heat = go.Figure(go.Heatmap(
-        z=cos_plot,
-        x=heat_labels,
-        y=heat_labels,
-        colorscale="Viridis",
-        colorbar=dict(title="Cosine"),
-    ))
-    fig_heat.update_layout(
-        title="Cosine similarity between topics",
-        width=850, height=750,
-        xaxis={"tickangle": -45},
-    )
+    fig_heat = plot_similarity_matrix(cos_plot, heat_labels, title=None)
+    sub_blocks.append({
+        "type": "paragraph",
+        "text": ("Pairwise cosine similarity between topics, computed from the "
+                 "BERTopic probability distributions: how much two topics claim "
+                 "the same documents. Unlike the connectivity panels, this says "
+                 "nothing about shared references — two topics can be "
+                 "semantically close yet bibliographically disconnected."),
+    })
     sub_blocks.append({
         "type": "plotly", "figure": fig_heat,
-        "caption": "Pairwise cosine similarity computed from BERTopic probability distributions.",
+        "caption": ("Darker = topics competing for the same documents. The "
+                    "diagonal is blank (self-similarity is 1 by construction)."),
+        "filename_prefix": "topic_similarity",
     })
 
     return {"title": f"{section_n}. Topic similarity", "blocks": sub_blocks}
@@ -1226,7 +1553,8 @@ def build_report_data(run_dir: str,
                       report_config,
                       topic_labels: dict = None,
                       export_to: str = None,
-                      coupling_dataset: str = None) -> dict:
+                      coupling_dataset: str = None,
+                      cluster_labeler_config=None) -> dict:
     """Build the declarative report_data dict consumed by PDFReportEngine."""
     meta = report_config.meta
     sec  = report_config.sections
@@ -1256,6 +1584,10 @@ def build_report_data(run_dir: str,
     # dataset's raw references — shared by the networks section and by
     # network-based paper selection.
     _networks_df = _coupling_result = _cocitation_result = None
+    if not coupling_dataset:
+        print("[report] networks skipped: no coupling dataset was provided "
+              "(topic_model.doc_dataset is empty/unresolved) — the networks, "
+              "connectivity and composite sections will be absent.")
     if coupling_dataset:
         try:
             _networks_df = pd.read_csv(coupling_dataset, low_memory=False)
@@ -1294,17 +1626,29 @@ def build_report_data(run_dir: str,
                     _networks_df, ref_col=ref_col, min_ref_freq=nc.cocitation.min_ref_freq,
                     resolution_range=nc.cocitation.resolution_range,
                     resolution_step=nc.cocitation.resolution_step,
-                    min_size=nc.cocitation.min_size)
+                    min_size=nc.cocitation.min_size,
+                    ref_meta=_cocitation_metadata(_networks_df, ref_col, nc.cocitation))
             except Exception as e:
                 print(f"[report] co-citation network skipped: {e!r}")
                 _cocitation_result = None
+
+    # Human-readable labels for the communities of both networks, via the same
+    # LLM used for topics. Computed once and cached (keyed on a hash of the
+    # community sub-theme terms), so the labeller never re-runs on an unchanged
+    # partition. Co-citation only has terms when its metadata step ran.
+    _cluster_labels = _label_coupling_communities(
+        run_dir, _coupling_result, _networks_df, cluster_labeler_config)
+    _cocitation_labels = _label_cocitation_communities(
+        run_dir, _cocitation_result, cluster_labeler_config)
 
     # 2. Bibliographic networks (coupling + co-citation) — rendered whenever the
     # reviewed dataset yielded a coupling network (i.e. it carried references).
     if _coupling_result is not None:
         section = _build_networks_section(
             _networks_df, _coupling_result, _cocitation_result,
-            bertopic_results, topic_labels, sec.bib_network, export_to, n)
+            bertopic_results, topic_labels, sec.bib_network, export_to, n,
+            cluster_labels=_cluster_labels,
+            cocitation_labels=_cocitation_labels)
         if section is not None:
             report_data["sections"].append(section)
             n += 1

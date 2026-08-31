@@ -720,3 +720,107 @@ def label_topics(topic_info, config) -> dict:
         Mapping {topic_id (int): label (str)}.
     """
     return asyncio.run(_label_all_topics(topic_info, config))
+
+
+# ── Coupling-community labeling ─────────────────────────────────────────────
+
+_DEFAULT_CLUSTER_LABELER_SYSTEM_PROMPT = (
+    "You are a scientific topic labeler for a systematic literature review. "
+    "You are given one community of a bibliographic-coupling network: papers that "
+    "cite the same references and therefore share an intellectual base. The "
+    "community is described by its distinguishing TF-IDF terms and, when "
+    "available, a few of its most central paper titles. Generate a concise, "
+    "human-readable label (5–10 words) that names the sub-theme these papers form. "
+    "Return a JSON object with a single key \"label\"."
+)
+
+
+def _build_cluster_labeler_messages(terms: list, titles: list,
+                                     system_prompt: str) -> list:
+    parts = [f"Distinguishing TF-IDF terms: {', '.join(terms)}"]
+    if titles:
+        docs_text = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles) if t)
+        parts.append(f"Representative paper titles:\n{docs_text}")
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": "\n\n".join(parts)},
+    ]
+
+
+async def _label_one_cluster(comm_id: int, terms: list, titles: list,
+                             provider_client: _BaseProvider, model_id: str,
+                             model_args: dict, system_prompt: str,
+                             semaphore: asyncio.Semaphore,
+                             max_retries: int) -> tuple:
+    messages = _build_cluster_labeler_messages(terms, titles, system_prompt)
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            async with semaphore:
+                raw, _ = await provider_client.call(
+                    messages, model_id, model_args, _TopicLabel,
+                )
+            label = raw.get("label", "") if isinstance(raw, dict) else str(raw)
+            return comm_id, label.strip()
+        except Exception as exc:
+            last_exc = exc
+            print(f"[cluster-labeler] community {comm_id} "
+                  f"attempt {attempt + 1}/{max_retries}: {exc}")
+    raise RuntimeError(
+        f"[cluster-labeler] community {comm_id} failed after "
+        f"{max_retries} retries: {last_exc}"
+    )
+
+
+async def _label_all_clusters(terms: dict, config, repr_docs=None) -> dict:
+    provider_client = _make_provider(config.provider, config.host)
+    model_args = {}
+    if config.max_tokens:
+        model_args["max_tokens"] = config.max_tokens
+    if config.temperature is not None:
+        model_args["temperature"] = config.temperature
+
+    system_prompt = config.system_prompt or _DEFAULT_CLUSTER_LABELER_SYSTEM_PROMPT
+    semaphore     = asyncio.Semaphore(config.max_concurrent_requests)
+    nr_docs       = config.n_repr_docs_for_labeling
+    repr_docs     = repr_docs or {}
+
+    tasks = []
+    for comm_id in sorted(terms):
+        titles = [t for t in (repr_docs.get(comm_id) or [])[:nr_docs] if t]
+        tasks.append(_label_one_cluster(
+            int(comm_id), list(terms[comm_id]), titles,
+            provider_client, config.model_id, model_args, system_prompt,
+            semaphore, config.max_retries,
+        ))
+
+    labels = {}
+    async for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks),
+                           desc="[cluster-labeler] labeling communities",
+                           unit="community"):
+        comm_id, label = await coro
+        labels[comm_id] = label
+
+    return labels
+
+
+def label_clusters(terms: dict, config, repr_docs=None) -> dict:
+    """Generate human-readable labels for bibliographic-coupling communities.
+
+    Parameters
+    ----------
+    terms : dict
+        Mapping ``{community_id (int): [distinguishing TF-IDF terms]}`` — as
+        produced by the coupling network's per-community sub-theme extraction.
+    config : TopicLabelerConfig
+        The same labeler config used for topics.
+    repr_docs : dict, optional
+        Mapping ``{community_id (int): [representative paper titles]}`` to anchor
+        the label. Only the first ``n_repr_docs_for_labeling`` are used.
+
+    Returns
+    -------
+    dict
+        Mapping ``{community_id (int): label (str)}``.
+    """
+    return asyncio.run(_label_all_clusters(terms, config, repr_docs))

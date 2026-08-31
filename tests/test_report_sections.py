@@ -199,7 +199,46 @@ class TestBuildNetworksSection:
         sec = _build_networks_section(df, coupling, None, bt, None, cfg, None, 2)
         titles = [s["title"] for s in _subsections(sec)]
         assert "Topic connectivity" in titles
-        assert "Community connectivity" in titles
+        assert "Community connectivity (coupling)" in titles
+
+    def test_community_connectivity_is_rendered_per_network(self,
+                                                            reviewed_dataset_path):
+        # coupling and co-citation communities answer different questions, so
+        # each gets its own panel
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3),
+                                      cocitation=CocitationPanelConfig(min_size=3))
+        df, coupling, cocitation = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, cocitation, None, None, cfg,
+                                      None, 2)
+        titles = [s["title"] for s in _subsections(sec)]
+        assert "Community connectivity (coupling)" in titles
+        assert "Community connectivity (co-citation)" in titles
+
+    def test_no_cocitation_connectivity_without_a_cocitation_network(
+            self, reviewed_dataset_path):
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3))
+        df, coupling, _ = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, None, None, None, cfg, None, 2)
+        titles = [s["title"] for s in _subsections(sec)]
+        assert "Community connectivity (coupling)" in titles
+        assert "Community connectivity (co-citation)" not in titles
+
+    def test_cocitation_connectivity_uses_its_own_vocabulary(self,
+                                                             reviewed_dataset_path):
+        # the matrix machinery is shared, the prose is not: a co-citation panel
+        # must not describe itself as bibliographic coupling
+        cfg = BibNetworkSectionConfig(coupling=CouplingPanelConfig(min_size=3),
+                                      cocitation=CocitationPanelConfig(min_size=3))
+        df, coupling, cocitation = self._results(reviewed_dataset_path)
+        sec = _build_networks_section(df, coupling, cocitation, None, None, cfg,
+                                      None, 2)
+        sub = next(s for s in _subsections(sec)
+                   if s["title"] == "Community connectivity (co-citation)")
+        text = _blocks_of_type(sub, "paragraph")[0]["text"]
+        assert "co-citation" in text
+        assert "bibliographic coupling" not in text
+        assert _blocks_of_type(sub, "table")[0]["title"] == (
+            "Internal vs outward co-citation per community")
 
 
 class TestConnectivityMatrix:
@@ -845,6 +884,52 @@ class TestCommunitySubthemesTable:
         sub = self._subsection({})
         assert not any("sub-theme" in b.get("title", "").lower()
                        for b in sub["blocks"] if b.get("type") == "table")
+
+
+class TestCommunityLLMLabelColumn:
+    """When cluster_labels are supplied, the sub-themes table gains an LLM-label
+    column, added alongside the raw TF-IDF terms (not replacing them)."""
+
+    def _subsection(self, terms, cluster_labels):
+        from pysyrev.core.report_data import _build_network_subsection
+        from pysyrev.core.networks.common import NetworkResult
+        ids = [f"W{i}" for i in range(4)]
+        W = np.array([[0, 1, 0, 0], [1, 0, 0, 0],
+                      [0, 0, 0, 1], [0, 0, 1, 0]], float)
+        res = NetworkResult(node_ids=ids, W=W, labels=np.array([0, 0, 1, 1]),
+                            coords=np.zeros((4, 2)), modularity=0.3, terms=terms)
+        df = pd.DataFrame({"id": ids, "title": ["t"] * 4,
+                           "doi": [f"10.1/{i}" for i in range(4)], "year": [2020] * 4})
+        return _build_network_subsection(
+            res, df, None, None, title="Coupling", filename_prefix="c",
+            node_kind="document", count_label="Documents", k=2,
+            color_mode="community", export_to=None, cluster_labels=cluster_labels)
+
+    def _theme_table(self, sub):
+        tables = [b for b in sub["blocks"] if b.get("type") == "table"]
+        return next(t for t in tables if "sub-theme" in t["title"].lower())
+
+    def test_llm_label_column_added_next_to_terms(self):
+        sub = self._subsection(
+            {0: ["solar", "photovoltaic"], 1: ["wind", "turbine"]},
+            {0: "Solar photovoltaic deployment", 1: "Onshore wind integration"})
+        tbl = self._theme_table(sub)
+        assert tbl["headers"] == ["Community", "Docs", "LLM label", "Top terms"]
+        by_comm = {r[0]: r for r in tbl["rows"]}
+        assert by_comm["C0"][2] == "Solar photovoltaic deployment"
+        assert "solar" in by_comm["C0"][3]        # raw terms still present
+
+    def test_missing_label_falls_back_to_dash(self):
+        sub = self._subsection(
+            {0: ["solar"], 1: ["wind"]}, {0: "Solar photovoltaic deployment"})
+        tbl = self._theme_table(sub)
+        by_comm = {r[0]: r for r in tbl["rows"]}
+        assert by_comm["C1"][2] == "—"
+
+    def test_no_labels_keeps_three_column_table(self):
+        sub = self._subsection({0: ["solar"], 1: ["wind"]}, None)
+        tbl = self._theme_table(sub)
+        assert tbl["headers"] == ["Community", "Docs", "Top terms"]
 
 
 class TestCommunityTopicMapping:

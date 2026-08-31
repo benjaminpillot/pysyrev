@@ -165,9 +165,10 @@ class TopicReport:
             self.topic_info,
             self.bertopic_results,
             self.report_config,
-            topic_labels       = topic_labels,
-            export_to          = str(Path(output_file).parent),
-            coupling_dataset   = self.coupling_dataset,
+            topic_labels          = topic_labels,
+            export_to             = str(Path(output_file).parent),
+            coupling_dataset      = self.coupling_dataset,
+            cluster_labeler_config = self.labeler_config,
         )
         PDFReportEngine().generate(report_data, output_file)
         return output_file
