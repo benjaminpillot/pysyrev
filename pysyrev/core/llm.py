@@ -325,6 +325,38 @@ def _build_model_args(r: Reviewer) -> dict:
 
 # ── Core async reviewer ────────────────────────────────────────────────────
 
+def _normalize_evaluations(raw) -> list:
+    """Coerce a provider response into a flat list of evaluation items.
+
+    Providers are inconsistent about the envelope even under structured output:
+    a review may come back as a bare list, as ``{"evaluations": [...]}``, or —
+    for a single-item call — as the item dict itself (sometimes still wrapped in
+    the batch envelope). This normalises all of those to a list of item dicts so
+    the count logic and per-item parsing are shape-agnostic. Only the structure
+    is unwrapped here; the item contents are validated by :func:`_parse_evaluation`.
+    """
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        if isinstance(raw.get("evaluations"), list):
+            return raw["evaluations"]
+        return [raw]                        # a single item dict
+    raise ValueError(f"Unexpected response type: {type(raw)}")
+
+
+def _parse_evaluation(item: dict) -> dict:
+    """Parse one evaluation item into ``{"evaluation": int, "reasoning": str}``.
+
+    ``evaluation`` is the score and stays strict — a missing or non-integer score
+    raises (it must never be silently defaulted). ``reasoning`` is optional and
+    defaults to an empty string.
+    """
+    if not isinstance(item, dict):
+        raise ValueError(f"Evaluation item is not an object: {type(item)}")
+    return {"evaluation": int(item["evaluation"]),
+            "reasoning": str(item.get("reasoning", ""))}
+
+
 async def _review_batch(
     texts: List[str], reviewer: Reviewer, semaphore: asyncio.Semaphore
 ) -> List[dict]:
@@ -350,26 +382,38 @@ async def _review_batch(
                 raw, _ = await reviewer.provider_client.call(
                     messages, reviewer.model_id, model_args, response_schema,
                 )
-            if n_articles == 1:
-                return [{"evaluation": int(raw["evaluation"]),
-                         "reasoning": str(raw.get("reasoning", ""))}]
+            evals = _normalize_evaluations(raw)
 
-            # Accept {"evaluations": [...]} or a bare list
-            if isinstance(raw, list):
-                evals = raw
-            elif isinstance(raw, dict):
-                evals = raw.get("evaluations") or []
-            else:
-                raise ValueError(f"Unexpected response type: {type(raw)}")
+            if n_articles == 1:
+                # Single-item calls should yield one item, but a model may ignore
+                # the single schema and return the batch envelope / a bare list —
+                # _normalize_evaluations unwraps those. Take the sole item.
+                if len(evals) != 1:
+                    raise ValueError(
+                        f"Expected 1 evaluation, got {len(evals)}")
+                return [_parse_evaluation(evals[0])]
 
             if len(evals) != n_articles:
                 raise ValueError(f"Expected {n_articles} evaluations, got {len(evals)}")
-            return [{"evaluation": int(e["evaluation"]),
-                     "reasoning": str(e.get("reasoning", ""))}
-                    for e in evals]
+            return [_parse_evaluation(e) for e in evals]
         except Exception as exc:
             last_exc = exc
             print(f"[{reviewer.name}] attempt {attempt + 1}/{reviewer.max_retries}: {exc}")
+
+    # Retries exhausted. A multi-article batch commonly fails because the model
+    # returns the wrong number of evaluations at large batch sizes (it silently
+    # drops items). Rather than crash the whole review, split the batch in two
+    # and review each half recursively: this both realigns the counts and
+    # shrinks the ask, converging on the single-item schema (which is reliable).
+    # A single article that still fails is a genuine error and is raised.
+    if n_articles > 1:
+        mid = n_articles // 2
+        print(f"[{reviewer.name}] batch of {n_articles} failed ({last_exc}); "
+              f"splitting into {mid}+{n_articles - mid} and retrying")
+        left = await _review_batch(texts[:mid], reviewer, semaphore)
+        right = await _review_batch(texts[mid:], reviewer, semaphore)
+        return left + right
+
     raise RuntimeError(
         f"[{reviewer.name}] failed after {reviewer.max_retries} retries: {last_exc}"
     )

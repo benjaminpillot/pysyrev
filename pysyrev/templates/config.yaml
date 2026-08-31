@@ -182,8 +182,32 @@ review:
     cache_dir:              # blank → <export_dir>/<run_name>/cache/
 
   # ---- Execution parameters ----------------------------------------------
-  # batch_size: 100               # articles processed per checkpoint batch
-  # api_pause: 30.0               # seconds between batches (rate-limit guard)
+  # batch_size and items_per_call both split the corpus, but at two different
+  # levels — they are not two names for the same thing:
+  #
+  #   dataset
+  #   └─ chunk of `batch_size` articles     SEQUENTIAL, one checkpoint each:
+  #      │                                  the chunk's result is written to
+  #      │                                  cache_dir, then `api_pause` seconds
+  #      │                                  elapse. A re-run reads a chunk
+  #      │                                  already on disk instead of paying
+  #      │                                  for it again. batch_size >= corpus
+  #      │                                  size = one shot, no checkpoints.
+  #      └─ per round, per reviewer         SEQUENTIAL
+  #         └─ call of `items_per_call`     CONCURRENT, up to
+  #            articles                     max_concurrent_requests in flight.
+  #                                         The backstory + criteria are sent
+  #                                         once per call, not once per article.
+  #
+  # So batch_size is about crash-recovery and pacing; items_per_call is about
+  # prompt cost and throughput. PITFALL: items_per_call larger than batch_size
+  # gains nothing — each chunk then collapses into a single API call and
+  # max_concurrent_requests goes unused. Keep batch_size a comfortable multiple
+  # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
+  # calls per chunk, 10 in flight).
+  #
+  # batch_size: 100               # articles per checkpoint chunk
+  # api_pause: 30.0               # seconds between chunks (rate-limit guard)
   # max_retries: 2                # on API error; overridable per reviewer
   # max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
   # items_per_call: 5             # articles per API call (backstory sent once)
