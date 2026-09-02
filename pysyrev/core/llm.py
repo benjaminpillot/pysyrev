@@ -1,7 +1,8 @@
 """
 Direct-LiteLLM review functions.
 
-Provider abstraction supports: litellm (default), anthropic, openai, ollama.
+Provider abstraction supports: litellm (default), anthropic, openai, albert
+(the French State's sovereign gateway), ollama.
 Each provider handles its own API call, content extraction, and structured
 output (single-item) or free-form JSON (batch).
 
@@ -232,9 +233,163 @@ class _OpenAIProvider(_BaseProvider):
         return content, cost
 
 
+ALBERT_DEFAULT_HOST: str = "https://albert.api.etalab.gouv.fr/v1"
+ALBERT_API_KEY_ENV:  str = "ALBERT_API_KEY"
+
+
+def _closed_json_schema(response_schema) -> dict:
+    """JSON schema of a pydantic model, with every object closed.
+
+    Guided decoding follows the schema literally, so an open object invites the
+    model to add keys we then have to parse around; OpenAI-style ``strict``
+    validators reject a schema that omits the flag outright.
+    """
+    schema = response_schema.model_json_schema()
+
+    def close(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                node.setdefault("additionalProperties", False)
+            for value in node.values():
+                close(value)
+        elif isinstance(node, list):
+            for item in node:
+                close(item)
+
+    close(schema)
+    return schema
+
+
+def _with_schema_instruction(messages: list, response_schema) -> list:
+    """Move the schema into the prompt, for endpoints that cannot enforce it."""
+    instruction = (
+        "Return ONLY a JSON object valid against this JSON schema — no prose, "
+        "no markdown fence:\n"
+        f"{json.dumps(_closed_json_schema(response_schema))}"
+    )
+    sent = [dict(m) for m in messages]
+    sent[-1]["content"] = f"{sent[-1]['content']}\n\n{instruction}"
+    return sent
+
+
+class _AlbertProvider(_OpenAIProvider):
+    """Albert API — the French State's sovereign LLM gateway (Etalab / DINUM).
+
+    The transport is OpenAI's (``/v1/chat/completions``, Bearer auth), so the
+    OpenAI client is reused; the guarantees are not. Albert fronts open-weight
+    models served by vLLM, where structured output is guided decoding: a given
+    model may honour a full ``json_schema``, accept ``json_object`` only, or
+    refuse ``response_format`` altogether — and which one is true is a property
+    of the deployment, not something a config can be expected to know.
+
+    So the call starts strict and degrades on refusal — ``json_schema`` →
+    ``json_object`` (schema moved into the prompt) → plain text parsed by
+    :func:`_extract_json` — and remembers the level that worked. The probe is
+    paid once per run rather than on every article.
+    """
+
+    #: Structured-output levels, strictest first.
+    _MODES = ("json_schema", "json_object", "text")
+
+    #: Sampling params the gateway accepts. `reasoning_effort` is the one that
+    #: bites: OpenAI and LiteLLM take it, vLLM answers 400 for a model with no
+    #: reasoning channel. Dropping it silently would make the config lie about
+    #: the run, so it is warned about once per key.
+    _SUPPORTED_ARGS = {"max_tokens", "temperature", "top_p", "seed",
+                       "presence_penalty", "frequency_penalty", "stop"}
+    _warned_unsupported: set = set()
+
+    def __init__(self, host: Optional[str] = None):
+        # The OpenAI SDK reads OPENAI_API_KEY, which is not the key we want, so
+        # Albert's own variable is read here and passed explicitly.
+        api_key = os.environ.get(ALBERT_API_KEY_ENV)
+        if not api_key:
+            raise ValueError(
+                f"provider='albert' needs an API key: set {ALBERT_API_KEY_ENV} "
+                f"in the .env the config points at. Keys for public-sector users "
+                f"are issued at https://albert.api.etalab.gouv.fr."
+            )
+        super().__init__(host=host or ALBERT_DEFAULT_HOST, api_key=api_key)
+        self._mode_idx = 0
+
+    def _filter_args(self, model_args: dict) -> dict:
+        for key, value in model_args.items():
+            if (key not in self._SUPPORTED_ARGS and value is not None
+                    and key not in self._warned_unsupported):
+                self._warned_unsupported.add(key)
+                print(f"[albert] '{key}' is set in the config but the Albert "
+                      f"gateway has no such parameter — it is ignored. Remove "
+                      f"it from the reviewer.")
+        return {k: v for k, v in model_args.items()
+                if k in self._SUPPORTED_ARGS and v is not None}
+
+    def _demote(self, exc: Exception, mode: str) -> bool:
+        """Step down one structured-output level if `exc` is the endpoint
+        refusing this one. Everything else — auth, rate limit, timeout, a model
+        id that does not exist — is a real error and must reach the caller's
+        retry logic untouched."""
+        if mode == self._MODES[-1]:
+            return False
+        text = str(exc).lower()
+        refused = (getattr(exc, "status_code", None) == 400
+                   or getattr(getattr(exc, "response", None), "status_code", None) == 400
+                   or any(k in text for k in ("response_format", "json_schema",
+                                              "guided", "structured output",
+                                              "not supported", "unsupported")))
+        if not refused:
+            return False
+        self._mode_idx = self._MODES.index(mode) + 1
+        print(f"[albert] the endpoint refused response_format={mode!r} ({exc}); "
+              f"falling back to {self._MODES[self._mode_idx]!r} for the rest of "
+              f"the run.")
+        return True
+
+    async def call(self, messages, model_id, model_args, response_schema):
+        kwargs = self._filter_args(model_args)
+
+        while True:
+            mode = self._MODES[self._mode_idx]
+            payload = dict(kwargs)
+            sent = messages
+
+            if response_schema is not None:
+                if mode == "json_schema":
+                    payload["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name":   "review",
+                            "strict": True,
+                            "schema": _closed_json_schema(response_schema),
+                        },
+                    }
+                else:
+                    sent = _with_schema_instruction(messages, response_schema)
+                    if mode == "json_object":
+                        payload["response_format"] = {"type": "json_object"}
+
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model_id, messages=sent, **payload,
+                )
+                break
+            except Exception as exc:
+                if response_schema is None or not self._demote(exc, mode):
+                    raise
+
+        content = response.choices[0].message.content
+        content = _extract_json(content) if isinstance(content, str) else content
+
+        # Albert does not bill per token (access is granted, not purchased), and
+        # its open-weight model ids are not in LiteLLM's price map, so there is
+        # no cost to report.
+        return content, 0.0
+
+
 def _make_provider(provider: str, host: Optional[str]) -> _BaseProvider:
     if provider == "anthropic":
         return _AnthropicProvider(host=host)
+    elif provider in ("albert", "albert-api"):
+        return _AlbertProvider(host=host)
     elif provider in ("openai", "open-ai"):
         return _OpenAIProvider(host=host)
     elif provider == "ollama":
