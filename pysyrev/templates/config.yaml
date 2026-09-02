@@ -238,14 +238,19 @@ review:
     #   reviewers: [Reviewer3]
 
   # ---- Reviewer definitions ----------------------------------------------
+  # Credentials are never written here: each provider reads its own variable
+  # from the environment (or the `env:` file at the top of this config) —
+  # ANTHROPIC_API_KEY, OPENAI_API_KEY, ALBERT_API_KEY.
   reviewers:
     - name: Reviewer1
-      provider: anthropic         # anthropic | openai | litellm | ollama
-      model_id: claude-haiku-4-5
+      provider: anthropic         # anthropic | openai | albert | litellm | ollama
+      model_id: claude-haiku-4-5  # albert: run `curl -H "Authorization: Bearer $ALBERT_API_KEY" \
+                                  #   https://albert.api.etalab.gouv.fr/v1/models` for the ids you can use
       reasoning: brief            # brief | cot
       max_tokens: 200
       temperature: 0.7
-      host:                       # custom endpoint (litellm / ollama); blank for hosted APIs
+      host:                       # custom endpoint (litellm / ollama / a self-hosted Albert);
+                                  # blank for hosted APIs
       reasoning_effort:           # low | medium | high (extended-thinking models only)
       max_retries:                # blank → section-level value
       max_concurrent_requests:    # blank → section-level value
@@ -459,7 +464,7 @@ topic_model:
 # and not on every report. Remove this section to skip LLM labelling.
 #
 # llm:
-#   provider: anthropic       # anthropic | openai | litellm | ollama
+#   provider: anthropic       # anthropic | openai | albert | litellm | ollama
 #   model_id: claude-haiku-4-5-20251001
 #   host:                     # blank for hosted APIs
 #   max_tokens: 200

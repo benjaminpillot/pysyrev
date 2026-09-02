@@ -21,7 +21,7 @@
 - **Multi-source ingestion** — Web of Science (file or REST API), OpenAlex (file or REST API), Scopus, PubMed
 - **Automatic deduplication** — fuzzy title matching across sources, with a configurable source priority (OpenAlex wins by default, keeping its stable IDs; duplicates are aliased so references still resolve)
 - **Canonical reference keys** — optionally remap every reference onto a shared DOI key space so bibliographic coupling holds across merged sources regardless of merge order: intra-corpus and DOI-bearing references map for free, extra-corpus OpenAlex ids are resolved to DOIs via the OpenAlex API and cached (skipped automatically when there is no other-source DOI to bridge to)
-- **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…)
+- **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…) or by [Albert](https://albert.api.etalab.gouv.fr), the French State's sovereign gateway (`provider: albert`, key in `ALBERT_API_KEY`) — useful when the corpus may not leave French public infrastructure
 - **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **Reading-list selection** — rank the most relevant papers per topic by citations, network centrality, or a three-axis composite (coupling centrality + citation impact + thematic representativeness)
@@ -154,6 +154,24 @@ Key auto-detection rules (when fields are left blank):
 | `review.doc_dataset` | latest run in `bib.export.export_dir` |
 | `topic_model.doc_dataset` | latest run in `review.export.export_dir` (also the source the report's network panels are recomputed from) |
 | `topic_report.run_dir` | latest run in `topic_model.export.export_dir` |
+
+### LLM providers
+
+Each reviewer (and the optional `llm:` labelling section) names a `provider`. Credentials never live in the YAML: every provider reads its own environment variable, resolved from the `env:` file the config points at.
+
+| `provider` | Key | Default endpoint |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | Anthropic API |
+| `openai` | `OPENAI_API_KEY` | OpenAI API |
+| `albert` | `ALBERT_API_KEY` | `https://albert.api.etalab.gouv.fr/v1` |
+| `ollama` | — | `http://localhost:11434/v1` |
+| `litellm` (default) | provider-dependent | LiteLLM routing |
+
+`provider: albert` targets the French State's sovereign gateway (Etalab / DINUM), where access is granted to public-sector users rather than purchased — reported cost is therefore always 0. It fronts open-weight models served by vLLM, so structured output depends on the deployment: pysyrev asks for a strict `json_schema` first and, if the endpoint refuses, falls back to `json_object` and then to plain JSON parsing, keeping the level that worked for the rest of the run. List the model ids your key can reach with:
+
+```bash
+curl -H "Authorization: Bearer $ALBERT_API_KEY" https://albert.api.etalab.gouv.fr/v1/models
+```
 
 ---
 
