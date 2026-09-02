@@ -16,6 +16,9 @@ Usage
   # Download full-text papers for a list of candidates
   pysyrev download liste.csv output_folder [--config download_config.yaml]
 
+  # Price the review stage before paying for it (no model call)
+  pysyrev estimate config.yaml [--calibrate reviewed.csv] [--sweep]
+
 The ``download`` subcommand tries to retrieve each paper in cascade order:
 Unpaywall → OpenAlex → Elsevier TDM.  Passing ``--config`` injects API keys
 and fine-grained options; without it, only the OpenAlex step runs (no key
@@ -173,14 +176,105 @@ def _run_download(argv):
 
 
 # =============================================================================
+# Estimate sub-command
+# =============================================================================
+
+def _run_estimate(argv):
+    parser = argparse.ArgumentParser(
+        prog='pysyrev estimate',
+        description=(
+            'Estimate the token usage and cost of the review stage before running it.\n\n'
+            'The prompts are rebuilt exactly as the review stage sends them and\n'
+            'counted with Anthropic\'s count_tokens endpoint (free, no inference).\n'
+            'Nothing is reviewed and no model is called.'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('config', help='Path to the YAML pipeline config file.')
+    parser.add_argument(
+        '--dataset', default=None, metavar='CSV',
+        help='Corpus to estimate on (default: review.doc_dataset from the config).',
+    )
+    parser.add_argument(
+        '--escalation-rate', type=float, default=0.10, metavar='RATE',
+        help=(
+            'Share of documents that reach the next round for lack of consensus '
+            '(default: 0.10). Ignored when --calibrate provides a measured value.'
+        ),
+    )
+    parser.add_argument(
+        '--calibrate', default=None, metavar='REVIEWED_CSV',
+        help=(
+            'Measure output length and escalation rate from a previously reviewed '
+            'dataset instead of using the built-in defaults.'
+        ),
+    )
+    parser.add_argument(
+        '--sample-size', type=int, default=24, metavar='N',
+        help='Articles counted exactly to fit the per-article token model (default: 24).',
+    )
+    parser.add_argument(
+        '--sweep', action='store_true',
+        help='Also show what other items_per_call settings would cost.',
+    )
+    parser.add_argument(
+        '--offline', action='store_true',
+        help='Do not call the API; estimate tokens from character counts (±15 %%).',
+    )
+    parser.add_argument(
+        '--json', action='store_true', dest='as_json',
+        help='Emit the estimate as JSON instead of a table.',
+    )
+    args = parser.parse_args(argv)
+
+    from pysyrev.core.config import Config
+    from pysyrev.core.token_cost import (estimate_review, sweep_items_per_call,
+                                         calibrate_from_run)
+
+    config = Config.load(args.config)
+    if config.review is None:
+        print("No `review:` section in the config — nothing to estimate.")
+        return
+
+    output_tokens, escalation = None, args.escalation_rate
+    if args.calibrate:
+        measured = calibrate_from_run(args.calibrate, offline=args.offline)
+        output_tokens = measured['output_tokens']
+        escalation = measured['escalation_rate']
+        if not args.as_json:
+            print(f"Calibrated on {args.calibrate}: "
+                  f"output {measured['output_tokens']}, "
+                  f"escalation {escalation:.1%}")
+
+    estimate = estimate_review(
+        config.review,
+        dataset         = args.dataset,
+        escalation_rate = escalation,
+        output_tokens   = output_tokens,
+        sample_size     = args.sample_size,
+        offline         = args.offline,
+    )
+
+    if args.as_json:
+        import json
+        print(json.dumps(estimate.to_dict(), indent=2))
+    else:
+        print(estimate.render())
+        if args.sweep:
+            print(sweep_items_per_call(estimate))
+
+
+# =============================================================================
 # Entry point
 # =============================================================================
 
 def main():
-    # Route to the download sub-command when the first argument is "download",
-    # preserving full backward compatibility with `pysyrev config.yaml`.
+    # Route to a sub-command when the first argument names one, preserving full
+    # backward compatibility with `pysyrev config.yaml`.
     if len(sys.argv) > 1 and sys.argv[1] == 'download':
         _run_download(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == 'estimate':
+        _run_estimate(sys.argv[2:])
     else:
         _run_pipeline(sys.argv[1:])
 

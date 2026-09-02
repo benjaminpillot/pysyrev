@@ -26,6 +26,8 @@
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **Reading-list selection** — rank the most relevant papers per topic by citations, network centrality, or a three-axis composite (coupling centrality + citation impact + thematic representativeness)
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
+- **Download full-text PDFs** — download full-test PDFs for a list of candidates, e.g. the reading-list selection
+- **Token cost estimation** — price review stage before running it when calling external API (anthropic, OpenAI, etc.)
 
 ---
 
@@ -94,6 +96,11 @@ pysyrev config.yaml --from topic-report
 # Download full-text PDFs for a list of candidates (Unpaywall → OpenAlex → Elsevier TDM)
 pysyrev download candidates.csv output_folder/
 pysyrev download candidates.csv output_folder/ --config download_config.yaml
+
+# Price the review stage before running it (counts tokens, calls no model)
+pysyrev estimate config.yaml
+pysyrev estimate config.yaml --sweep            # what other items_per_call would cost
+pysyrev estimate config.yaml --calibrate previous_run/reviewed_total.csv
 ```
 
 Valid stage names: `bib` | `review` | `topic-model` | `topic-report`.
