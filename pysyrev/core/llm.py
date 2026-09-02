@@ -120,6 +120,18 @@ class _LiteLLMProvider(_BaseProvider):
 
 class _AnthropicProvider(_BaseProvider):
 
+    # Params configured by the user that this provider cannot forward. Warned
+    # about once per key: silently dropping a parameter the user deliberately
+    # set makes the config lie about what the run does.
+    #
+    # `reasoning_effort` is the one that bites. It is an OpenAI parameter; the
+    # Anthropic API has no equivalent name (its `output_config.effort` is not
+    # supported by every model — Haiku 4.5 rejects it). LiteLLM does accept it
+    # for Anthropic models, but by translating it into a thinking budget
+    # (medium -> budget_tokens 2048) billed as output tokens, which must also
+    # stay under max_tokens. So the fix is to remove it, not to reroute it.
+    _warned_unsupported: set = set()
+
     def __init__(self, host: Optional[str] = None):
         try:
             import anthropic
@@ -136,6 +148,14 @@ class _AnthropicProvider(_BaseProvider):
         supported = {"max_tokens", "temperature", "top_p", "top_k"}
         anthropic_args = {k: v for k, v in model_args.items()
                           if k in supported and v is not None}
+
+        for key in model_args:
+            if (key not in supported and model_args[key] is not None
+                    and key not in self._warned_unsupported):
+                self._warned_unsupported.add(key)
+                print(f"[anthropic] '{key}' is set in the config but the "
+                      f"Anthropic Messages API has no such parameter — it is "
+                      f"ignored. Remove it from the reviewer.")
 
         if response_schema is not None:
             # Structured output via tool_use.
@@ -375,8 +395,17 @@ async def _review_batch(
         if "max_tokens" in model_args:
             model_args = {**model_args, "max_tokens": model_args["max_tokens"] * n_articles}
 
+    # A failed multi-article call is retried once, not max_retries times. Every
+    # attempt re-sends all n_articles at full price, and the dominant failure
+    # here is a wrong evaluation count — the model silently dropping items —
+    # which an identical retry does not fix. The split below is what actually
+    # recovers, so go there instead of paying for the same batch twice.
+    # Single-article calls keep the full retry budget: for them a retry is cheap
+    # and the failure is usually transient.
+    attempts = reviewer.max_retries if n_articles == 1 else 1
+
     last_exc = None
-    for attempt in range(reviewer.max_retries):
+    for attempt in range(attempts):
         try:
             async with semaphore:
                 raw, _ = await reviewer.provider_client.call(
@@ -398,9 +427,9 @@ async def _review_batch(
             return [_parse_evaluation(e) for e in evals]
         except Exception as exc:
             last_exc = exc
-            print(f"[{reviewer.name}] attempt {attempt + 1}/{reviewer.max_retries}: {exc}")
+            print(f"[{reviewer.name}] attempt {attempt + 1}/{attempts}: {exc}")
 
-    # Retries exhausted. A multi-article batch commonly fails because the model
+    # Attempts exhausted. A multi-article batch commonly fails because the model
     # returns the wrong number of evaluations at large batch sizes (it silently
     # drops items). Rather than crash the whole review, split the batch in two
     # and review each half recursively: this both realigns the counts and
@@ -415,7 +444,7 @@ async def _review_batch(
         return left + right
 
     raise RuntimeError(
-        f"[{reviewer.name}] failed after {reviewer.max_retries} retries: {last_exc}"
+        f"[{reviewer.name}] failed after {attempts} attempt(s): {last_exc}"
     )
 
 
@@ -470,6 +499,31 @@ def build_workflow_schema(workflow, reviewers, text_inputs, decision_rule):
     return workflow_schema
 
 
+_warned_missing_inputs: set = set()
+
+
+def _warn_missing_text_inputs(dataset: pd.DataFrame, text_inputs: List[str],
+                              round_name: str) -> None:
+    """Report text_inputs that match no column, instead of dropping them mutely.
+
+    ``_build_texts`` skips any column it cannot find, which is what makes a
+    round's later evaluation/reasoning inputs work. The same leniency hides a
+    plain config typo: ask for `keywords` when the corpus column is
+    `author_keywords` and the field is simply never sent to the reviewers, with
+    nothing in the logs to say so.
+
+    Warned once per round: the workflow re-runs for every checkpoint chunk, and
+    a warning repeated fifty times is a warning nobody reads.
+    """
+    missing = [c for c in text_inputs if c not in dataset.columns]
+    key = (round_name, tuple(missing))
+    if missing and key not in _warned_missing_inputs:
+        _warned_missing_inputs.add(key)
+        print(f"[round {round_name}] text_inputs {missing} match no column in "
+              f"the dataset and are not sent to the reviewers. Available: "
+              f"{', '.join(sorted(dataset.columns))}")
+
+
 def _build_texts(dataset: pd.DataFrame, text_inputs: List[str]) -> List[str]:
     texts = []
     for _, row in dataset.iterrows():
@@ -494,6 +548,7 @@ async def _run_workflow(dataset: pd.DataFrame, workflow_schema: list) -> pd.Data
             mask = pd.Series(True, index=result.index)
         subset_idx = result.index[mask]
 
+        _warn_missing_text_inputs(result, text_inputs, round_name)
         texts = _build_texts(result.loc[subset_idx], text_inputs)
 
         for reviewer in reviewers:

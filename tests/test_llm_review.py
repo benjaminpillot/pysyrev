@@ -133,3 +133,53 @@ class TestBatchCountMismatchSplit:
                 raise RuntimeError("api down")
         with pytest.raises(RuntimeError):
             _run(_reviewer_with(_AlwaysBad(), items_per_call=1), ["only one"])
+
+
+class _SizeRecordingProvider(_DropOneProvider):
+    """_DropOneProvider that records the article count of every call it gets."""
+
+    def __init__(self):
+        super().__init__()
+        self.batch_sizes = []
+
+    async def call(self, messages, model_id, model_args, response_schema):
+        m = re.search(r"exactly (\d+) items", messages[-1]["content"])
+        self.batch_sizes.append(int(m.group(1)) if m else 1)
+        return await super().call(messages, model_id, model_args, response_schema)
+
+
+class TestRetriesAreNotBilledTwiceOnBatches:
+    """Every attempt at a multi-article batch re-sends all its articles at full
+    price, and the dominant failure — the model dropping items — is not fixed by
+    an identical retry. So a failing batch is attempted once and then split."""
+
+    def test_a_failing_batch_is_attempted_once_before_splitting(self):
+        provider = _SizeRecordingProvider()
+        _run(_reviewer_with(provider, max_retries=2), ["a", "b", "c", "d"])
+        # 4 fails -> split 2 + 2, each fails once -> split to singles.
+        # Retrying each node max_retries times would give [4, 4, 2, 2, 2, 2].
+        assert [s for s in provider.batch_sizes if s > 1] == [4, 2, 2]
+
+    def test_batch_call_count_does_not_grow_with_max_retries(self):
+        """max_retries must not multiply what a failing batch costs."""
+        observed = []
+        for retries in (1, 2, 5):
+            provider = _SizeRecordingProvider()
+            _run(_reviewer_with(provider, max_retries=retries), ["a", "b", "c", "d"])
+            observed.append([s for s in provider.batch_sizes if s > 1])
+        assert observed == [[4, 2, 2]] * 3
+
+    def test_single_article_calls_keep_the_full_retry_budget(self):
+        """Transient failures on a lone article are cheap — still retried."""
+        class _CountingBad:
+            def __init__(self):
+                self.calls = 0
+
+            async def call(self, messages, model_id, model_args, schema):
+                self.calls += 1
+                raise RuntimeError("transient")
+
+        provider = _CountingBad()
+        with pytest.raises(RuntimeError):
+            _run(_reviewer_with(provider, items_per_call=1, max_retries=3), ["one"])
+        assert provider.calls == 3

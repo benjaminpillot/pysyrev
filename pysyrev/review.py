@@ -58,6 +58,37 @@ def _reviewer_kwargs(reviewer_config: ReviewerConfig,
     }
 
 
+def _warn_starved_concurrency(reviewers: List[Reviewer], batch_size: int) -> None:
+    """Report a batch_size too small to keep max_concurrent_requests busy.
+
+    A checkpoint chunk is reviewed one reviewer at a time, in calls of
+    ``items_per_call`` with up to ``max_concurrent_requests`` in flight. Their
+    product is therefore the smallest chunk that fills every concurrency slot:
+    below it, slots sit idle for the whole run and ``api_pause`` is paid more
+    often than it needs to be. The product is a floor, not a target — a chunk of
+    exactly one wave ends on its slowest call, so a small multiple absorbs that
+    straggler at the price of a coarser crash-recovery point.
+
+    This has always been documented in the example config as a pitfall; a
+    comment cannot catch the three numbers drifting apart, so check it here.
+    """
+    if not batch_size:
+        return                          # blank/0 = one shot, no chunking
+    for reviewer in reviewers:
+        floor = reviewer.items_per_call * reviewer.max_concurrent_requests
+        if batch_size < floor:
+            in_flight = max(1, batch_size // reviewer.items_per_call)
+            print(
+                f"[{reviewer.name}] batch_size {batch_size} issues only "
+                f"{in_flight} call(s) per chunk while max_concurrent_requests "
+                f"is {reviewer.max_concurrent_requests}: "
+                f"{reviewer.max_concurrent_requests - in_flight} slot(s) stay "
+                f"idle. Raise batch_size to at least "
+                f"{floor} (= items_per_call {reviewer.items_per_call} × "
+                f"max_concurrent_requests {reviewer.max_concurrent_requests})."
+            )
+
+
 # =============================================================================
 # Runtime model
 # =============================================================================
@@ -100,6 +131,7 @@ class LLMReview:
             build_reviewer(**_reviewer_kwargs(rc, config, input_description))
             for rc in config.reviewers
         ]
+        _warn_starved_concurrency(reviewers, config.batch_size)
         workflow_schema = build_workflow_schema(
             config.workflow,
             reviewers,
