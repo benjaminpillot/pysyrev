@@ -56,6 +56,11 @@ def _reviewer_kwargs(reviewer_config: ReviewerConfig,
                                     or review_config.max_concurrent_requests),
         'items_per_call':          (reviewer_config.items_per_call
                                     or review_config.items_per_call),
+        # Left None on purpose when neither level sets it: build_reviewer then
+        # applies the provider's own quota (Albert's 10/min) rather than a
+        # number this layer would have to invent.
+        'requests_per_minute':     (reviewer_config.requests_per_minute
+                                    or review_config.requests_per_minute),
     }
 
 

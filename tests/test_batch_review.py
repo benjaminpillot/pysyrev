@@ -12,6 +12,7 @@ import asyncio
 import re
 
 import pandas as pd
+import pytest
 
 from pysyrev.core import batch as deferred
 from pysyrev.core.llm import (BatchRun, Reviewer, _prepare_call,
@@ -221,6 +222,41 @@ class TestFailureFallback:
         out = _run(_review_round_deferred(
             [reviewer], ['t1', 't2'], 'A', BatchRun(poll_interval=0)))
         assert [e['reasoning'] for e in out['Reviewer#1']] == ['sync:t1', 'sync:t2']
+
+    def test_a_truncated_batched_answer_is_recognised_as_truncated(self):
+        """A deferred reply can run out of output budget like a live one.
+
+        It carries the same ``Message``, so the same ``stop_reason`` check has
+        to fire — otherwise the cut-off JSON reaches the parser and comes back
+        as a delimiter error, and the run splits the batch instead of raising
+        the budget, which for a per-article budget fixes nothing.
+        """
+        from pysyrev.core.llm import _AnthropicProvider, TruncatedResponse
+
+        class _Cutoff:
+            stop_reason = 'max_tokens'
+            content = []
+
+        with pytest.raises(TruncatedResponse) as excinfo:
+            _AnthropicProvider.extract_content(
+                _Cutoff(), [{'name': 'review'}], {'max_tokens': 600})
+        # The message names the budget that ran out, not a JSON position.
+        assert '600' in str(excinfo.value)
+
+    def test_an_untruncated_batched_answer_is_decoded_normally(self):
+        from pysyrev.core.llm import _AnthropicProvider
+
+        class _Block:
+            type = 'tool_use'
+            input = {'evaluations': [{'evaluation': 4, 'reasoning': 'ok'}]}
+
+        class _Message:
+            stop_reason = 'tool_use'
+            content = [_Block()]
+
+        assert _AnthropicProvider.extract_content(
+            _Message(), [{'name': 'review'}], {'max_tokens': 600}
+        ) == {'evaluations': [{'evaluation': 4, 'reasoning': 'ok'}]}
 
     def test_the_fallback_is_announced_with_its_reason(self, capsys):
         backend = _FakeBackend(fail_ids={deferred.request_id(0)})
