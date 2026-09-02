@@ -318,6 +318,7 @@ class ReviewEstimate:
     dataset:          Optional[str]
     escalation_rate:  float
     exact:            bool
+    batch:            bool = False       # config asks for the deferred-batch transport
     article_models:   Dict[str, ArticleTokenModel] = field(default_factory=dict)
     notes:            List[str] = field(default_factory=list)
 
@@ -344,6 +345,7 @@ class ReviewEstimate:
             'n_docs':           self.n_docs,
             'escalation_rate':  self.escalation_rate,
             'token_counts':     'exact' if self.exact else 'heuristic',
+            'transport':        'batch' if self.batch else 'standard',
             'input_tokens':     self.input_tokens,
             'output_tokens':    self.output_tokens,
             'n_calls':          self.n_calls,
@@ -389,15 +391,17 @@ class ReviewEstimate:
             add(f"  {g.round_name:<7}{g.reviewer:<13}{g.model_id:<20}"
                 f"{g.n_items:>7}{g.n_calls:>7}"
                 f"{_fmt_tokens(g.input_tokens):>11}{_fmt_tokens(g.output_tokens):>10}"
-                f"{g.cost():>9.2f}")
+                f"{g.cost(self.batch):>9.2f}")
         add('  ' + '-' * (len(header) - 2))
         add(f"  {'TOTAL':<40}{sum(g.n_items for g in self.groups):>7}"
             f"{self.n_calls:>7}{_fmt_tokens(self.input_tokens):>11}"
-            f"{_fmt_tokens(self.output_tokens):>10}{self.cost():>9.2f}")
+            f"{_fmt_tokens(self.output_tokens):>10}{self.cost(self.batch):>9.2f}")
         add('')
-        add(f"  standard API : ${self.cost():.2f}")
+        mark = '  ←  this run' if not self.batch else ''
+        add(f"  standard API : ${self.cost():.2f}{mark}")
         add(f"  Batch API    : ${self.cost(batch=True):.2f}  "
-            f"(−50 %, results within 24 h)")
+            f"(−50 %, results within 24 h)"
+            f"{'  ←  this run (review.use_batch_api: true)' if self.batch else ''}")
         add('')
         for note in self.notes:
             add(f"  • {note}")
@@ -428,19 +432,19 @@ def _prompt_parts(reviewer, texts: List[str], n_per_call: int):
     and every article block delimiter is present. A probe with no real text
     therefore measures the *whole* fixed cost of a call, and adding one real
     article measures exactly that article's marginal cost.
-    """
-    from pysyrev.core.llm import (_system_prompt, _user_prompt,
-                                  _ReviewItem, _ReviewBatch)
 
-    schema = _ReviewItem if n_per_call == 1 else _ReviewBatch
-    tools = [{
-        'name':         'review',
-        'description':  'Structured review result',
-        'input_schema': schema.model_json_schema(),
-    }]
+    Nothing here is rebuilt by hand — the messages come from
+    :func:`~pysyrev.core.llm._prepare_call` and the tool from
+    :func:`~pysyrev.core.llm.review_tool`, the same two the run itself uses.
+    """
+    from pysyrev.core.llm import (_prepare_call, review_tool,
+                                  REVIEW_TOOL_CHOICE)
+
     padded = list(texts) + [''] * (n_per_call - len(texts))
-    user = _user_prompt(padded, reviewer)
-    return _system_prompt(reviewer), user, tools, {'type': 'tool', 'name': 'review'}
+    messages, _, schema = _prepare_call(padded, reviewer)
+    system = next(m['content'] for m in messages if m['role'] == 'system')
+    user = next(m['content'] for m in messages if m['role'] == 'user')
+    return system, user, [review_tool(schema)], REVIEW_TOOL_CHOICE
 
 
 def _build_reviewer_for_estimate(reviewer_config, review_config, input_description):
@@ -619,9 +623,16 @@ def estimate_review(review_config,
                 capped         = capped,
             ))
 
+    use_batch = bool(getattr(review_config, 'use_batch_api', False))
     _add_notes(notes, groups, review_config, dataset, exact)
+    if not use_batch:
+        notes.append(
+            "review.use_batch_api: true would halve this bill (same prompts, "
+            "same results, collected within 24 h instead of live)."
+        )
     return ReviewEstimate(groups=groups, n_docs=n_docs, dataset=path,
                           escalation_rate=escalation_rate, exact=exact,
+                          batch=use_batch,
                           article_models=article_models, notes=notes)
 
 

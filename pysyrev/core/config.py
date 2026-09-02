@@ -604,6 +604,12 @@ class ReviewConfig(ConfigField):
     max_retries:             Union[None, int] = None          # None → module default (2);  overridable per reviewer
     max_concurrent_requests: Union[None, int] = None          # None → module default (10); overridable per reviewer
     items_per_call:          Union[None, int] = None          # None → module default (1);  overridable per reviewer
+    # Deferred-batch transport: same prompts, submitted in bulk and collected
+    # within 24 h, at half price. Requires a provider that offers such an
+    # endpoint (currently anthropic). Off by default — it trades latency for
+    # money, and that is the user's call, not a default.
+    use_batch_api:           bool             = False
+    batch_poll_interval:     float            = 30.0          # seconds between status checks
 
     def __post_init__(self):
         super().__post_init__()

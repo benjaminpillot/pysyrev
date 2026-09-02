@@ -188,7 +188,7 @@ review: # LLM-based review
   # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
   # calls per chunk, 10 in flight).
   #
-  batch_size: 250               # articles per checkpoint chunk. items_per_call
+  batch_size: 100               # articles per checkpoint chunk. items_per_call100
                                 # x max_concurrent_requests (25 x 10) is the
                                 # FLOOR: the smallest chunk that fills every
                                 # concurrency slot — at 100 only 4 calls were
@@ -206,9 +206,29 @@ review: # LLM-based review
                                 # split, so a large batch is never re-billed in
                                 # full for a failure the retry cannot fix.
   max_concurrent_requests: 10    # keep 5-10 for Anthropic, up to 30 for OpenAI
-  items_per_call: 25             # articles per API call (backstory sent once).
+  items_per_call: 5             # articles per API call (backstory sent once).
                                  # Measured optimum: 50 saves a further 2 %,
                                  # 1 would cost 108 % more.
+
+  # Deferred batch: the same requests, answered within 24 h, billed at half
+  # price on input AND output. It costs nothing but latency, which a screening
+  # run does not need, so it is the largest single saving available whenever
+  # the reviewers are billed per token — larger than every prompt-side
+  # optimisation combined.
+  #
+  # It needs a provider that has such an endpoint: currently anthropic only.
+  # The reviewers below run on albert, which does not (and does not bill per
+  # token either), so this stays false; flip it together with the commented-out
+  # `provider: anthropic` / claude-haiku-4-5 lines. Turning it on with an
+  # albert reviewer is not silently ignored — the run says so and stays live.
+  #
+  # With it on, batch_size and api_pause above stop applying: the round is
+  # submitted in one go and the batch id is written to the run's cache_dir, so
+  # an interrupted run re-attaches to the work already paid for instead of
+  # resubmitting it. Requests the batch cannot answer are retried live at full
+  # price and reported.
+  use_batch_api: false
+  batch_poll_interval: 60.0     # seconds between status checks
 
   text_inputs : [title, abstract, author_keywords]   # `keywords` matches no
                                  # column — the canonical name is
@@ -227,7 +247,7 @@ review: # LLM-based review
     3. The study belongs to another very distant
     scientific field, such as geology, zoology,
     biology, medicine, biomedical studies, etc.
-  sample_size :     # Leave blank if the whole dataset must be processed. Otherwise,
+  sample_size : 50    # Leave blank if the whole dataset must be processed. Otherwise,
                     # size of the corresponding random sample to withdraw from the dataset
   decision_rule : majority   # majority, mean
   workflow :    # Workflow consists in as many rounds as defined by the
@@ -243,9 +263,9 @@ review: # LLM-based review
   reviewers :
     - name : Reviewer#1
       reasoning : brief  # brief, cot (see LatteReview)
-      model_id : claude-haiku-4-5  # Model identifier
+      model_id : openai/gpt-oss-120b # claude-haiku-4-5  # Model identifier
       host :
-      provider : anthropic  # values : litellm, open-ai, ollama, anthropic
+      provider : albert  # values : litellm, albert, open-ai, ollama, anthropic
       max_tokens : 200
       temperature : 0.2  # temperature parameter is not available for all models.
                          # Was 0.9: on a 1-5 classification that mostly buys
@@ -275,9 +295,9 @@ review: # LLM-based review
 
     - name : Reviewer#2
       reasoning : brief
-      model_id : claude-haiku-4-5
+      model_id : openai/gpt-oss-120b # claude-haiku-4-5
       host :
-      provider : anthropic
+      provider : albert
       max_tokens : 200
       temperature : 0.2
       reasoning_effort :
@@ -302,12 +322,12 @@ review: # LLM-based review
 
     - name : Reviewer#3
       reasoning :
-      model_id : claude-haiku-4-5 # gpt-4o-mini
+      model_id : openai/gpt-oss-120b # gpt-4o-mini
       host :
-      provider : anthropic
+      provider : albert
       max_tokens : 200
       temperature : 0.2
-      reasoning_effort :   # Left blank on purpose: `reasoning_effort` is an
+      reasoning_effort : medium  # Left blank on purpose: `reasoning_effort` is an
                            # OpenAI parameter. The Anthropic Messages API has no
                            # such field (its output_config.effort is a different
                            # thing, and Haiku 4.5 rejects it), so this was a

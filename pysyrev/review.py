@@ -20,7 +20,8 @@ import nest_asyncio
 
 from pysyrev.core.config import ReviewConfig, ReviewerConfig, ReviewExportConfig
 from pysyrev.core.llm import (run_review, build_workflow_schema, build_reviewer,
-                               Reviewer, REVIEW_SCORE)
+                               check_batch_support, BatchRun, Reviewer,
+                               REVIEW_SCORE)
 
 REVIEWED_SUBSET: str = "reviewed_subset"
 
@@ -56,6 +57,28 @@ def _reviewer_kwargs(reviewer_config: ReviewerConfig,
         'items_per_call':          (reviewer_config.items_per_call
                                     or review_config.items_per_call),
     }
+
+
+def _check_batch_api(reviewers: List[Reviewer], use_batch_api: bool) -> bool:
+    """Validate ``use_batch_api`` against the reviewers actually configured.
+
+    The deferred-batch endpoint is a provider capability, not a pysyrev
+    feature: asking for it with a provider that has none cannot be honoured.
+    Falling back silently would be the worst outcome — the run would quietly
+    cost twice what the config promised — so say so and return False.
+    """
+    if not use_batch_api:
+        return False
+    unsupported = check_batch_support(reviewers)
+    if unsupported:
+        print(
+            f"use_batch_api is on but {', '.join(unsupported)} run on a provider "
+            f"with no deferred-batch endpoint. The review will run "
+            f"synchronously, at full price. Set provider: anthropic on those "
+            f"reviewers, or set use_batch_api: false to silence this."
+        )
+        return False
+    return True
 
 
 def _warn_starved_concurrency(reviewers: List[Reviewer], batch_size: int) -> None:
@@ -118,6 +141,8 @@ class LLMReview:
     api_pause:         float
     sample_size:       Union[int, None]
     doc_dataset:       Union[str, None]
+    use_batch_api:     bool  = False
+    batch_poll_interval: float = 30.0
     _reviewed_dataset: ReviewedDataset = field(default_factory=ReviewedDataset, init=False, repr=False)
 
     # ---- bridge from configuration --------------------------------------
@@ -131,7 +156,9 @@ class LLMReview:
             build_reviewer(**_reviewer_kwargs(rc, config, input_description))
             for rc in config.reviewers
         ]
-        _warn_starved_concurrency(reviewers, config.batch_size)
+        use_batch_api = _check_batch_api(reviewers, config.use_batch_api)
+        if not use_batch_api:
+            _warn_starved_concurrency(reviewers, config.batch_size)
         workflow_schema = build_workflow_schema(
             config.workflow,
             reviewers,
@@ -149,6 +176,8 @@ class LLMReview:
             api_pause       = config.api_pause,
             sample_size     = config.sample_size,
             doc_dataset     = config.doc_dataset,
+            use_batch_api       = use_batch_api,
+            batch_poll_interval = config.batch_poll_interval,
         )
 
     # ---- runtime --------------------------------------------------------
@@ -170,6 +199,13 @@ class LLMReview:
             )
         else:
             subset_file_fn = None
+        # The batch ids live next to the per-chunk checkpoints, for the same
+        # reason: so an interrupted run can pick up where it stopped instead of
+        # paying for the work twice.
+        batch_run = BatchRun(
+            poll_interval = self.batch_poll_interval,
+            state_dir     = self.export.cache_dir,
+        ) if self.use_batch_api else None
         reviewed_ds = run_review(
             dataset,
             self.workflow_schema,
@@ -178,6 +214,7 @@ class LLMReview:
             self.sample_size,
             self.api_pause,
             subset_file_fn,
+            batch_run,
         )
         self._reviewed_dataset.total_docs = reviewed_ds
         self._reviewed_dataset.included_docs = reviewed_ds.loc[reviewed_ds[REVIEW_SCORE] > 3, :]

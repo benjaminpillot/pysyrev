@@ -28,6 +28,7 @@
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
 - **Download full-text PDFs** — download full-test PDFs for a list of candidates, e.g. the reading-list selection
 - **Token cost estimation** — price review stage before running it when calling external API (anthropic, OpenAI, etc.)
+- **Deferred batch reviewing** — screen the corpus through the provider's batch endpoint (`review.use_batch_api`): same prompts, results within 24 h, half price on input and output; interrupted runs re-attach to the batch already paid for
 
 ---
 

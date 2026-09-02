@@ -215,6 +215,25 @@ review:
   max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
   items_per_call: 5             # articles per API call (backstory sent once)
 
+  # ---- Deferred batch (half price) ---------------------------------------
+  # Some providers answer a pile of requests within 24 h instead of live, and
+  # charge half for it — input *and* output. Same prompts, same items_per_call
+  # packing, same results: only the transport changes. Currently available for
+  # provider: anthropic; reviewers on any other provider make this a no-op and
+  # say so at startup rather than silently costing twice.
+  #
+  # What changes when it is on:
+  #   - each round is submitted in one go, so batch_size and api_pause no
+  #     longer apply (the batch id on disk is the restart point instead, and
+  #     rerunning the stage re-attaches to it rather than paying again);
+  #   - max_concurrent_requests only governs the tail of requests the batch
+  #     could not answer, which are retried live at full price;
+  #   - the review takes up to 24 h. Not for an interactive run.
+  #
+  # `pysyrev estimate config.yaml` prices both transports side by side.
+  use_batch_api: false
+  batch_poll_interval: 30.0     # seconds between status checks
+
   # ---- Input -------------------------------------------------------------
   text_inputs: [title, abstract, author_keywords]
   # sample_size:                  # default: null (process full dataset); integer = random sample size

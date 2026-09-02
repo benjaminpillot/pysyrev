@@ -10,6 +10,15 @@ Key design choice: items_per_call controls how many articles are sent in a
 single API request. The system prompt (backstory + criteria) is sent once
 per batch rather than once per article. With items_per_call=1 the behavior
 is identical to the previous per-article approach.
+
+Requests can travel by either of two transports. The default is live: calls
+go out concurrently and answers come back in seconds. The other is deferred —
+the whole round is handed to the provider's batch endpoint, answered within a
+day, and billed at half price. Which one is used changes nothing about what is
+sent: `_prepare_call` builds the request and `build_payload` serialises it for
+both, so a batched run cannot drift from a live one (nor from what
+`pysyrev.core.token_cost` prices). The vendor-neutral half of that machinery —
+packing, resumption, waiting — lives in `pysyrev.core.batch`.
 """
 
 import asyncio
@@ -27,6 +36,8 @@ import pandas as pd
 from pydantic import BaseModel
 from tqdm import tqdm as tqdm_sync
 from tqdm.asyncio import tqdm
+
+from pysyrev.core import batch as deferred
 
 litellm.drop_params = True   # silently drop params unsupported by a provider
 
@@ -83,6 +94,30 @@ class _BaseProvider:
         """
         raise NotImplementedError
 
+    # -- deferred batch execution (optional capability) -------------------
+    #
+    # Some vendors take a pile of requests, answer them within a day, and
+    # charge half. That is a property of the provider, not of the review
+    # pipeline, so it is offered here and implemented by whoever has such an
+    # endpoint — the orchestration around it (packing, resumption, waiting)
+    # is vendor-neutral and lives in `pysyrev.core.batch`.
+
+    def batch_backend(self):
+        """The provider's deferred-batch backend, or None if it has no such endpoint."""
+        return None
+
+    def build_payload(self, messages: list, model_id: str,
+                      model_args: dict, response_schema) -> dict:
+        """The request body `call` would send, as the batch endpoint wants it.
+
+        Only meaningful for a provider that returns a backend above; the point
+        of building it here rather than in the batch layer is that a batched
+        run must send byte-identical requests to a synchronous one.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support deferred batch execution."
+        )
+
 
 class _LiteLLMProvider(_BaseProvider):
 
@@ -119,6 +154,24 @@ class _LiteLLMProvider(_BaseProvider):
         return content, cost
 
 
+def review_tool(response_schema) -> dict:
+    """The forced tool that carries structured output on the Anthropic path.
+
+    Module-level and public because it is a billed part of every request: the
+    schema and the tool-use preamble it triggers are real input tokens, which
+    :mod:`pysyrev.core.token_cost` must count from this definition rather than
+    from a copy of it.
+    """
+    return {
+        "name": "review",
+        "description": "Structured review result",
+        "input_schema": response_schema.model_json_schema(),
+    }
+
+
+REVIEW_TOOL_CHOICE: dict = {"type": "tool", "name": "review"}
+
+
 class _AnthropicProvider(_BaseProvider):
 
     # Params configured by the user that this provider cannot forward. Warned
@@ -140,7 +193,13 @@ class _AnthropicProvider(_BaseProvider):
             raise ImportError("Install the 'anthropic' package to use provider='anthropic'")
         self._client = anthropic.AsyncAnthropic(**({"base_url": host} if host else {}))
 
-    async def call(self, messages, model_id, model_args, response_schema):
+    def build_payload(self, messages, model_id, model_args, response_schema) -> dict:
+        """Assemble the Messages API request body.
+
+        Shared by the synchronous and the batched transports so the two cannot
+        drift: a batched run must send exactly the request a live one would,
+        or the estimate, the cache prefix and the results all stop agreeing.
+        """
         # Anthropic's API takes system as a top-level param, not in messages.
         system = next((m["content"] for m in messages if m["role"] == "system"), "")
         user_messages = [m for m in messages if m["role"] != "system"]
@@ -158,29 +217,39 @@ class _AnthropicProvider(_BaseProvider):
                       f"Anthropic Messages API has no such parameter — it is "
                       f"ignored. Remove it from the reviewer.")
 
+        payload = {"model": model_id, "system": system,
+                   "messages": user_messages, **anthropic_args}
+
         if response_schema is not None:
             # Structured output via tool_use.
-            tool_def = {
-                "name": "review",
-                "description": "Structured review result",
-                "input_schema": response_schema.model_json_schema(),
-            }
-            response = await self._client.messages.create(
-                model=model_id, system=system, messages=user_messages,
-                tools=[tool_def], tool_choice={"type": "tool", "name": "review"},
-                **anthropic_args,
-            )
+            payload["tools"] = [review_tool(response_schema)]
+            payload["tool_choice"] = REVIEW_TOOL_CHOICE
+        return payload
+
+    @staticmethod
+    def extract_content(response, response_schema):
+        """Pull the review out of a Messages API response.
+
+        Also shared by both transports: a batch result carries the very same
+        ``Message`` object a synchronous call returns.
+        """
+        if response_schema is not None:
             content = next(
                 (block.input for block in response.content if block.type == "tool_use"),
                 None,
             )
             if content is None:
                 raise ValueError("No tool_use block found in Anthropic response")
-        else:
-            response = await self._client.messages.create(
-                model=model_id, system=system, messages=user_messages, **anthropic_args,
-            )
-            content = _extract_json(response.content[0].text)
+            return content
+        return _extract_json(response.content[0].text)
+
+    def batch_backend(self) -> '_AnthropicBatchBackend':
+        return _AnthropicBatchBackend(self._client)
+
+    async def call(self, messages, model_id, model_args, response_schema):
+        payload = self.build_payload(messages, model_id, model_args, response_schema)
+        response = await self._client.messages.create(**payload)
+        content = self.extract_content(response, response_schema)
 
         try:
             cost = litellm.completion_cost(
@@ -191,6 +260,61 @@ class _AnthropicProvider(_BaseProvider):
         except Exception:
             cost = 0.0
         return content, cost
+
+
+class _AnthropicBatchBackend(deferred.BatchBackend):
+    """Anthropic's Message Batches endpoint, as a generic batch backend.
+
+    Half price on input *and* output, results within 24 h. The requests are the
+    ones :meth:`_AnthropicProvider.build_payload` produces and the answers are
+    ordinary ``Message`` objects, so decoding reuses
+    :meth:`_AnthropicProvider.extract_content` verbatim.
+    """
+
+    name = 'anthropic-batch'
+    max_requests = 100_000
+    max_bytes = 200 * 1024 * 1024        # documented ceiling is 256 MB
+
+    def __init__(self, client):
+        self._client = client
+
+    async def submit(self, requests) -> str:
+        created = await self._client.messages.batches.create(
+            requests=[{'custom_id': r.custom_id, 'params': r.payload}
+                      for r in requests]
+        )
+        return created.id
+
+    async def poll(self, batch_id: str) -> deferred.BatchStatus:
+        state = await self._client.messages.batches.retrieve(batch_id)
+        counts = state.request_counts
+        return deferred.BatchStatus(
+            ended=state.processing_status == 'ended',
+            done=(counts.succeeded + counts.errored
+                  + counts.canceled + counts.expired),
+        )
+
+    async def fetch(self, batch_id: str, requests) -> list:
+        results = []
+        decoder = await self._client.messages.batches.results(batch_id)
+        async for entry in decoder:
+            request = requests.get(entry.custom_id)
+            outcome = entry.result
+            if outcome.type != 'succeeded':
+                detail = getattr(outcome, 'error', None) or outcome.type
+                results.append(deferred.BatchResult(entry.custom_id,
+                                                 error=str(detail)))
+                continue
+            try:
+                # A forced tool was sent iff the payload carried one, and that
+                # is what says where the answer lives.
+                tools = request.payload.get('tools') if request else None
+                content = _AnthropicProvider.extract_content(
+                    outcome.message, tools)
+                results.append(deferred.BatchResult(entry.custom_id, content=content))
+            except Exception as exc:
+                results.append(deferred.BatchResult(entry.custom_id, error=str(exc)))
+        return results
 
 
 class _OpenAIProvider(_BaseProvider):
@@ -532,10 +656,13 @@ def _parse_evaluation(item: dict) -> dict:
             "reasoning": str(item.get("reasoning", ""))}
 
 
-async def _review_batch(
-    texts: List[str], reviewer: Reviewer, semaphore: asyncio.Semaphore
-) -> List[dict]:
-    """Send one batch of texts in a single API call. Returns a list of evaluation dicts."""
+def _prepare_call(texts: List[str], reviewer: Reviewer) -> tuple:
+    """Everything one review call is made of: ``(messages, model_args, schema)``.
+
+    Sole definition of a review request, so the synchronous and the deferred
+    transports send the same thing — and so the cost estimator, which imports
+    the prompt builders below, keeps pricing what is actually sent.
+    """
     n_articles = len(texts)
     messages = [
         {"role": "system", "content": _system_prompt(reviewer)},
@@ -549,6 +676,31 @@ async def _review_batch(
         response_schema = _ReviewBatch  # structured output enforces key names for all providers
         if "max_tokens" in model_args:
             model_args = {**model_args, "max_tokens": model_args["max_tokens"] * n_articles}
+    return messages, model_args, response_schema
+
+
+def _evaluations_from_raw(raw, n_articles: int) -> List[dict]:
+    """Validate and parse a provider response into ``n_articles`` evaluations.
+
+    A single-item call should yield one item, but a model may ignore the single
+    schema and answer with the batch envelope or a bare list;
+    :func:`_normalize_evaluations` unwraps those. A count that still does not
+    match is the dominant failure at large batch sizes — the model silently
+    dropping articles — and must raise, because the caller aligns these
+    evaluations positionally with the rows it sent.
+    """
+    evals = _normalize_evaluations(raw)
+    if len(evals) != n_articles:
+        raise ValueError(f"Expected {n_articles} evaluation(s), got {len(evals)}")
+    return [_parse_evaluation(e) for e in evals]
+
+
+async def _review_batch(
+    texts: List[str], reviewer: Reviewer, semaphore: asyncio.Semaphore
+) -> List[dict]:
+    """Send one batch of texts in a single API call. Returns a list of evaluation dicts."""
+    n_articles = len(texts)
+    messages, model_args, response_schema = _prepare_call(texts, reviewer)
 
     # A failed multi-article call is retried once, not max_retries times. Every
     # attempt re-sends all n_articles at full price, and the dominant failure
@@ -566,20 +718,7 @@ async def _review_batch(
                 raw, _ = await reviewer.provider_client.call(
                     messages, reviewer.model_id, model_args, response_schema,
                 )
-            evals = _normalize_evaluations(raw)
-
-            if n_articles == 1:
-                # Single-item calls should yield one item, but a model may ignore
-                # the single schema and return the batch envelope / a bare list —
-                # _normalize_evaluations unwraps those. Take the sole item.
-                if len(evals) != 1:
-                    raise ValueError(
-                        f"Expected 1 evaluation, got {len(evals)}")
-                return [_parse_evaluation(evals[0])]
-
-            if len(evals) != n_articles:
-                raise ValueError(f"Expected {n_articles} evaluations, got {len(evals)}")
-            return [_parse_evaluation(e) for e in evals]
+            return _evaluations_from_raw(raw, n_articles)
         except Exception as exc:
             last_exc = exc
             print(f"[{reviewer.name}] attempt {attempt + 1}/{attempts}: {exc}")
@@ -603,25 +742,144 @@ async def _review_batch(
     )
 
 
+def _plan_calls(texts: List[str], reviewer: Reviewer) -> List[List[str]]:
+    """Cut a reviewer's workload into calls of ``items_per_call`` articles."""
+    n_per_call = max(1, reviewer.items_per_call)
+    return [texts[i: i + n_per_call] for i in range(0, len(texts), n_per_call)]
+
+
 async def _review_all(texts: List[str], reviewer: Reviewer) -> List[dict]:
     """Split texts into batches of items_per_call and run them concurrently."""
     semaphore = asyncio.Semaphore(reviewer.max_concurrent_requests)
-    n_articles_per_call = reviewer.items_per_call
-    batches = [texts[i: i + n_articles_per_call]
-               for i in range(0, len(texts), n_articles_per_call)]
+    calls = _plan_calls(texts, reviewer)
 
-    async def _indexed(idx, batch):
-        return idx, await _review_batch(batch, reviewer, semaphore)
+    async def _indexed(idx, chunk):
+        return idx, await _review_batch(chunk, reviewer, semaphore)
 
-    ordered = [None] * len(batches)
-    tasks = [_indexed(i, b) for i, b in enumerate(batches)]
-    async for completed_task in tqdm(asyncio.as_completed(tasks), total=len(batches),
+    ordered = [None] * len(calls)
+    tasks = [_indexed(i, c) for i, c in enumerate(calls)]
+    async for completed_task in tqdm(asyncio.as_completed(tasks), total=len(calls),
                                      desc=f"[{reviewer.name}] {len(texts)} articles",
                                      unit="batch"):
         idx, result = await completed_task
         ordered[idx] = result
 
-    return [item for batch in ordered for item in batch]
+    return [item for chunk in ordered for item in chunk]
+
+
+# ── Deferred-batch reviewing ───────────────────────────────────────────────
+
+@dataclass
+class BatchRun:
+    """Settings for reviewing through a provider's deferred-batch endpoint.
+
+    Passing one of these to :func:`run_review` swaps the transport, not the
+    work: the same prompts, the same ``items_per_call`` packing, the same
+    parsing — submitted in bulk and collected within the day, at half price.
+    """
+    poll_interval: float = deferred.DEFAULT_POLL_INTERVAL
+    max_wait:      float = deferred.MAX_WAIT_SECONDS
+    state_dir:     Optional[str] = None      # where batch ids are remembered
+
+    def state_file(self, round_name) -> Optional[str]:
+        if not self.state_dir:
+            return None
+        return os.path.join(self.state_dir, f"batch_round-{round_name}.json")
+
+
+async def _review_round_deferred(reviewers: List[Reviewer], texts: List[str],
+                                 round_name, run: BatchRun) -> dict:
+    """Review one round's reviewers in a single deferred submission.
+
+    The reviewers of a round are independent — they screen the same articles
+    and never read each other's scores — so they share one batch and one wait.
+    Rounds cannot be merged: round *n+1* only sees what round *n* left
+    unsettled, which is not known until *n* comes back.
+
+    Returns ``{reviewer name: [evaluation, ...]}`` aligned with *texts*.
+    """
+    # One submission per distinct client. Usually there is exactly one, but two
+    # reviewers may sit behind different accounts or hosts, and a batch can only
+    # be submitted to the endpoint that will be polled for it.
+    groups: dict = {}
+    for reviewer in reviewers:
+        groups.setdefault(id(reviewer.provider_client), []).append(reviewer)
+
+    n_calls = 0
+    plan = []                        # plan[i] = (reviewer, that call's articles)
+    submissions = []
+    for group_idx, group in enumerate(groups.values()):
+        client = group[0].provider_client
+        group_requests = []
+        for reviewer in group:
+            for chunk in _plan_calls(texts, reviewer):
+                messages, model_args, schema = _prepare_call(chunk, reviewer)
+                payload = client.build_payload(messages, reviewer.model_id,
+                                               model_args, schema)
+                group_requests.append(
+                    deferred.BatchRequest(deferred.request_id(n_calls), payload))
+                plan.append((reviewer, chunk))
+                n_calls += 1
+        # A single group is the normal case and keeps the plain round names, so
+        # a state file written before a second provider appeared still matches.
+        suffix = '' if len(groups) == 1 else f" / {group[0].provider}"
+        submissions.append(deferred.run(
+            client.batch_backend(), group_requests,
+            label=f"round {round_name}{suffix}",
+            state_file=run.state_file(round_name if len(groups) == 1
+                                      else f"{round_name}-{group_idx}"),
+            poll_interval=run.poll_interval,
+            max_wait=run.max_wait,
+        ))
+
+    results = {}
+    for collected in await asyncio.gather(*submissions):
+        results.update(collected)
+
+    # A deferred batch has no retry of its own: a request that errored, expired
+    # or came back with the wrong number of evaluations is re-reviewed through
+    # the synchronous path, which already knows how to retry and how to split a
+    # batch the model mangled. That tail is billed at full price — it is meant
+    # to stay a tail.
+    outcomes: List[Optional[List[dict]]] = [None] * len(plan)
+    failed: List[tuple] = []
+    for i, (_, chunk) in enumerate(plan):
+        result = results.get(deferred.request_id(i))
+        if result is None:
+            failed.append((i, 'no result returned for this request'))
+        elif not result.ok:
+            failed.append((i, result.error))
+        else:
+            try:
+                outcomes[i] = _evaluations_from_raw(result.content, len(chunk))
+            except Exception as exc:
+                failed.append((i, str(exc)))
+
+    if failed:
+        reasons = sorted({reason for _, reason in failed})[:3]
+        print(f"[batch] round {round_name}: {len(failed)}/{len(plan)} call(s) "
+              f"came back unusable — re-reviewing them synchronously at full "
+              f"price. Reasons: {'; '.join(reasons)}")
+        semaphores = {r.name: asyncio.Semaphore(r.max_concurrent_requests)
+                      for r in reviewers}
+
+        async def _resend(idx):
+            reviewer, chunk = plan[idx]
+            return idx, await _review_batch(chunk, reviewer, semaphores[reviewer.name])
+
+        for coro in asyncio.as_completed([_resend(i) for i, _ in failed]):
+            idx, evaluations = await coro
+            outcomes[idx] = evaluations
+
+    by_reviewer = {reviewer.name: [] for reviewer in reviewers}
+    for (reviewer, _), evaluations in zip(plan, outcomes):
+        by_reviewer[reviewer.name].extend(evaluations)
+    return by_reviewer
+
+
+def check_batch_support(reviewers: List[Reviewer]) -> List[str]:
+    """Names of reviewers whose provider has no deferred-batch endpoint."""
+    return [r.name for r in reviewers if r.provider_client.batch_backend() is None]
 
 
 # ── Workflow ───────────────────────────────────────────────────────────────
@@ -689,7 +947,8 @@ def _build_texts(dataset: pd.DataFrame, text_inputs: List[str]) -> List[str]:
     return texts
 
 
-async def _run_workflow(dataset: pd.DataFrame, workflow_schema: list) -> pd.DataFrame:
+async def _run_workflow(dataset: pd.DataFrame, workflow_schema: list,
+                        batch_run: Optional[BatchRun] = None) -> pd.DataFrame:
     result = dataset.copy()
     for round_schema in workflow_schema:
         round_name  = round_schema["round"]
@@ -706,10 +965,17 @@ async def _run_workflow(dataset: pd.DataFrame, workflow_schema: list) -> pd.Data
         _warn_missing_text_inputs(result, text_inputs, round_name)
         texts = _build_texts(result.loc[subset_idx], text_inputs)
 
+        if batch_run is not None and reviewers and texts:
+            # One deferred submission for the whole round, all reviewers at once.
+            round_evals = await _review_round_deferred(
+                reviewers, texts, round_name, batch_run)
+        else:
+            round_evals = {r.name: await _review_all(texts, r) for r in reviewers}
+
         for reviewer in reviewers:
             eval_col      = f"round-{round_name}_{reviewer.name}_evaluation"
             reasoning_col = f"round-{round_name}_{reviewer.name}_reasoning"
-            evals = await _review_all(texts, reviewer)
+            evals = round_evals[reviewer.name]
             result.loc[subset_idx, eval_col]      = [e["evaluation"] for e in evals]
             result.loc[subset_idx, reasoning_col] = [e["reasoning"]  for e in evals]
 
@@ -746,8 +1012,8 @@ def eval_filter_func(row, eval_keys, decision_rule):
 
 # ── Entry points ───────────────────────────────────────────────────────────
 
-def process_full(dataset, workflow_schema):
-    return asyncio.run(_run_workflow(dataset, workflow_schema))
+def process_full(dataset, workflow_schema, batch_run: Optional[BatchRun] = None):
+    return asyncio.run(_run_workflow(dataset, workflow_schema, batch_run))
 
 
 def process_per_batch(dataset, workflow_schema, batch_size, pause, subset_file_fn):
@@ -773,7 +1039,8 @@ def process_per_batch(dataset, workflow_schema, batch_size, pause, subset_file_f
 
 
 def run_review(dataset, workflow_schema, decision_rule,
-               batch_size, sample_size, pause, subset_file_fn=None):
+               batch_size, sample_size, pause, subset_file_fn=None,
+               batch_run: Optional[BatchRun] = None):
 
     def ds_eval_keys():
         return [f"round-{s['round']}_{r.name}_evaluation"
@@ -782,7 +1049,18 @@ def run_review(dataset, workflow_schema, decision_rule,
     if sample_size:
         dataset = dataset.sample(sample_size)
 
-    if batch_size and batch_size < len(dataset):
+    if batch_run is not None:
+        # Checkpoint chunking is deliberately bypassed here. A deferred run
+        # waits once per submission, so chunking a 4 600-document corpus into
+        # nineteen pieces buys nineteen waits of up to 24 h for no saving —
+        # and the batch is already the checkpoint, since its results stay
+        # retrievable for weeks and its id is on disk.
+        if batch_size and batch_size < len(dataset):
+            print(f"[batch] batch_size={batch_size} is ignored in deferred-batch "
+                  f"mode: each round is submitted in one go and the batch id "
+                  f"itself is the restart point.")
+        reviewed_dataset = process_full(dataset, workflow_schema, batch_run)
+    elif batch_size and batch_size < len(dataset):
         reviewed_dataset = process_per_batch(dataset, workflow_schema, batch_size,
                                              pause, subset_file_fn)
     else:
