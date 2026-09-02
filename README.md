@@ -180,6 +180,15 @@ Each reviewer (and the optional `llm:` labelling section) names a `provider`. Cr
 curl -H "Authorization: Bearer $ALBERT_API_KEY" https://albert.api.etalab.gouv.fr/v1/models
 ```
 
+### Reasoning models and `max_tokens`
+
+Some models draft their reasoning before writing the answer. Those tokens come out of `max_tokens` and are billed as output like any other.
+
+- **Does not reason** — `claude-haiku-4-5` and earlier Claude models. The whole budget goes to the answer.
+- **Reasons** — `claude-sonnet-5`, `claude-opus-5` and later, and Albert's `openai/gpt-oss-*`.
+
+**Watch out:** with a reasoning model, `max_tokens` has to cover the thinking *as well as* the answer, and the same review costs more output tokens per article. Set it too low and the answer is cut off mid-sentence. Albert's gpt-oss makes this hard to see — its thinking is returned nowhere and counted in no usage figure, so nothing in the response tells you where the budget went; `reasoning_effort: low` keeps it short.
+
 ---
 
 ## Getting started
