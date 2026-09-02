@@ -193,6 +193,43 @@ def is_plausible_abstract(
     return suspicious_signals < min_signals_to_reject
 
 
+def truncate_abstract(text, max_chars: int):
+    """Cut an over-long abstract back to ``max_chars``, on a clean boundary.
+
+    Sources routinely deliver something other than an abstract in the abstract
+    field: a scraped landing page, the full text, an author list followed by a
+    mangled reference dump. Those records are a minority but they dominate the
+    corpus' character count, and they are the worst input a screening reviewer
+    can be given — the decision is made on the first paragraph, everything after
+    it is noise that the LLM is charged for.
+
+    The cut prefers the last sentence terminator in the kept span, falling back
+    to the last word boundary, and gives up on both if honouring them would
+    throw away more than a quarter of the budget (a text with no punctuation at
+    all — precisely the reference dumps — must still be cut).
+    """
+    if not isinstance(text, str) or max_chars is None or len(text) <= max_chars:
+        return text
+
+    head = text[:max_chars]
+    floor = int(max_chars * 0.75)
+
+    cut = max((head.rfind(c) for c in '.!?'), default=-1)
+    if cut < floor:
+        cut = head.rfind(' ') - 1          # -1: the boundary is exclusive below
+    if cut < floor:
+        cut = max_chars - 1
+
+    return head[:cut + 1].rstrip()
+
+
+def truncate_abstracts(series: pd.Series, max_chars) -> pd.Series:
+    """Vectorized :func:`truncate_abstract`. ``max_chars=None`` is a no-op."""
+    if not max_chars:
+        return series
+    return series.map(lambda t: truncate_abstract(t, max_chars))
+
+
 def clean_abstracts(
     series: pd.Series,
     min_signals_to_reject: int,

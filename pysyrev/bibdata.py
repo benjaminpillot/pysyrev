@@ -13,7 +13,7 @@ from pysyrev.core.references import (resolve_references as _resolve_references,
                                      has_unkeyed_references as _has_unkeyed_references)
 from pysyrev.core.config import BibConfig, OpenAlexSourceConfig, WosSourceConfig
 from pysyrev.core.merge_bibs import merge_bibs
-from pysyrev.core.clean import clean_doi, clean_abstracts
+from pysyrev.core.clean import clean_doi, clean_abstracts, truncate_abstracts
 from pysyrev.core.completion import complete_abstracts_from_wos
 from pysyrev.core.seed_expansion import OpenAlexExpander
 from typing import Iterable, List
@@ -73,6 +73,7 @@ class BibDataset:
                        min_signals_to_reject: int=2,
                        extra_garbage_phrases: Iterable[str] = (),
                        use_langdetect: bool = False,
+                       max_abstract_chars: int = None,
                        ):
         """ Clean DOI and abstract columns, drop no-abstract rows
 
@@ -81,6 +82,10 @@ class BibDataset:
         min_signals_to_reject
         extra_garbage_phrases
         use_langdetect
+        max_abstract_chars
+            Cap on the abstract length, in characters. None keeps abstracts
+            whole. Applied after the plausibility filter, so truncation never
+            changes whether a record is kept.
 
         Returns
         -------
@@ -92,6 +97,17 @@ class BibDataset:
                                                      min_signals_to_reject,
                                                      extra_garbage_phrases,
                                                      use_langdetect)
+
+        if max_abstract_chars:
+            lengths = self._bib_dataset.abstract.fillna('').astype(str).str.len()
+            over = int((lengths > max_abstract_chars).sum())
+            if over:
+                self._bib_dataset.abstract = truncate_abstracts(
+                    self._bib_dataset.abstract, max_abstract_chars)
+                dropped = int(lengths.sum() -
+                              self._bib_dataset.abstract.fillna('').astype(str).str.len().sum())
+                print(f"abstract truncation: {over} abstract(s) over "
+                      f"{max_abstract_chars} chars, {dropped / 1e6:.1f}M characters removed")
 
         # Does it have abstract ? DROP no-abstract rows
         self._bib_dataset.drop(self._bib_dataset.index[pd.isna(self._bib_dataset.abstract)],
@@ -446,6 +462,7 @@ class BibDataset:
             min_signals_to_reject = cfg_clean.min_signals_to_reject,
             extra_garbage_phrases = cfg_clean.extra_garbage_phrases or (),
             use_langdetect        = cfg_clean.use_langdetect,
+            max_abstract_chars    = cfg_clean.max_abstract_chars,
         )
 
         # Canonical reference keys: remap every reference onto a shared DOI space

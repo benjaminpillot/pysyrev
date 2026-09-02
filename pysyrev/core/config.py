@@ -308,6 +308,11 @@ class CleanConfig(ConfigField):
     min_signals_to_reject: int                    = 2
     extra_garbage_phrases: Union[None, List[str]] = None
     use_langdetect:        bool                   = False
+    # Cap on the abstract length, in characters (None = keep whole). Sources
+    # sometimes deliver a scraped page or a full text in the abstract field;
+    # those records dominate the corpus' character count and the review bill.
+    # The cut lands on a sentence boundary. 2500 keeps a full abstract.
+    max_abstract_chars:    Union[None, int]       = None
 
 
 @dataclass
