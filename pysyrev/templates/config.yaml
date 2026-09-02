@@ -126,11 +126,14 @@ bib:
   #   cache: .cache/openalex_doi.csv   # persistent Wxxxx->DOI table (accumulates)
   #   resolve_external: true           # false = offline only (no API calls)
 
+
   # ---- Abstract cleaning (defaults shown) --------------------------------
-  # clean:
+  clean:
   #   min_signals_to_reject: 2     # garbage signals needed to drop an abstract
   #   extra_garbage_phrases: []
   #   use_langdetect: false
+    max_abstract_chars: 2500
+
 
   # ---- Document filtering ------------------------------------------------
   extract:
@@ -206,14 +209,14 @@ review:
   # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
   # calls per chunk, 10 in flight).
   #
-  # batch_size: 100               # articles per checkpoint chunk
-  # api_pause: 30.0               # seconds between chunks (rate-limit guard)
-  # max_retries: 2                # on API error; overridable per reviewer
-  # max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
-  # items_per_call: 5             # articles per API call (backstory sent once)
+  batch_size: 100               # articles per checkpoint chunk
+  api_pause: 30.0               # seconds between chunks (rate-limit guard)
+  max_retries: 2                # on API error; overridable per reviewer
+  max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
+  items_per_call: 5             # articles per API call (backstory sent once)
 
   # ---- Input -------------------------------------------------------------
-  text_inputs: [title, abstract, keywords]
+  text_inputs: [title, abstract, author_keywords]
   # sample_size:                  # default: null (process full dataset); integer = random sample size
 
   # ---- Screening criteria ------------------------------------------------
@@ -244,7 +247,7 @@ review:
       model_id: claude-haiku-4-5
       reasoning: brief            # brief | cot
       max_tokens: 200
-      temperature: 0.7
+      temperature: 0.2
       host:                       # custom endpoint (litellm / ollama); blank for hosted APIs
       reasoning_effort:           # low | medium | high (extended-thinking models only)
       max_retries:                # blank → section-level value
@@ -259,7 +262,7 @@ review:
       model_id: claude-haiku-4-5
       reasoning: brief
       max_tokens: 200
-      temperature: 0.1
+      temperature: 0.2
       host:
       reasoning_effort:
       max_retries:
@@ -277,7 +280,7 @@ review:
     #   max_tokens: 200
     #   temperature:
     #   host:
-    #   reasoning_effort: medium
+    #   reasoning_effort:
     #   max_retries:
     #   max_concurrent_requests:
     #   items_per_call:

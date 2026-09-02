@@ -54,13 +54,16 @@ bib:
         - agent-based model net-zero transition
         - agent-based model electrification
         - agent-based integrated assessment model climate
-        - socio-technical transition agent-based model
+        - agent-based model socio-technical transition
         - agent-based model hydrogen transition
         - agent-based model energy policy evaluation
+        - agent-based model energy demand-side
+        - agent-based model energy climate change mitigation
         - agent-based model renewable energy diffusion
         - agent-based model solar PV adoption
         - agent-based model electric vehicle adoption
         - agent-based model low-carbon energy
+        - agent-based model energy decarbonization
         - agent-based model energy community
         - agent-based model prosumer
       year_min: 2010                                          # aligns with extract.year below
@@ -109,10 +112,18 @@ bib:
   #   resolve_external: true       # false = offline only (no API calls)
 
   # --- Cleaning parameters ---
-  # clean:
+  clean:
   #   min_signals_to_reject: 2     # min number of garbage signals to drop an abstract
   #   extra_garbage_phrases: []    # additional phrases to flag as garbage
   #   use_langdetect: false        # use langdetect library for language detection
+    # Cap on the abstract length, in characters (blank = keep whole). Sources
+    # regularly put something other than an abstract in the abstract field: a
+    # scraped landing page, the full text, an author list trailed by a mangled
+    # reference dump. On the May 2026 corpus, 9 % of records ran past 15 000
+    # characters and carried 54 % of the corpus' characters — i.e. most of the
+    # review bill, spent on noise the screening decision does not use. The cut
+    # lands on a sentence boundary; 2500 comfortably holds a real abstract.
+    max_abstract_chars: 2500
 
   # --- Extraction / filtering parameters ---
   extract:
@@ -177,13 +188,32 @@ review: # LLM-based review
   # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
   # calls per chunk, 10 in flight).
   #
-  batch_size: 100               # articles per checkpoint chunk
+  batch_size: 250               # articles per checkpoint chunk. items_per_call
+                                # x max_concurrent_requests (25 x 10) is the
+                                # FLOOR: the smallest chunk that fills every
+                                # concurrency slot — at 100 only 4 calls were
+                                # issued for 10 slots. It is a floor, not an
+                                # optimum: a one-wave chunk ends on its slowest
+                                # call, so 500 would run maybe a third faster
+                                # by overlapping that straggler, at the price
+                                # of losing 500 documents on a crash instead of
+                                # 250. Same token cost either way. The run warns
+                                # if this drops back below the floor.
   api_pause: 30.0               # seconds between chunks (rate-limit guard)
-  max_retries: 2                # on API error; overridable per reviewer
+  max_retries: 2                # on API error; overridable per reviewer.
+                                # Applies to single-article calls; a failed
+                                # multi-article call is attempted once and then
+                                # split, so a large batch is never re-billed in
+                                # full for a failure the retry cannot fix.
   max_concurrent_requests: 10    # keep 5-10 for Anthropic, up to 30 for OpenAI
-  items_per_call: 25             # articles per API call (backstory sent once)
+  items_per_call: 25             # articles per API call (backstory sent once).
+                                 # Measured optimum: 50 saves a further 2 %,
+                                 # 1 would cost 108 % more.
 
-  text_inputs : [title, abstract, keywords]
+  text_inputs : [title, abstract, author_keywords]   # `keywords` matches no
+                                 # column — the canonical name is
+                                 # author_keywords, and the mismatch meant the
+                                 # keywords were silently never sent.
 #  input_description : article title/abstract/keywords
   inclusion_criteria : The scope of the study MUST include the use 
     or development of agent-based models 
@@ -217,7 +247,10 @@ review: # LLM-based review
       host :
       provider : anthropic  # values : litellm, open-ai, ollama, anthropic
       max_tokens : 200
-      temperature : 0.9  # temperature parameter is not available for all models
+      temperature : 0.2  # temperature parameter is not available for all models.
+                         # Was 0.9: on a 1-5 classification that mostly buys
+                         # malformed batch responses (which are re-billed before
+                         # the split) and makes the review irreproducible.
       reasoning_effort :
       max_retries :                # Leave blank to use the section-level value above.
       max_concurrent_requests :    # Leave blank to use the section-level value above.
@@ -246,7 +279,7 @@ review: # LLM-based review
       host :
       provider : anthropic
       max_tokens : 200
-      temperature : 0.6
+      temperature : 0.2
       reasoning_effort :
       backstory: Reviewer#2 is a seasoned researcher with a PhD in computer
         science, specializing in agent-based modeling (ABM) and
@@ -273,8 +306,14 @@ review: # LLM-based review
       host :
       provider : anthropic
       max_tokens : 200
-      temperature :
-      reasoning_effort : medium
+      temperature : 0.2
+      reasoning_effort :   # Left blank on purpose: `reasoning_effort` is an
+                           # OpenAI parameter. The Anthropic Messages API has no
+                           # such field (its output_config.effort is a different
+                           # thing, and Haiku 4.5 rejects it), so this was a
+                           # no-op. Via provider: litellm it would instead turn
+                           # into a 2048-token thinking budget billed as output
+                           # — and would error against max_tokens: 200.
       backstory: Reviewer#3 is a senior MD-PhD researcher with years of experience
         in conducting systematic reviews in social-ecological systems,
         Sustainability Science and decarbonisation of the economy. A major
