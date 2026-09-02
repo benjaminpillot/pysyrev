@@ -197,7 +197,52 @@ class TestModelArgs:
     def test_unsupported_params_are_dropped_with_a_warning(self, monkeypatch, capsys):
         _AlbertProvider._warned_unsupported.clear()
         provider = _provider(monkeypatch, _ITEM)
-        _call(provider, model_args={"max_tokens": 200, "reasoning_effort": "medium"})
+        _call(provider, model_args={"max_tokens": 200, "logit_bias": {"1": 2}})
 
-        assert "reasoning_effort" not in provider._client.calls[0]
+        assert "logit_bias" not in provider._client.calls[0]
+        assert "logit_bias" in capsys.readouterr().out
+
+    def test_reasoning_effort_is_forwarded(self, monkeypatch):
+        """Albert serves reasoning models, and their thinking is charged to
+        max_tokens while being returned nowhere — so the one parameter that
+        bounds it must reach the gateway."""
+        provider = _provider(monkeypatch, _ITEM)
+        _call(provider, model_args={"max_tokens": 200, "reasoning_effort": "low"})
+        assert provider._client.calls[0]["reasoning_effort"] == "low"
+
+    def test_a_deployment_refusing_reasoning_effort_drops_it_and_retries(
+            self, monkeypatch, capsys):
+        refusal = _BadRequest("unknown parameter: reasoning_effort")
+        provider = _provider(monkeypatch, refusal, _ITEM)
+        out = _call(provider, model_args={"max_tokens": 200,
+                                          "reasoning_effort": "low"})
+
+        assert out[0] == {"evaluation": 4, "reasoning": "on topic"}
+        assert "reasoning_effort" in provider._client.calls[0]      # tried
+        assert "reasoning_effort" not in provider._client.calls[1]  # then dropped
         assert "reasoning_effort" in capsys.readouterr().out
+
+    def test_the_refusal_costs_the_run_nothing_else(self, monkeypatch):
+        """A 400 about a sampling param must not be read as a schema refusal:
+        the structured output is the thing keeping the batch parseable."""
+        refusal = _BadRequest("unknown parameter: reasoning_effort")
+        provider = _provider(monkeypatch, refusal, _ITEM)
+        _call(provider, model_args={"reasoning_effort": "low"})
+        assert provider._client.calls[1]["response_format"]["type"] == "json_schema"
+
+    def test_a_refused_param_stays_dropped_for_later_calls(self, monkeypatch):
+        refusal = _BadRequest("unknown parameter: reasoning_effort")
+        provider = _provider(monkeypatch, refusal, _ITEM, _ITEM)
+        _call(provider, model_args={"reasoning_effort": "low"})
+        _call(provider, model_args={"reasoning_effort": "low"})
+        assert "reasoning_effort" not in provider._client.calls[-1]
+
+    def test_an_unrelated_400_is_not_silently_stripped(self, monkeypatch):
+        """Stripping the request until it succeeds would hide the real error."""
+        provider = _provider(monkeypatch,
+                             _BadRequest("model 'albert-large' does not exist"),
+                             _BadRequest("model 'albert-large' does not exist"),
+                             _BadRequest("model 'albert-large' does not exist"))
+        with pytest.raises(_BadRequest):
+            _call(provider, model_args={"reasoning_effort": "low"})
+        assert all("reasoning_effort" in c for c in provider._client.calls)

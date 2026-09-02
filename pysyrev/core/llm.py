@@ -482,13 +482,21 @@ class _AlbertProvider(_OpenAIProvider):
     #: Structured-output levels, strictest first.
     _MODES = ("json_schema", "json_object", "text")
 
-    #: Sampling params the gateway accepts. `reasoning_effort` is the one that
-    #: bites: OpenAI and LiteLLM take it, vLLM answers 400 for a model with no
-    #: reasoning channel. Dropping it silently would make the config lie about
-    #: the run, so it is warned about once per key.
+    #: Sampling params the gateway accepts. `reasoning_effort` is in the list
+    #: and matters more here than anywhere else: Albert serves reasoning models
+    #: (gpt-oss) whose thinking is charged to max_tokens but returned nowhere —
+    #: the usage counts only the visible answer — so a batch can be cut off
+    #: mid-JSON having "spent" a quarter of its budget on paper. Asking for less
+    #: thinking is the cheap fix; raising max_tokens is the expensive one. A
+    #: deployment whose model has no reasoning channel answers 400, and the
+    #: parameter is then dropped for the rest of the run (see `call`).
     _SUPPORTED_ARGS = {"max_tokens", "temperature", "top_p", "seed",
-                       "presence_penalty", "frequency_penalty", "stop"}
+                       "presence_penalty", "frequency_penalty", "stop",
+                       "reasoning_effort"}
     _warned_unsupported: set = set()
+
+    #: Params this deployment answered 400 for; dropped for the rest of the run.
+    _REFUSABLE_ARGS = ("reasoning_effort",)
 
     def __init__(self, host: Optional[str] = None):
         # The OpenAI SDK reads OPENAI_API_KEY, which is not the key we want, so
@@ -502,6 +510,7 @@ class _AlbertProvider(_OpenAIProvider):
             )
         super().__init__(host=host or ALBERT_DEFAULT_HOST, api_key=api_key)
         self._mode_idx = 0
+        self._dropped_args: set = set()
 
     def _filter_args(self, model_args: dict) -> dict:
         for key, value in model_args.items():
@@ -512,7 +521,30 @@ class _AlbertProvider(_OpenAIProvider):
                       f"gateway has no such parameter — it is ignored. Remove "
                       f"it from the reviewer.")
         return {k: v for k, v in model_args.items()
-                if k in self._SUPPORTED_ARGS and v is not None}
+                if k in self._SUPPORTED_ARGS and v is not None
+                and k not in self._dropped_args}
+
+    def _drop_refused_arg(self, exc: Exception, payload: dict) -> bool:
+        """Drop a param this deployment answered 400 for, once, for the run.
+
+        Only params in :attr:`_REFUSABLE_ARGS` and only when the error names
+        them: a 400 that says nothing about the parameter is a different
+        problem, and silently stripping the request until it succeeds would
+        hide it.
+        """
+        status = (getattr(exc, "status_code", None)
+                  or getattr(getattr(exc, "response", None), "status_code", None))
+        if status != 400:
+            return False
+        text = str(exc).lower()
+        for key in self._REFUSABLE_ARGS:
+            if key in payload and key in text and key not in self._dropped_args:
+                self._dropped_args.add(key)
+                print(f"[albert] this deployment refused '{key}' ({exc}); "
+                      f"dropping it for the rest of the run. Its model has no "
+                      f"reasoning channel — budget max_tokens accordingly.")
+                return True
+        return False
 
     def _demote(self, exc: Exception, mode: str) -> bool:
         """Step down one structured-output level if `exc` is the endpoint
@@ -536,11 +568,11 @@ class _AlbertProvider(_OpenAIProvider):
         return True
 
     async def call(self, messages, model_id, model_args, response_schema):
-        kwargs = self._filter_args(model_args)
-
         while True:
+            # Rebuilt each round: a param dropped below must not come back, and
+            # neither must a structured-output level already refused.
             mode = self._MODES[self._mode_idx]
-            payload = dict(kwargs)
+            payload = self._filter_args(model_args)
             sent = messages
 
             if response_schema is not None:
@@ -564,6 +596,11 @@ class _AlbertProvider(_OpenAIProvider):
                 )
                 break
             except Exception as exc:
+                # Checked before _demote: that one reads any 400 as a schema
+                # refusal, so a 400 about a sampling param would otherwise cost
+                # the run its structured output and still not fix the request.
+                if self._drop_refused_arg(exc, payload):
+                    continue
                 if response_schema is None or not self._demote(exc, mode):
                     raise
 
