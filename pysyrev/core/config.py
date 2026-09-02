@@ -584,6 +584,8 @@ class ReviewerConfig(ConfigField):
     max_retries:             Union[None, int] = None  # None → falls back to ReviewConfig value
     max_concurrent_requests: Union[None, int] = None  # None → falls back to ReviewConfig value
     items_per_call:          Union[None, int] = None  # None → falls back to ReviewConfig value
+    requests_per_minute:     Union[None, int] = None  # None → falls back to ReviewConfig value,
+                                                      # then to the provider default (Albert: 10)
 
 
 @dataclass
@@ -604,6 +606,7 @@ class ReviewConfig(ConfigField):
     max_retries:             Union[None, int] = None          # None → module default (2);  overridable per reviewer
     max_concurrent_requests: Union[None, int] = None          # None → module default (10); overridable per reviewer
     items_per_call:          Union[None, int] = None          # None → module default (1);  overridable per reviewer
+    requests_per_minute:     Union[None, int] = None          # None → provider default (Albert: 10, others: unpaced)
 
     def __post_init__(self):
         super().__post_init__()

@@ -1,0 +1,257 @@
+"""Tests for how a failing review call is recovered.
+
+A batch can fail for three reasons that look alike in the logs and need opposite
+responses. Splitting the batch — the recovery written for a model that drops
+items — is actively harmful for the other two:
+
+* a rate limit (429) is the endpoint asking for fewer requests, so a split,
+  which sends more, turns one refusal into a cascade of them;
+* a truncation is the answer being cut off at ``max_tokens``, and since that
+  budget is multiplied by the batch size, each half of a split gets exactly the
+  same budget per article and is cut off at the same place.
+
+These tests pin the classification and the two recoveries that replace the split
+(wait-and-resend, budget doubling), plus the client-side pacing that keeps a
+per-minute quota from being spent in the first two seconds of a chunk.
+"""
+
+import asyncio
+import re
+import time
+
+import pytest
+
+from pysyrev.core import llm
+from pysyrev.core.llm import (ALBERT_API_KEY_ENV, ALBERT_REQUESTS_PER_MINUTE,
+                              TruncatedResponse, _extract_json, _is_rate_limited,
+                              _RateLimiter, _review_batch, Reviewer,
+                              build_reviewer)
+
+
+# ── Fakes ──────────────────────────────────────────────────────────────────
+
+class _RateLimitError(Exception):
+    """Stand-in for openai.RateLimitError as Albert raises it."""
+    status_code = 429
+
+    def __init__(self):
+        super().__init__("Error code: 429 - {'detail': '10 requests per minute "
+                         "exceeded (remaining: 0).'}")
+
+
+class _RecordingProvider:
+    """Records every call, then replies from a scripted list.
+
+    A reply is an exception to raise, or ``None`` to answer correctly for the
+    batch size that was asked for. The script's last entry repeats forever.
+    """
+
+    def __init__(self, *replies):
+        self._replies = list(replies)
+        self.calls = []          # (n_articles, max_tokens) per call
+
+    async def call(self, messages, model_id, model_args, response_schema):
+        match = re.search(r"exactly (\d+) items", messages[-1]["content"])
+        n_articles = int(match.group(1)) if match else 1
+        self.calls.append((n_articles, model_args.get("max_tokens")))
+
+        reply = self._replies[min(len(self.calls) - 1, len(self._replies) - 1)]
+        if isinstance(reply, Exception):
+            raise reply
+        if n_articles == 1:
+            return {"evaluation": 4, "reasoning": "ok"}, None
+        return ({"evaluations": [{"evaluation": 3, "reasoning": "ok"}
+                                 for _ in range(n_articles)]}, None)
+
+    @property
+    def batch_sizes(self):
+        return [n for n, _ in self.calls]
+
+    @property
+    def budgets(self):
+        return [b for _, b in self.calls]
+
+
+def _reviewer(provider, *, max_tokens=200, max_retries=2,
+              requests_per_minute=None):
+    return Reviewer(
+        name="Reviewer#1", model_id="m", provider="fake",
+        provider_client=provider,
+        backstory="bs", reasoning=None, max_tokens=max_tokens, temperature=None,
+        reasoning_effort=None, additional_context=None,
+        inclusion_criteria="inc", exclusion_criteria="exc",
+        input_description="article title/abstract/keywords",
+        max_retries=max_retries, max_concurrent_requests=1, items_per_call=5,
+        requests_per_minute=requests_per_minute,
+    )
+
+
+def _run(reviewer, texts, limiter=None):
+    async def _call():
+        return await _review_batch(texts, reviewer, asyncio.Semaphore(1), limiter)
+    return asyncio.run(_call())
+
+
+@pytest.fixture
+def instant_backoff(monkeypatch):
+    """Keep the 429 waits out of the test clock."""
+    monkeypatch.setattr(llm, "RATE_LIMIT_BASE_DELAY", 0.001)
+    monkeypatch.setattr(llm, "RATE_LIMIT_MAX_DELAY", 0.01)
+
+
+# ── Truncation ─────────────────────────────────────────────────────────────
+
+class TestTruncation:
+    """A cut-off answer is a budget problem, so it buys a bigger budget."""
+
+    def test_the_reported_json_error_is_recognised_as_a_truncation(self):
+        # The exact shape that produced "Expecting ',' delimiter: line 18
+        # column 6": the response stops after a complete item, so the greedy
+        # fallback regex matches up to that item's closing brace and the decoder
+        # reports a delimiter error deep inside a response that is merely cut off.
+        cut_off = ('{\n  "evaluations": [\n'
+                   '    {\n      "evaluation": 3,\n      "reasoning": "a"\n    },\n'
+                   '    {\n      "evaluation": 4,\n      "reasoning": "b"\n    }')
+        with pytest.raises(TruncatedResponse):
+            _extract_json(cut_off)
+
+    def test_malformed_but_complete_json_is_not_called_a_truncation(self):
+        with pytest.raises(ValueError) as excinfo:
+            _extract_json('{"evaluations": [{"evaluation": 3,,}]}')
+        assert not isinstance(excinfo.value, TruncatedResponse)
+
+    def test_truncation_retries_with_a_doubled_budget(self):
+        provider = _RecordingProvider(TruncatedResponse(800), None)
+        out = _run(_reviewer(provider), ["a", "b", "c", "d"])
+        assert len(out) == 4
+        # Same batch re-sent, with twice the budget — never halved.
+        assert provider.batch_sizes == [4, 4]
+        assert provider.budgets == [800, 1600]
+
+    def test_truncation_does_not_consume_the_retry_budget(self):
+        """A call that never produced an answer is not a failed attempt."""
+        provider = _RecordingProvider(TruncatedResponse(200), None)
+        out = _run(_reviewer(provider, max_retries=1), ["only one"])
+        assert out == [{"evaluation": 4, "reasoning": "ok"}]
+        assert provider.budgets == [200, 400]
+
+    def test_persistent_truncation_raises_instead_of_splitting(self):
+        provider = _RecordingProvider(TruncatedResponse(1000))
+        with pytest.raises(RuntimeError, match="max_tokens"):
+            _run(_reviewer(provider), ["a", "b", "c", "d", "e"])
+        # One call plus one per doubling, and not one of them a split.
+        assert provider.batch_sizes == [5] * (1 + llm.TRUNCATION_MAX_BUMPS)
+
+    def test_truncation_with_no_configured_budget_still_splits(self):
+        """Nothing here can raise a cap the endpoint owns, but a shorter answer
+        may fit under it — so that one keeps the split."""
+        class _TruncateBatches(_RecordingProvider):
+            async def call(self, messages, model_id, model_args, response_schema):
+                match = re.search(r"exactly (\d+) items", messages[-1]["content"])
+                if match:
+                    self.calls.append((int(match.group(1)), None))
+                    raise TruncatedResponse()
+                return await super().call(messages, model_id, model_args,
+                                          response_schema)
+
+        provider = _TruncateBatches(None)
+        out = _run(_reviewer(provider, max_tokens=None), ["a", "b", "c", "d"])
+        assert len(out) == 4
+        assert 2 in provider.batch_sizes        # it did split
+
+
+# ── Rate limiting ──────────────────────────────────────────────────────────
+
+class TestRateLimit:
+    """A 429 is answered by waiting, never by sending more requests."""
+
+    def test_the_gateway_message_is_classified_as_a_rate_limit(self):
+        assert _is_rate_limited(_RateLimitError())
+        assert _is_rate_limited(RuntimeError(
+            "Error code: 429 - {'detail': '10 requests per minute exceeded'}"))
+        assert not _is_rate_limited(ValueError("Expected 5 evaluations, got 4"))
+
+    def test_rate_limited_batch_is_resent_whole(self, instant_backoff):
+        provider = _RecordingProvider(_RateLimitError(), None)
+        out = _run(_reviewer(provider), ["a", "b", "c", "d", "e"])
+        assert len(out) == 5
+        assert provider.batch_sizes == [5, 5]        # waited, did not split
+
+    def test_persistent_rate_limit_never_splits(self, instant_backoff):
+        provider = _RecordingProvider(_RateLimitError())
+        with pytest.raises(RuntimeError, match="rate-limited"):
+            _run(_reviewer(provider), ["a", "b", "c", "d", "e"])
+        assert provider.batch_sizes == [5] * (1 + llm.RATE_LIMIT_MAX_WAITS)
+
+    def test_a_429_holds_back_the_reviewer_s_other_calls(self, instant_backoff):
+        """The quota belongs to the key, so one call's 429 pauses them all."""
+        limiter = _RateLimiter(1000)                  # not the constraint here
+        provider = _RecordingProvider(_RateLimitError(), None)
+        _run(_reviewer(provider), ["a", "b"], limiter)
+        assert limiter._blocked_until > 0.0
+
+    def test_retry_after_header_is_honoured(self):
+        class _WithHeader(_RateLimitError):
+            class response:
+                headers = {"retry-after": "7"}
+
+        assert llm._rate_limit_delay(_WithHeader(), 0) == 7.0
+
+    def test_backoff_is_capped_at_one_window(self):
+        assert llm._rate_limit_delay(_RateLimitError(), 10) <= \
+            llm.RATE_LIMIT_MAX_DELAY * 1.1
+
+
+class TestRateLimiter:
+
+    def test_calls_beyond_the_limit_wait_for_the_window(self):
+        limiter = _RateLimiter(2, window=0.15)
+
+        async def _spend(n):
+            start = time.monotonic()
+            for _ in range(n):
+                await limiter.acquire()
+            return time.monotonic() - start
+
+        assert asyncio.run(_spend(2)) < 0.1          # first window is free
+        assert asyncio.run(_spend(1)) >= 0.05        # third call had to wait
+
+    def test_concurrent_callers_share_one_quota(self):
+        limiter = _RateLimiter(2, window=0.15)
+
+        async def _race():
+            start = time.monotonic()
+            await asyncio.gather(*(limiter.acquire() for _ in range(4)))
+            return time.monotonic() - start
+
+        # Four calls against a quota of two must span more than one window,
+        # however many of them are launched at once.
+        assert asyncio.run(_race()) >= 0.1
+
+
+# ── Pacing defaults ────────────────────────────────────────────────────────
+
+class TestPacingDefaults:
+
+    def _build(self, monkeypatch, provider, **kwargs):
+        monkeypatch.setenv(ALBERT_API_KEY_ENV, "test-key")
+        return build_reviewer(
+            name="R", provider=provider, model_id="m", host=None,
+            reasoning=None, max_tokens=200, temperature=None,
+            reasoning_effort=None, backstory="bs", additional_context=None,
+            inclusion_criteria="inc", exclusion_criteria="exc",
+            input_description="article title/abstract/keywords", **kwargs)
+
+    def test_albert_is_paced_to_its_published_quota_by_default(self, monkeypatch):
+        pytest.importorskip("openai")
+        reviewer = self._build(monkeypatch, "albert")
+        assert reviewer.requests_per_minute == ALBERT_REQUESTS_PER_MINUTE
+
+    def test_the_config_overrides_the_provider_default(self, monkeypatch):
+        pytest.importorskip("openai")
+        reviewer = self._build(monkeypatch, "albert", requests_per_minute=4)
+        assert reviewer.requests_per_minute == 4
+
+    def test_other_providers_are_not_paced_on_a_guess(self, monkeypatch):
+        reviewer = self._build(monkeypatch, "litellm")
+        assert reviewer.requests_per_minute is None

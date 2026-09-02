@@ -209,6 +209,13 @@ review: # LLM-based review
   items_per_call: 25             # articles per API call (backstory sent once).
                                  # Measured optimum: 50 saves a further 2 %,
                                  # 1 would cost 108 % more.
+  requests_per_minute:           # calls STARTED per minute, per reviewer. Leave
+                                 # blank to use the provider's own quota — Albert
+                                 # publishes 10/min per key and answers 429 past
+                                 # it. max_concurrent_requests cannot stand in for
+                                 # this: it caps how many calls are in flight, and
+                                 # 10 concurrent calls of two seconds spend a
+                                 # whole minute's quota in two seconds.
 
   text_inputs : [title, abstract, author_keywords]   # `keywords` matches no
                                  # column — the canonical name is
@@ -246,7 +253,12 @@ review: # LLM-based review
       model_id : claude-haiku-4-5  # Model identifier
       host :
       provider : anthropic  # values : litellm, open-ai, ollama, anthropic
-      max_tokens : 200
+      max_tokens : 200   # output budget for ONE article: the call sends
+                         # max_tokens x items_per_call for a batch. Too low and
+                         # the JSON is cut off mid-answer — the run retries with
+                         # a doubled budget and says so, but paying that on every
+                         # batch is waste. Reasoning models spend part of this
+                         # budget thinking, so give them more than a plain one.
       temperature : 0.2  # temperature parameter is not available for all models.
                          # Was 0.9: on a 1-5 classification that mostly buys
                          # malformed batch responses (which are re-billed before
@@ -254,6 +266,7 @@ review: # LLM-based review
       reasoning_effort :
       max_retries :                # Leave blank to use the section-level value above.
       max_concurrent_requests :    # Leave blank to use the section-level value above.
+      requests_per_minute :        # Leave blank to use the section-level value above.
       backstory: Reviewer#1 is a research scientist with strong expertise
         in Energy System Modelling for addressing issues related
         to Energy Transition and net-zero scenarios. Reviewer#1

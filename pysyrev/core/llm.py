@@ -15,8 +15,10 @@ is identical to the previous per-article approach.
 import asyncio
 import json
 import os.path
+import random
 import re
 import time
+from collections import deque
 from dataclasses import dataclass
 from functools import partial
 from typing import List, Optional
@@ -33,6 +35,17 @@ litellm.drop_params = True   # silently drop params unsupported by a provider
 MAX_RETRIES = 2
 MAX_CONCURRENT_REQUESTS = 10
 ITEMS_PER_CALL = 1
+
+#: How many times a truncated batch is retried with a doubled output budget
+#: before giving up on it. Two bumps take max_tokens to 4x what the config asks.
+TRUNCATION_MAX_BUMPS = 2
+
+#: How many times a rate-limited call waits and retries the *same* batch.
+#: A 429 says "come back later", so the batch must not be split (that only
+#: sends more requests at an endpoint already refusing them).
+RATE_LIMIT_MAX_WAITS = 5
+RATE_LIMIT_BASE_DELAY = 15.0    # seconds, doubled per consecutive 429
+RATE_LIMIT_MAX_DELAY = 60.0     # a per-minute window never needs more
 
 REVIEW_SCORE: str = "review_score"
 
@@ -56,17 +69,182 @@ class _ReviewBatch(BaseModel):
     evaluations: List[_ReviewItem]
 
 
+# ── Failure kinds ──────────────────────────────────────────────────────────
+
+class TruncatedResponse(Exception):
+    """The model stopped on its output cap: the JSON is cut off, not malformed.
+
+    Worth its own type because the two generic recoveries are both wrong here.
+    Retrying identically re-truncates at the same token, and splitting the batch
+    does not help either: ``max_tokens`` is multiplied by the batch size, so the
+    budget per article is the same in a batch of 5 and in a batch of 1. The only
+    fix is a bigger budget, which is what the caller does with ``max_tokens``.
+    """
+
+    def __init__(self, max_tokens: Optional[int] = None):
+        self.max_tokens = max_tokens
+        super().__init__(
+            f"response truncated at max_tokens={max_tokens} — the model ran out "
+            f"of output budget mid-JSON" if max_tokens else
+            "response truncated by the endpoint's output cap")
+
+
+#: finish_reason / stop_reason values that mean "cut off at the output cap".
+_TRUNCATION_REASONS = {"length", "max_tokens", "max_output_tokens"}
+
+
+def _raise_if_truncated(finish_reason, model_args: dict) -> None:
+    """Turn a cut-off completion into :class:`TruncatedResponse`.
+
+    Called before parsing: a truncated response is not a JSON problem, and
+    letting it reach the parser is what turned an output-budget error into an
+    unreadable ``Expecting ',' delimiter`` further down.
+    """
+    if finish_reason and str(finish_reason).lower() in _TRUNCATION_REASONS:
+        raise TruncatedResponse(model_args.get("max_tokens"))
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """Is `exc` the endpoint refusing a request it would accept later?"""
+    status = (getattr(exc, "status_code", None)
+              or getattr(getattr(exc, "response", None), "status_code", None))
+    if status == 429:
+        return True
+    text = str(exc).lower()
+    return any(k in text for k in ("rate limit", "ratelimit", "too many requests",
+                                   "per minute exceeded", "per-minute exceeded",
+                                   "error code: 429"))
+
+
+def _rate_limit_delay(exc: Exception, waits: int) -> float:
+    """Seconds to wait before retrying a rate-limited call.
+
+    ``Retry-After`` is authoritative when the gateway sends it; otherwise back
+    off exponentially, capped at one window — a per-minute quota can never need
+    longer than the minute it is measured over.
+    """
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers:
+        for key in ("retry-after", "x-ratelimit-reset-requests"):
+            try:
+                value = headers.get(key)
+            except Exception:
+                value = None
+            if value:
+                try:
+                    return min(float(value), RATE_LIMIT_MAX_DELAY)
+                except (TypeError, ValueError):
+                    pass
+    delay = min(RATE_LIMIT_BASE_DELAY * (2 ** waits), RATE_LIMIT_MAX_DELAY)
+    # Jitter: concurrent callers hit the quota together and must not all come
+    # back together, or the first retry wave rebuilds the burst that caused it.
+    return delay + random.uniform(0, 0.1 * delay)
+
+
+class _RateLimiter:
+    """Sliding-window limiter: at most `requests_per_minute` calls per window.
+
+    Albert allows 10 requests per minute per key, and ``max_concurrent_requests``
+    alone cannot honour that — 10 concurrent calls that each take two seconds
+    spend the whole minute's quota in two seconds, and every later call in the
+    chunk comes back 429. Concurrency bounds how many calls are *in flight*;
+    this bounds how many are *started* per minute, which is what a quota counts.
+
+    Shared by all the calls of one reviewer, so a 429 seen by any of them backs
+    every one of them off (:meth:`penalise`) instead of letting the others keep
+    hammering a quota that is already exhausted.
+    """
+
+    def __init__(self, requests_per_minute: int, window: float = 60.0):
+        self._limit = max(1, int(requests_per_minute))
+        self._window = window
+        self._started: deque = deque()
+        self._lock = asyncio.Lock()
+        self._blocked_until = 0.0
+
+    async def acquire(self) -> None:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                while self._started and now - self._started[0] >= self._window:
+                    self._started.popleft()
+
+                if self._blocked_until > now:
+                    wait = self._blocked_until - now
+                elif len(self._started) >= self._limit:
+                    wait = self._window - (now - self._started[0])
+                else:
+                    self._started.append(now)
+                    return
+            # Slept outside the lock: holding it would serialise every waiter
+            # behind the longest wait instead of letting them re-check together.
+            await asyncio.sleep(min(wait, self._window) + 0.01)
+
+    async def penalise(self, seconds: float) -> None:
+        """Hold every call of this reviewer back for `seconds` after a 429."""
+        async with self._lock:
+            self._blocked_until = max(self._blocked_until,
+                                      time.monotonic() + seconds)
+
+
 # ── JSON helper ────────────────────────────────────────────────────────────
 
+def _unclosed_json(text: str) -> bool:
+    """Does `text` end inside an unfinished JSON structure?
+
+    The tell of a cut-off response, and not the same thing as "does not end in a
+    brace": a response truncated just after an array item ends in ``}`` with its
+    array and object still open — which is exactly the case that used to be
+    reported as a delimiter error. Strings are tracked so a brace inside a
+    reasoning sentence does not count as structure.
+    """
+    depth = 0
+    in_string = escaped = started = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+            started = True
+        elif char in "}]":
+            depth -= 1
+    return started and (depth > 0 or in_string)
+
+
 def _extract_json(text: str):
-    """Parse JSON from text; falls back to regex extraction if there is a preamble."""
+    """Parse JSON from text; falls back to regex extraction if there is a preamble.
+
+    The fallback is deliberately greedy so a fenced or prefaced object still
+    parses. That same greed makes a *truncated* response fail confusingly — it
+    matches up to the last complete ``}``, and the decoder then reports a
+    delimiter error deep inside a response that is simply cut off — so the
+    truncated case is named here rather than left to the raw decoder message.
+    Providers that expose ``finish_reason`` raise :class:`TruncatedResponse`
+    before reaching this point; this covers the ones that do not.
+    """
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         match = re.search(r'\{.*\}|\[.*\]', text, re.DOTALL)
         if match:
-            return json.loads(match.group())
-        raise ValueError(f"No JSON found in response: {text[:300]!r}")
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError as inner:
+                if _unclosed_json(text):
+                    raise TruncatedResponse() from inner
+                raise ValueError(
+                    f"Malformed JSON in response ({inner}): {text[:300]!r}"
+                ) from inner
+        if _unclosed_json(text):
+            raise TruncatedResponse() from exc
+        raise ValueError(f"No JSON found in response: {text[:300]!r}") from exc
 
 
 # ── Provider abstraction ───────────────────────────────────────────────────
@@ -99,6 +277,8 @@ class _LiteLLMProvider(_BaseProvider):
 
         response = await litellm.acompletion(model=model_id, messages=messages, **kwargs)
 
+        _raise_if_truncated(getattr(response.choices[0], "finish_reason", None),
+                            model_args)
         msg = response.choices[0].message
         content = msg.content
 
@@ -170,6 +350,7 @@ class _AnthropicProvider(_BaseProvider):
                 tools=[tool_def], tool_choice={"type": "tool", "name": "review"},
                 **anthropic_args,
             )
+            _raise_if_truncated(getattr(response, "stop_reason", None), model_args)
             content = next(
                 (block.input for block in response.content if block.type == "tool_use"),
                 None,
@@ -180,6 +361,7 @@ class _AnthropicProvider(_BaseProvider):
             response = await self._client.messages.create(
                 model=model_id, system=system, messages=user_messages, **anthropic_args,
             )
+            _raise_if_truncated(getattr(response, "stop_reason", None), model_args)
             content = _extract_json(response.content[0].text)
 
         try:
@@ -215,6 +397,8 @@ class _OpenAIProvider(_BaseProvider):
             response = await self._client.beta.chat.completions.parse(
                 model=model_id, messages=messages, response_format=response_schema, **kwargs,
             )
+            _raise_if_truncated(getattr(response.choices[0], "finish_reason", None),
+                                model_args)
             parsed = response.choices[0].message.parsed
             content = parsed.model_dump() if parsed is not None else {}
         else:
@@ -223,6 +407,8 @@ class _OpenAIProvider(_BaseProvider):
             response = await self._client.chat.completions.create(
                 model=model_id, messages=messages, **kwargs,
             )
+            _raise_if_truncated(getattr(response.choices[0], "finish_reason", None),
+                                model_args)
             content = response.choices[0].message.content
             content = _extract_json(content) if isinstance(content, str) else content
 
@@ -235,6 +421,11 @@ class _OpenAIProvider(_BaseProvider):
 
 ALBERT_DEFAULT_HOST: str = "https://albert.api.etalab.gouv.fr/v1"
 ALBERT_API_KEY_ENV:  str = "ALBERT_API_KEY"
+
+#: Albert's published per-key quota. Unlike a paid API, this is not a soft
+#: throttle to be discovered by hitting it: the gateway answers 429 outright,
+#: so the run paces itself to this unless the config says otherwise.
+ALBERT_REQUESTS_PER_MINUTE: int = 10
 
 
 def _closed_json_schema(response_schema) -> dict:
@@ -376,6 +567,8 @@ class _AlbertProvider(_OpenAIProvider):
                 if response_schema is None or not self._demote(exc, mode):
                     raise
 
+        _raise_if_truncated(getattr(response.choices[0], "finish_reason", None),
+                            payload)
         content = response.choices[0].message.content
         content = _extract_json(content) if isinstance(content, str) else content
 
@@ -419,6 +612,21 @@ class Reviewer:
     max_retries:             int
     max_concurrent_requests: int
     items_per_call:          int
+    #: Calls started per minute, or None for no client-side pacing. Defaults
+    #: last, so tests and programmatic callers keep the old signature.
+    requests_per_minute:     Optional[int] = None
+
+
+def _default_requests_per_minute(provider: str) -> Optional[int]:
+    """Pacing to apply when the config names none.
+
+    Only Albert gets one by default: its quota is a documented per-key limit
+    that the gateway enforces with a 429, not a throughput hint. Everywhere
+    else the limit depends on the account tier, so guessing one would silently
+    slow down runs that have no need of it.
+    """
+    return (ALBERT_REQUESTS_PER_MINUTE
+            if provider in ("albert", "albert-api") else None)
 
 
 def build_reviewer(name, provider, model_id,
@@ -445,6 +653,8 @@ def build_reviewer(name, provider, model_id,
         max_retries             = kwargs.get("max_retries")             or MAX_RETRIES,
         max_concurrent_requests = kwargs.get("max_concurrent_requests") or MAX_CONCURRENT_REQUESTS,
         items_per_call          = kwargs.get("items_per_call")          or ITEMS_PER_CALL,
+        requests_per_minute     = (kwargs.get("requests_per_minute")
+                                   or _default_requests_per_minute(provider)),
     )
 
 
@@ -532,23 +742,48 @@ def _parse_evaluation(item: dict) -> dict:
             "reasoning": str(item.get("reasoning", ""))}
 
 
+def _bumped_max_tokens(model_args: dict, bumps: int) -> dict:
+    """`model_args` with the output budget doubled once per bump."""
+    if not bumps or "max_tokens" not in model_args:
+        return model_args
+    return {**model_args, "max_tokens": model_args["max_tokens"] * (2 ** bumps)}
+
+
 async def _review_batch(
-    texts: List[str], reviewer: Reviewer, semaphore: asyncio.Semaphore
+    texts: List[str], reviewer: Reviewer, semaphore: asyncio.Semaphore,
+    limiter: Optional[_RateLimiter] = None,
 ) -> List[dict]:
-    """Send one batch of texts in a single API call. Returns a list of evaluation dicts."""
+    """Send one batch of texts in a single API call. Returns a list of evaluation dicts.
+
+    Three failure kinds are handled differently, because the recovery that fits
+    one makes the others worse:
+
+    * **rate limit (429)** — the endpoint would accept this exact request later.
+      Wait and re-send it unchanged. Never split: a split answers a refusal to
+      serve requests by sending more of them, which is what turned one 429 into
+      a cascade of them.
+    * **truncation** — the answer was cut off at ``max_tokens``. Retry with a
+      bigger budget. Splitting does not help: ``max_tokens`` is multiplied by
+      the batch size just below, so a batch of 1 gets the same budget per
+      article as a batch of 5. (The exception is a config that sets no
+      ``max_tokens`` at all: the cap is then the endpoint's, out of reach from
+      here, and a shorter answer may fit under it — so that one does split.)
+    * **anything else** (wrong item count, malformed JSON) — the model itself is
+      struggling with the ask. That is what the split is for.
+    """
     n_articles = len(texts)
     messages = [
         {"role": "system", "content": _system_prompt(reviewer)},
         {"role": "user",   "content": _user_prompt(texts, reviewer)},
     ]
 
-    model_args = _build_model_args(reviewer)
+    base_args = _build_model_args(reviewer)
     if n_articles == 1:
         response_schema = _ReviewItem   # structured output enforces the exact schema
     else:
         response_schema = _ReviewBatch  # structured output enforces key names for all providers
-        if "max_tokens" in model_args:
-            model_args = {**model_args, "max_tokens": model_args["max_tokens"] * n_articles}
+        if "max_tokens" in base_args:
+            base_args = {**base_args, "max_tokens": base_args["max_tokens"] * n_articles}
 
     # A failed multi-article call is retried once, not max_retries times. Every
     # attempt re-sends all n_articles at full price, and the dominant failure
@@ -560,8 +795,14 @@ async def _review_batch(
     attempts = reviewer.max_retries if n_articles == 1 else 1
 
     last_exc = None
-    for attempt in range(attempts):
+    attempt = 0
+    waits = 0       # consecutive 429s; neither these nor the bumps below
+    bumps = 0       # consume an attempt — they retry a call that never ran
+    while attempt < attempts:
+        model_args = _bumped_max_tokens(base_args, bumps)
         try:
+            if limiter is not None:
+                await limiter.acquire()
             async with semaphore:
                 raw, _ = await reviewer.provider_client.call(
                     messages, reviewer.model_id, model_args, response_schema,
@@ -580,9 +821,35 @@ async def _review_batch(
             if len(evals) != n_articles:
                 raise ValueError(f"Expected {n_articles} evaluations, got {len(evals)}")
             return [_parse_evaluation(e) for e in evals]
+
         except Exception as exc:
             last_exc = exc
-            print(f"[{reviewer.name}] attempt {attempt + 1}/{attempts}: {exc}")
+
+            if _is_rate_limited(exc) and waits < RATE_LIMIT_MAX_WAITS:
+                delay = _rate_limit_delay(exc, waits)
+                waits += 1
+                # Hold back this reviewer's other in-flight calls too: they share
+                # the quota, so letting them through now only earns more 429s.
+                if limiter is not None:
+                    await limiter.penalise(delay)
+                print(f"[{reviewer.name}] rate-limited ({exc}); waiting "
+                      f"{delay:.0f}s and re-sending the same batch of "
+                      f"{n_articles} ({waits}/{RATE_LIMIT_MAX_WAITS})")
+                await asyncio.sleep(delay)
+                continue
+
+            if isinstance(exc, TruncatedResponse) and bumps < TRUNCATION_MAX_BUMPS \
+                    and "max_tokens" in base_args:
+                bumps += 1
+                print(f"[{reviewer.name}] {exc}; retrying the batch of "
+                      f"{n_articles} with max_tokens="
+                      f"{_bumped_max_tokens(base_args, bumps)['max_tokens']}. "
+                      f"Raise max_tokens in the config to avoid paying for this "
+                      f"twice on every batch.")
+                continue
+
+            attempt += 1
+            print(f"[{reviewer.name}] attempt {attempt}/{attempts}: {exc}")
 
     # Attempts exhausted. A multi-article batch commonly fails because the model
     # returns the wrong number of evaluations at large batch sizes (it silently
@@ -590,13 +857,45 @@ async def _review_batch(
     # and review each half recursively: this both realigns the counts and
     # shrinks the ask, converging on the single-item schema (which is reliable).
     # A single article that still fails is a genuine error and is raised.
-    if n_articles > 1:
+    #
+    # Two failures are not of that kind and must not be split:
+    #
+    # * a rate limit — the quota is the problem, not the batch, and halving it
+    #   doubles the number of requests aimed at an endpoint already refusing them;
+    # * a truncation we could have budgeted for — halving the batch halves
+    #   max_tokens with it, so each half re-truncates at the same point, after
+    #   paying its own way back up the doubling ladder.
+    #
+    # A truncation with no max_tokens in the config *is* splittable: the cap is
+    # the endpoint's own, nothing here can raise it, and a shorter answer may fit
+    # under it.
+    truncated_on_our_budget = (isinstance(last_exc, TruncatedResponse)
+                               and "max_tokens" in base_args)
+    if n_articles > 1 and not _is_rate_limited(last_exc) \
+            and not truncated_on_our_budget:
         mid = n_articles // 2
         print(f"[{reviewer.name}] batch of {n_articles} failed ({last_exc}); "
               f"splitting into {mid}+{n_articles - mid} and retrying")
-        left = await _review_batch(texts[:mid], reviewer, semaphore)
-        right = await _review_batch(texts[mid:], reviewer, semaphore)
+        left = await _review_batch(texts[:mid], reviewer, semaphore, limiter)
+        right = await _review_batch(texts[mid:], reviewer, semaphore, limiter)
         return left + right
+
+    if isinstance(last_exc, TruncatedResponse):
+        per_article = base_args.get("max_tokens", 0) // max(1, n_articles)
+        raise RuntimeError(
+            f"[{reviewer.name}] the model kept running out of output budget "
+            f"({last_exc}) even after {TRUNCATION_MAX_BUMPS} doublings. Raise "
+            f"max_tokens for this reviewer: it is currently {per_article} per "
+            f"article (multiplied by items_per_call for the batch), and the "
+            f"model needs more than {2 ** TRUNCATION_MAX_BUMPS}x that to answer."
+        ) from last_exc
+
+    if _is_rate_limited(last_exc):
+        raise RuntimeError(
+            f"[{reviewer.name}] still rate-limited after {RATE_LIMIT_MAX_WAITS} "
+            f"waits ({last_exc}). Lower requests_per_minute (or "
+            f"max_concurrent_requests) for this reviewer."
+        ) from last_exc
 
     raise RuntimeError(
         f"[{reviewer.name}] failed after {attempts} attempt(s): {last_exc}"
@@ -606,12 +905,16 @@ async def _review_batch(
 async def _review_all(texts: List[str], reviewer: Reviewer) -> List[dict]:
     """Split texts into batches of items_per_call and run them concurrently."""
     semaphore = asyncio.Semaphore(reviewer.max_concurrent_requests)
+    # One limiter per reviewer: the quota belongs to the API key, and every call
+    # this reviewer makes — including the retries and splits below — draws on it.
+    limiter = (_RateLimiter(reviewer.requests_per_minute)
+               if reviewer.requests_per_minute else None)
     n_articles_per_call = reviewer.items_per_call
     batches = [texts[i: i + n_articles_per_call]
                for i in range(0, len(texts), n_articles_per_call)]
 
     async def _indexed(idx, batch):
-        return idx, await _review_batch(batch, reviewer, semaphore)
+        return idx, await _review_batch(batch, reviewer, semaphore, limiter)
 
     ordered = [None] * len(batches)
     tasks = [_indexed(i, b) for i, b in enumerate(batches)]
