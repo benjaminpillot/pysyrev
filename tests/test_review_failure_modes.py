@@ -212,6 +212,44 @@ class TestRateLimit:
             llm.RATE_LIMIT_MAX_DELAY * 1.1
 
 
+# ── Timeouts ───────────────────────────────────────────────────────────────
+
+class _Timeout(Exception):
+    """Stand-in for openai.APITimeoutError."""
+
+    def __init__(self):
+        super().__init__("Request timed out.")
+
+
+class TestTimeout:
+    """An endpoint that did not answer is not asked twice as hard."""
+
+    def test_the_sdk_message_is_classified_as_a_timeout(self):
+        assert llm._is_timeout(_Timeout())
+        assert llm._is_timeout(asyncio.TimeoutError())
+        assert not llm._is_timeout(_RateLimitError())
+        assert not llm._is_timeout(ValueError("Expected 5 evaluations, got 4"))
+
+    def test_a_timed_out_batch_is_resent_whole(self):
+        provider = _RecordingProvider(_Timeout(), None)
+        out = _run(_reviewer(provider), ["a", "b", "c", "d", "e"])
+        assert len(out) == 5
+        assert provider.batch_sizes == [5, 5]        # re-sent, never halved
+
+    def test_a_persistent_timeout_never_splits(self):
+        """Halving would aim two unanswered requests where one already failed,
+        and each half would sit out the whole timeout again."""
+        provider = _RecordingProvider(_Timeout())
+        with pytest.raises(RuntimeError, match="did not answer"):
+            _run(_reviewer(provider), ["a", "b", "c", "d", "e"])
+        assert provider.batch_sizes == [5] * (1 + llm.TIMEOUT_MAX_RETRIES)
+
+    def test_a_timeout_does_not_consume_the_retry_budget(self):
+        provider = _RecordingProvider(_Timeout(), None)
+        out = _run(_reviewer(provider, max_retries=1), ["only one"])
+        assert out == [{"evaluation": 4, "reasoning": "ok"}]
+
+
 class TestRateLimiter:
 
     def test_calls_beyond_the_limit_wait_for_the_window(self):

@@ -586,6 +586,8 @@ class ReviewerConfig(ConfigField):
     items_per_call:          Union[None, int] = None  # None → falls back to ReviewConfig value
     requests_per_minute:     Union[None, int] = None  # None → falls back to ReviewConfig value,
                                                       # then to the provider default (Albert: 10)
+    timeout:                 Union[None, float] = None  # seconds per call; None → ReviewConfig
+                                                        # value, then the provider default
 
 
 @dataclass
@@ -608,6 +610,8 @@ class ReviewConfig(ConfigField):
     max_concurrent_requests: Union[None, int] = None          # None → module default (10); overridable per reviewer
     items_per_call:          Union[None, int] = None          # None → module default (1);  overridable per reviewer
     requests_per_minute:     Union[None, int] = None          # None → provider default (Albert: 10, others: unpaced)
+    timeout:                 Union[None, float] = None        # seconds per call; None → provider default
+                                                              # (Albert: 120; openai/anthropic: 600; litellm: 6000)
     # Deferred-batch transport: same prompts, submitted in bulk and collected
     # within 24 h, at half price. Requires a provider that offers such an
     # endpoint (currently anthropic). Off by default — it trades latency for
@@ -937,6 +941,7 @@ class TopicLabelerConfig(ConfigField):
     max_retries:             int              = 2
     max_concurrent_requests: int              = 5
     requests_per_minute:     Union[None, int] = None   # None → provider default (Albert: 10)
+    timeout:                 Union[None, float] = None # seconds per call; None → provider default
     n_repr_docs_for_labeling: int             = 3
     system_prompt:           Union[None, str] = None
 

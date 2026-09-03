@@ -58,6 +58,13 @@ RATE_LIMIT_MAX_WAITS = 5
 RATE_LIMIT_BASE_DELAY = 15.0    # seconds, doubled per consecutive 429
 RATE_LIMIT_MAX_DELAY = 60.0     # a per-minute window never needs more
 
+#: How many times a timed-out call re-sends the *same* batch. A timeout is the
+#: endpoint failing to answer, not the model struggling with the ask, so the
+#: split is wrong here for the reason it is wrong for a 429: it aims more
+#: requests at something that is already not answering, and each half would sit
+#: out the same timeout again before failing in its turn.
+TIMEOUT_MAX_RETRIES = 2
+
 #: Length of the window the client paces itself over, for a quota expressed per
 #: minute. Deliberately longer than the minute it stands for: the gateway counts
 #: a request when it *arrives*, we count it when we start sending, and the
@@ -133,6 +140,20 @@ def _is_rate_limited(exc: Exception) -> bool:
     return any(k in text for k in ("rate limit", "ratelimit", "too many requests",
                                    "per minute exceeded", "per-minute exceeded",
                                    "error code: 429"))
+
+
+def _is_timeout(exc: Exception) -> bool:
+    """Is `exc` the endpoint failing to answer in time?
+
+    Recognised by type where an SDK exposes one (`APITimeoutError`,
+    `httpx.TimeoutException`, `asyncio.TimeoutError`) and by message otherwise,
+    because litellm re-wraps the transport's exception in its own.
+    """
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    if "timeout" in type(exc).__name__.lower():
+        return True
+    return "timed out" in str(exc).lower()
 
 
 def _rate_limit_delay(exc: Exception, waits: int) -> float:
@@ -304,6 +325,12 @@ def _extract_json(text: str):
 class _BaseProvider:
     """Common interface for all LLM providers."""
 
+    #: Shared limiter for this provider's quota, attached by `build_reviewer`
+    #: (and by the labellers). Only a provider that retries a request *inside*
+    #: `call` needs it: the caller metered the first attempt, so any further one
+    #: is a request nobody has counted. Left None everywhere else.
+    limiter: Optional['_RateLimiter'] = None
+
     async def call(self, messages: list, model_id: str,
                    model_args: dict, response_schema) -> tuple:
         """Make one completion call.
@@ -340,8 +367,10 @@ class _BaseProvider:
 
 class _LiteLLMProvider(_BaseProvider):
 
-    def __init__(self, host: Optional[str] = None):
+    def __init__(self, host: Optional[str] = None,
+                 timeout: Optional[float] = None):
         self._host = host
+        self._timeout = timeout
 
     async def call(self, messages, model_id, model_args, response_schema):
         kwargs = dict(model_args)
@@ -350,6 +379,10 @@ class _LiteLLMProvider(_BaseProvider):
             kwargs["response_format"] = response_schema
         if self._host:
             kwargs["api_base"] = self._host
+        if self._timeout is not None:
+            # litellm's own default is 6000s — a hundred minutes, which is not a
+            # ceiling any run wants to discover by hitting it.
+            kwargs["timeout"] = self._timeout
 
         response = await litellm.acompletion(model=model_id, messages=messages, **kwargs)
 
@@ -407,12 +440,18 @@ class _AnthropicProvider(_BaseProvider):
     # stay under max_tokens. So the fix is to remove it, not to reroute it.
     _warned_unsupported: set = set()
 
-    def __init__(self, host: Optional[str] = None):
+    def __init__(self, host: Optional[str] = None,
+                 timeout: Optional[float] = None):
         try:
             import anthropic
         except ImportError:
             raise ImportError("Install the 'anthropic' package to use provider='anthropic'")
-        self._client = anthropic.AsyncAnthropic(**({"base_url": host} if host else {}))
+        kwargs = {}
+        if host:
+            kwargs["base_url"] = host
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        self._client = anthropic.AsyncAnthropic(**kwargs)
 
     def build_payload(self, messages, model_id, model_args, response_schema) -> dict:
         """Assemble the Messages API request body.
@@ -549,7 +588,9 @@ class _AnthropicBatchBackend(deferred.BatchBackend):
 
 class _OpenAIProvider(_BaseProvider):
 
-    def __init__(self, host: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, host: Optional[str] = None, api_key: Optional[str] = None,
+                 sdk_retries: Optional[int] = None,
+                 timeout: Optional[float] = None):
         try:
             import openai
         except ImportError:
@@ -559,6 +600,10 @@ class _OpenAIProvider(_BaseProvider):
             kwargs["base_url"] = host
         if api_key:
             kwargs["api_key"] = api_key
+        if sdk_retries is not None:
+            kwargs["max_retries"] = sdk_retries
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         self._client = openai.AsyncOpenAI(**kwargs)
 
     async def call(self, messages, model_id, model_args, response_schema):
@@ -598,6 +643,19 @@ ALBERT_API_KEY_ENV:  str = "ALBERT_API_KEY"
 #: throttle to be discovered by hitting it: the gateway answers 429 outright,
 #: so the run paces itself to this unless the config says otherwise.
 ALBERT_REQUESTS_PER_MINUTE: int = 10
+
+#: Seconds to wait for one Albert completion, when the config names none. The
+#: OpenAI SDK's own default is 600, which is not a timeout so much as an absence
+#: of one: a request queued behind a busy gateway holds a concurrency slot for
+#: ten minutes before anyone hears about it. A screening call that has not
+#: answered in two minutes is not going to; failing then, and re-sending, is
+#: faster than waiting it out — and Albert does not bill per token, so the
+#: abandoned work costs nothing but a quota slot.
+#:
+#: Only Albert gets a default, for that last reason. Everywhere else the tokens
+#: already spent are billed, so cutting a request that would have finished is
+#: money for nothing, and the number to trade that against is the user's.
+ALBERT_TIMEOUT: float = 120.0
 
 
 def _closed_json_schema(response_schema) -> dict:
@@ -670,7 +728,8 @@ class _AlbertProvider(_OpenAIProvider):
     #: Params this deployment answered 400 for; dropped for the rest of the run.
     _REFUSABLE_ARGS = ("reasoning_effort",)
 
-    def __init__(self, host: Optional[str] = None):
+    def __init__(self, host: Optional[str] = None,
+                 timeout: Optional[float] = None):
         # The OpenAI SDK reads OPENAI_API_KEY, which is not the key we want, so
         # Albert's own variable is read here and passed explicitly.
         api_key = os.environ.get(ALBERT_API_KEY_ENV)
@@ -680,7 +739,18 @@ class _AlbertProvider(_OpenAIProvider):
                 f"in the .env the config points at. Keys for public-sector users "
                 f"are issued at https://albert.api.etalab.gouv.fr."
             )
-        super().__init__(host=host or ALBERT_DEFAULT_HOST, api_key=api_key)
+        # sdk_retries=0 on purpose, and only here. The OpenAI SDK retries a 429
+        # twice by default, in silence and from inside the call: one logical
+        # call then costs three requests against a quota the limiter believes it
+        # has spent one on, and the 429 that finally surfaces has already burnt
+        # two more. That is fine against an account-tier throttle, where nothing
+        # is metering anything; it is not fine against Albert's ten a minute,
+        # which is exactly the number this module is pacing itself to. Retrying
+        # is `_review_batch`'s job — it is the layer that knows the quota, holds
+        # the reviewer's other calls back and waits for the window.
+        super().__init__(host=host or ALBERT_DEFAULT_HOST, api_key=api_key,
+                         sdk_retries=0,
+                         timeout=ALBERT_TIMEOUT if timeout is None else timeout)
         self._mode_idx = 0
         self._dropped_args: set = set()
 
@@ -740,7 +810,17 @@ class _AlbertProvider(_OpenAIProvider):
         return True
 
     async def call(self, messages, model_id, model_args, response_schema):
+        attempts = 0
         while True:
+            # Every attempt past the first is a request the caller did not pay
+            # for: it metered one call, and a demotion or a dropped param sends
+            # another. At the start of a run all the concurrent calls probe
+            # `json_schema` at once, so an endpoint that refuses it turns one
+            # metered wave into two — which is a 429 the pacing cannot see.
+            if attempts and self.limiter is not None:
+                await self.limiter.acquire()
+            attempts += 1
+
             # Rebuilt each round: a param dropped below must not come back, and
             # neither must a structured-output level already refused.
             mode = self._MODES[self._mode_idx]
@@ -787,17 +867,28 @@ class _AlbertProvider(_OpenAIProvider):
         return content, 0.0
 
 
-def _make_provider(provider: str, host: Optional[str]) -> _BaseProvider:
+def _make_provider(provider: str, host: Optional[str],
+                   timeout: Optional[float] = None) -> _BaseProvider:
+    """Build the runtime client for `provider`.
+
+    `timeout` is seconds to wait for one completion, or None to leave the SDK's
+    own default in place — 600 s for OpenAI and Anthropic, 6000 s for litellm.
+    Those are ceilings rather than timeouts: a request queued behind a busy
+    endpoint holds a concurrency slot for the whole of it. Only Albert overrides
+    one by default (see :data:`ALBERT_TIMEOUT`); elsewhere the abandoned tokens
+    are billed, so the trade-off belongs to the config.
+    """
     if provider == "anthropic":
-        return _AnthropicProvider(host=host)
+        return _AnthropicProvider(host=host, timeout=timeout)
     elif provider in ("albert", "albert-api"):
-        return _AlbertProvider(host=host)
+        return _AlbertProvider(host=host, timeout=timeout)
     elif provider in ("openai", "open-ai"):
-        return _OpenAIProvider(host=host)
+        return _OpenAIProvider(host=host, timeout=timeout)
     elif provider == "ollama":
-        return _OpenAIProvider(host=host or "http://localhost:11434/v1", api_key="ollama")
+        return _OpenAIProvider(host=host or "http://localhost:11434/v1",
+                               api_key="ollama", timeout=timeout)
     else:  # litellm — universal fallback
-        return _LiteLLMProvider(host=host)
+        return _LiteLLMProvider(host=host, timeout=timeout)
 
 
 # ── Reviewer dataclass ─────────────────────────────────────────────────────
@@ -848,11 +939,18 @@ def build_reviewer(name, provider, model_id,
                    inclusion_criteria, exclusion_criteria,
                    input_description,
                    **kwargs) -> Reviewer:
+    requests_per_minute = (kwargs.get("requests_per_minute")
+                           or _default_requests_per_minute(provider))
+    provider_client = _make_provider(provider, host, kwargs.get("timeout"))
+    # The client retries some requests itself; those must draw on the same
+    # quota as everything else, so it is given the shared limiter here.
+    provider_client.limiter = _limiter_for_quota(provider, host,
+                                                 requests_per_minute)
     return Reviewer(
         name                    = name,
         model_id                = model_id,
         provider                = provider,
-        provider_client         = _make_provider(provider, host),
+        provider_client         = provider_client,
         backstory               = backstory,
         reasoning               = reasoning,
         max_tokens              = max_tokens,
@@ -865,8 +963,7 @@ def build_reviewer(name, provider, model_id,
         max_retries             = kwargs.get("max_retries")             or MAX_RETRIES,
         max_concurrent_requests = kwargs.get("max_concurrent_requests") or MAX_CONCURRENT_REQUESTS,
         items_per_call          = kwargs.get("items_per_call")          or ITEMS_PER_CALL,
-        requests_per_minute     = (kwargs.get("requests_per_minute")
-                                   or _default_requests_per_minute(provider)),
+        requests_per_minute     = requests_per_minute,
         host                    = host,
     )
 
@@ -1011,13 +1108,17 @@ async def _review_batch(
 ) -> List[dict]:
     """Send one batch of texts in a single API call. Returns a list of evaluation dicts.
 
-    Three failure kinds are handled differently, because the recovery that fits
+    Four failure kinds are handled differently, because the recovery that fits
     one makes the others worse:
 
     * **rate limit (429)** — the endpoint would accept this exact request later.
       Wait and re-send it unchanged. Never split: a split answers a refusal to
       serve requests by sending more of them, which is what turned one 429 into
       a cascade of them.
+    * **timeout** — the endpoint did not answer at all, usually because the
+      request sat in a queue. Re-send it unchanged, and do not split for the
+      same reason as above: the halves would aim more requests at something
+      already not answering, and each would sit out the whole timeout again.
     * **truncation** — the answer was cut off at ``max_tokens``. Retry with a
       bigger budget. Splitting does not help: ``max_tokens`` is multiplied by
       the batch size in :func:`_prepare_call`, so a batch of 1 gets the same
@@ -1045,8 +1146,9 @@ async def _review_batch(
 
     last_exc = None
     attempt = 0
-    waits = 0       # consecutive 429s; neither these nor the bumps below
-    bumps = 0       # consume an attempt — they retry a call that never ran
+    waits = 0       # consecutive 429s; none of these three counters consume
+    bumps = 0       # an attempt — each retries a call that never produced
+    timeouts = 0    # an answer to judge
     while attempt < attempts:
         model_args = _bumped_max_tokens(base_args, bumps)
         try:
@@ -1081,6 +1183,14 @@ async def _review_batch(
                 await asyncio.sleep(delay)
                 continue
 
+            if _is_timeout(exc) and timeouts < TIMEOUT_MAX_RETRIES:
+                timeouts += 1
+                # No backoff: the timeout was itself the wait, and the limiter
+                # decides when this re-send may actually leave.
+                print(f"[{reviewer.name}] {exc} re-sending the same batch of "
+                      f"{n_articles} ({timeouts}/{TIMEOUT_MAX_RETRIES})")
+                continue
+
             if isinstance(exc, TruncatedResponse) and bumps < TRUNCATION_MAX_BUMPS \
                     and "max_tokens" in base_args:
                 bumps += 1
@@ -1101,10 +1211,13 @@ async def _review_batch(
     # shrinks the ask, converging on the single-item schema (which is reliable).
     # A single article that still fails is a genuine error and is raised.
     #
-    # Two failures are not of that kind and must not be split:
+    # Three failures are not of that kind and must not be split:
     #
     # * a rate limit — the quota is the problem, not the batch, and halving it
     #   doubles the number of requests aimed at an endpoint already refusing them;
+    # * a timeout — same argument: the endpoint did not answer, and two requests
+    #   are not a better way to ask than one. Each half would also wait out the
+    #   full timeout before failing, so the split costs twice the delay too;
     # * a truncation we could have budgeted for — halving the batch halves
     #   max_tokens with it, so each half re-truncates at the same point, after
     #   paying its own way back up the doubling ladder.
@@ -1115,7 +1228,7 @@ async def _review_batch(
     truncated_on_our_budget = (isinstance(last_exc, TruncatedResponse)
                                and "max_tokens" in base_args)
     if n_articles > 1 and not _is_rate_limited(last_exc) \
-            and not truncated_on_our_budget:
+            and not _is_timeout(last_exc) and not truncated_on_our_budget:
         mid = n_articles // 2
         print(f"[{reviewer.name}] batch of {n_articles} failed ({last_exc}); "
               f"splitting into {mid}+{n_articles - mid} and retrying")
@@ -1138,6 +1251,15 @@ async def _review_batch(
             f"[{reviewer.name}] still rate-limited after {RATE_LIMIT_MAX_WAITS} "
             f"waits ({last_exc}). Lower requests_per_minute (or "
             f"max_concurrent_requests) for this reviewer."
+        ) from last_exc
+
+    if _is_timeout(last_exc):
+        raise RuntimeError(
+            f"[{reviewer.name}] the endpoint did not answer a batch of "
+            f"{n_articles} after {TIMEOUT_MAX_RETRIES} re-sends ({last_exc}). "
+            f"Either it is saturated — lower max_concurrent_requests so fewer "
+            f"requests queue behind each other — or the batch genuinely needs "
+            f"longer than the client allows, in which case lower items_per_call."
         ) from last_exc
 
     raise RuntimeError(
@@ -1644,7 +1766,8 @@ async def _label_one_topic(topic_id: int, keywords: str, repr_docs: list,
 
 
 async def _label_all_topics(topic_info, config) -> dict:
-    provider_client = _make_provider(config.provider, config.host)
+    provider_client = _make_provider(config.provider, config.host,
+                                     getattr(config, "timeout", None))
     model_args = {}
     if config.max_tokens:
         model_args["max_tokens"] = config.max_tokens
@@ -1656,6 +1779,7 @@ async def _label_all_topics(topic_info, config) -> dict:
     # Same registry as the review: labelling draws on the key the
     # reviewers have just been pacing themselves against.
     limiter       = _labeler_limiter(config)
+    provider_client.limiter = limiter
     nr_docs       = config.n_repr_docs_for_labeling
 
     # Only use semantically useful repr_doc columns: title, abstract, author keywords.
@@ -1760,7 +1884,8 @@ async def _label_one_cluster(comm_id: int, terms: list, titles: list,
 
 
 async def _label_all_clusters(terms: dict, config, repr_docs=None) -> dict:
-    provider_client = _make_provider(config.provider, config.host)
+    provider_client = _make_provider(config.provider, config.host,
+                                     getattr(config, "timeout", None))
     model_args = {}
     if config.max_tokens:
         model_args["max_tokens"] = config.max_tokens
@@ -1772,6 +1897,7 @@ async def _label_all_clusters(terms: dict, config, repr_docs=None) -> dict:
     # Same registry as the review: labelling draws on the key the
     # reviewers have just been pacing themselves against.
     limiter       = _labeler_limiter(config)
+    provider_client.limiter = limiter
     nr_docs       = config.n_repr_docs_for_labeling
     repr_docs     = repr_docs or {}
 

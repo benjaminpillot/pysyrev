@@ -225,6 +225,19 @@ review:
                                 # how many calls are in flight, and 10 concurrent
                                 # calls of two seconds spend a whole minute's
                                 # quota in two seconds.
+  timeout:                      # seconds to wait for ONE call. Blank uses the
+                                # provider's default: 120 for Albert, 600 for
+                                # openai/anthropic, 6000 for litellm. The last
+                                # two are ceilings rather than timeouts — a
+                                # request queued behind a busy endpoint holds a
+                                # concurrency slot for all of it. A timed-out
+                                # batch is re-sent whole, never split (splitting
+                                # aims more requests at something that is
+                                # already not answering). Only Albert gets a
+                                # short default: it does not bill per token, so
+                                # abandoning a call costs nothing but a quota
+                                # slot — elsewhere the tokens are already paid
+                                # for, so cutting too early is money for nothing.
 
   # ---- Deferred batch (half price) ---------------------------------------
   # Some providers answer a pile of requests within 24 h instead of live, and
@@ -293,6 +306,7 @@ review:
       requests_per_minute:        # blank → section-level value, then provider
                                   # default. Reviewers sharing a provider+host
                                   # share one quota; the strictest value wins.
+      timeout:                    # blank → section-level value, then provider default
       backstory: |
         <Describe Reviewer1's domain expertise, role, and reviewing style.>
       additional_context:         # extra context injected at the end of each prompt
@@ -514,4 +528,5 @@ topic_model:
 #   # max_concurrent_requests: 5
 #   # requests_per_minute:    # blank → provider default (Albert: 10). Shared with
 #   #                         # the review's quota when both run on the same key.
+#   # timeout:                # seconds per call; blank → provider default
 #   # system_prompt:          # override the default system prompt

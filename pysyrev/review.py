@@ -61,6 +61,11 @@ def _reviewer_kwargs(reviewer_config: ReviewerConfig,
         # number this layer would have to invent.
         'requests_per_minute':     (reviewer_config.requests_per_minute
                                     or review_config.requests_per_minute),
+        # Same cascade. Left None when neither level sets it, so the provider
+        # keeps its own default rather than one this layer would have to invent
+        # — and on a billed provider, cutting a call short costs real tokens.
+        'timeout':                 (reviewer_config.timeout
+                                    or review_config.timeout),
     }
 
 

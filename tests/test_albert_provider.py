@@ -108,6 +108,73 @@ class TestCredentials:
     def test_registered_under_albert(self, monkeypatch):
         monkeypatch.setenv(ALBERT_API_KEY_ENV, "test-key")
         assert isinstance(_make_provider("albert", None), _AlbertProvider)
+
+
+class TestTransportRetries:
+    """The SDK must not retry: it does not know about the quota."""
+
+    def test_the_sdk_does_not_retry_behind_the_limiter(self, monkeypatch):
+        """Its default is two silent retries on a 429, so one metered call
+        would cost three requests against a ten-a-minute quota — and the 429
+        that finally surfaces would already have burnt the other two."""
+        monkeypatch.setenv(ALBERT_API_KEY_ENV, "test-key")
+        assert _AlbertProvider()._client.max_retries == 0
+
+    def test_a_plain_openai_client_keeps_the_sdk_default(self):
+        """Nothing meters that one, so the SDK's backoff is the only recovery."""
+        from pysyrev.core.llm import _OpenAIProvider
+        assert _OpenAIProvider(api_key="k")._client.max_retries == 2
+
+    def test_a_call_gives_up_long_before_the_sdk_would(self, monkeypatch):
+        """600s is not a timeout so much as an absence of one: the request holds
+        a concurrency slot for ten minutes before anyone hears about it."""
+        from pysyrev.core.llm import ALBERT_TIMEOUT
+        monkeypatch.setenv(ALBERT_API_KEY_ENV, "test-key")
+        assert _AlbertProvider()._client.timeout == ALBERT_TIMEOUT
+        assert ALBERT_TIMEOUT < 600
+
+    def test_the_config_overrides_the_albert_default(self, monkeypatch):
+        monkeypatch.setenv(ALBERT_API_KEY_ENV, "test-key")
+        assert _AlbertProvider(timeout=45.0)._client.timeout == 45.0
+
+    def test_every_provider_accepts_one(self, monkeypatch):
+        """Not just Albert: a hung request holds a concurrency slot everywhere,
+        and litellm's own default is 6000s."""
+        from pysyrev.core.llm import _make_provider, _LiteLLMProvider
+        monkeypatch.setenv(ALBERT_API_KEY_ENV, "test-key")
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        assert _make_provider("albert", None, 45.0)._client.timeout == 45.0
+        assert _make_provider("openai", None, 45.0)._client.timeout == 45.0
+        assert _make_provider("ollama", None, 45.0)._client.timeout == 45.0
+        assert _make_provider("anthropic", None, 45.0)._client.timeout == 45.0
+        litellm_provider = _make_provider("litellm", None, 45.0)
+        assert isinstance(litellm_provider, _LiteLLMProvider)
+        assert litellm_provider._timeout == 45.0
+
+    def test_a_billed_provider_is_left_on_its_own_default(self, monkeypatch):
+        """Cutting a request that would have finished bills the tokens and
+        returns nothing, so that trade-off is the config's to make."""
+        from pysyrev.core.llm import _make_provider, _OpenAIProvider
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        assert _OpenAIProvider(api_key="k")._client.timeout.read == 600
+        assert _make_provider("anthropic", None)._client.timeout.read == 600
+
+    def test_a_demotion_takes_a_quota_slot_of_its_own(self, monkeypatch):
+        """The caller metered one call; the retry after a refusal is a second
+        request, and at run start every concurrent call makes that same probe."""
+        class _CountingLimiter:
+            def __init__(self):
+                self.acquired = 0
+
+            async def acquire(self):
+                self.acquired += 1
+
+        provider = _provider(monkeypatch, _BadRequest(), _ITEM)
+        provider.limiter = _CountingLimiter()
+        _call(provider)
+        assert len(provider._client.calls) == 2     # json_schema, then json_object
+        assert provider.limiter.acquired == 1       # the first was the caller's
         assert isinstance(_make_provider("albert-api", None), _AlbertProvider)
 
 
