@@ -214,13 +214,17 @@ review:
   max_retries: 2                # on API error; overridable per reviewer
   max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
   items_per_call: 5             # articles per API call (backstory sent once)
-  requests_per_minute:          # calls STARTED per minute, per reviewer. Blank
-                                # uses the provider's own quota (Albert: 10/min
-                                # per key, enforced with a 429). This is not
-                                # max_concurrent_requests: that caps how many
-                                # calls are in flight, and 10 concurrent calls
-                                # of two seconds spend a whole minute's quota
-                                # in two seconds.
+  requests_per_minute:          # calls STARTED per minute, for the whole run.
+                                # Blank uses the provider's own quota (Albert:
+                                # 10/min per key, enforced with a 429). Counted
+                                # once per provider+host, not once per reviewer:
+                                # the quota is metered on the API key, so three
+                                # reviewers on one key share these ten calls,
+                                # across rounds and across checkpoint chunks.
+                                # This is not max_concurrent_requests: that caps
+                                # how many calls are in flight, and 10 concurrent
+                                # calls of two seconds spend a whole minute's
+                                # quota in two seconds.
 
   # ---- Deferred batch (half price) ---------------------------------------
   # Some providers answer a pile of requests within 24 h instead of live, and
@@ -284,7 +288,9 @@ review:
       max_retries:                # blank → section-level value
       max_concurrent_requests:    # blank → section-level value
       items_per_call:             # blank → section-level value
-      requests_per_minute:        # blank → section-level value, then provider default
+      requests_per_minute:        # blank → section-level value, then provider
+                                  # default. Reviewers sharing a provider+host
+                                  # share one quota; the strictest value wins.
       backstory: |
         <Describe Reviewer1's domain expertise, role, and reviewing style.>
       additional_context:         # extra context injected at the end of each prompt

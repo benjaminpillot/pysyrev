@@ -30,7 +30,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from functools import partial
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import litellm
 import numpy as np
@@ -57,6 +57,14 @@ TRUNCATION_MAX_BUMPS = 2
 RATE_LIMIT_MAX_WAITS = 5
 RATE_LIMIT_BASE_DELAY = 15.0    # seconds, doubled per consecutive 429
 RATE_LIMIT_MAX_DELAY = 60.0     # a per-minute window never needs more
+
+#: Length of the window the client paces itself over, for a quota expressed per
+#: minute. Deliberately longer than the minute it stands for: the gateway counts
+#: a request when it *arrives*, we count it when we start sending, and the
+#: difference (network latency, and the gateway's own window boundary) is enough
+#: to make the 11th call land inside the server's window while our own has just
+#: expired. The margin costs ~9 % throughput and removes a whole class of 429s.
+RATE_LIMIT_WINDOW = 66.0
 
 REVIEW_SCORE: str = "review_score"
 
@@ -164,18 +172,51 @@ class _RateLimiter:
     Shared by all the calls of one reviewer, so a 429 seen by any of them backs
     every one of them off (:meth:`penalise`) instead of letting the others keep
     hammering a quota that is already exhausted.
+
+    One limiter stands for one quota, so it must also outlive the thing that
+    happens to be running: reviewers take their turn one after another inside a
+    round, and each checkpoint chunk gets its own ``asyncio.run``. A limiter
+    scoped to either would start every turn with an empty window and burst a
+    whole minute's quota at an endpoint that has just been served the previous
+    turn's — which is the cascade this class exists to prevent. Hence the
+    registry in :func:`_rate_limiter_for`, and hence the lock below being
+    rebuilt per event loop: the window rides on :func:`time.monotonic`, which
+    outlives a loop, while an :class:`asyncio.Lock` does not.
     """
 
-    def __init__(self, requests_per_minute: int, window: float = 60.0):
+    def __init__(self, requests_per_minute: int,
+                 window: Optional[float] = None):
         self._limit = max(1, int(requests_per_minute))
-        self._window = window
+        self._window = RATE_LIMIT_WINDOW if window is None else window
         self._started: deque = deque()
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+        self._lock_loop = None
         self._blocked_until = 0.0
+
+    def tighten(self, requests_per_minute: int) -> None:
+        """Adopt `requests_per_minute` if it is stricter than the current limit.
+
+        Two reviewers on one key may ask for different pacing; the quota only
+        knows the sum of their calls, so the smaller number is the honest one.
+        """
+        self._limit = min(self._limit, max(1, int(requests_per_minute)))
+
+    def _get_lock(self) -> asyncio.Lock:
+        """The lock for the running loop, rebuilt when the loop changes.
+
+        A lock created in a closed loop raises as soon as it is awaited in
+        another one. Nothing is lost by replacing it: the waiters it guarded
+        died with their loop, and the window state is kept outside it.
+        """
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     async def acquire(self) -> None:
         while True:
-            async with self._lock:
+            async with self._get_lock():
                 now = time.monotonic()
                 while self._started and now - self._started[0] >= self._window:
                     self._started.popleft()
@@ -192,8 +233,8 @@ class _RateLimiter:
             await asyncio.sleep(min(wait, self._window) + 0.01)
 
     async def penalise(self, seconds: float) -> None:
-        """Hold every call of this reviewer back for `seconds` after a 429."""
-        async with self._lock:
+        """Hold back every call drawing on this quota for `seconds` after a 429."""
+        async with self._get_lock():
             self._blocked_until = max(self._blocked_until,
                                       time.monotonic() + seconds)
 
@@ -783,6 +824,9 @@ class Reviewer:
     #: Calls started per minute, or None for no client-side pacing. Defaults
     #: last, so tests and programmatic callers keep the old signature.
     requests_per_minute:     Optional[int] = None
+    #: Endpoint this reviewer talks to. Kept because provider + host is what
+    #: identifies the quota the pacing has to share (see `_quota_key`).
+    host:                    Optional[str] = None
 
 
 def _default_requests_per_minute(provider: str) -> Optional[int]:
@@ -823,6 +867,7 @@ def build_reviewer(name, provider, model_id,
         items_per_call          = kwargs.get("items_per_call")          or ITEMS_PER_CALL,
         requests_per_minute     = (kwargs.get("requests_per_minute")
                                    or _default_requests_per_minute(provider)),
+        host                    = host,
     )
 
 
@@ -1099,22 +1144,51 @@ def _plan_calls(texts: List[str], reviewer: Reviewer) -> List[List[str]]:
     return [texts[i: i + n_per_call] for i in range(0, len(texts), n_per_call)]
 
 
-def _rate_limiter_for(reviewer: Reviewer) -> Optional['_RateLimiter']:
-    """One limiter per reviewer, or None when the config paces nothing.
+#: Live limiters, one per quota (see :func:`_rate_limiter_for`). Module-level
+#: because the quota outlives every scope the review has: the reviewer, the
+#: round, the checkpoint chunk and its event loop.
+_LIMITERS: Dict[tuple, _RateLimiter] = {}
 
-    The quota belongs to the API key, so every call a reviewer makes draws on
-    the same one — the initial calls, their retries, and the halves a split
-    produces.
+
+def _quota_key(reviewer: Reviewer) -> tuple:
+    """What the endpoint counts against: one provider account, one endpoint.
+
+    The API key is what the gateway meters, and a run reads one key per provider
+    from the environment — so the provider and its host identify the quota as
+    precisely as anything available here.
     """
-    return (_RateLimiter(reviewer.requests_per_minute)
-            if reviewer.requests_per_minute else None)
+    return (reviewer.provider, reviewer.host)
+
+
+def _rate_limiter_for(reviewer: Reviewer) -> Optional['_RateLimiter']:
+    """The limiter for this reviewer's quota, or None when nothing is paced.
+
+    Shared, not per reviewer: the quota belongs to the API key, and Albert's
+    ten calls a minute are ten for the whole run, not ten for each of the three
+    reviewers a workflow puts on that key. Reviewers take their turn one after
+    another (`_run_workflow`), so a per-reviewer limiter let each one open with
+    a full-quota burst on top of the burst the previous one had just spent —
+    the 429 cascade that survived the first fix. The same registry survives the
+    per-chunk ``asyncio.run`` of :func:`process_per_batch`, where `api_pause` is
+    shorter than the window it has to cover.
+    """
+    if not reviewer.requests_per_minute:
+        return None
+    key = _quota_key(reviewer)
+    limiter = _LIMITERS.get(key)
+    if limiter is None:
+        limiter = _LIMITERS[key] = _RateLimiter(reviewer.requests_per_minute)
+    else:
+        limiter.tighten(reviewer.requests_per_minute)
+    return limiter
 
 
 async def _review_all(texts: List[str], reviewer: Reviewer) -> List[dict]:
     """Split texts into batches of items_per_call and run them concurrently."""
     semaphore = asyncio.Semaphore(reviewer.max_concurrent_requests)
-    # One limiter per reviewer: the quota belongs to the API key, and every call
-    # this reviewer makes — including the retries and splits below — draws on it.
+    # One limiter per quota, shared with every other reviewer on the same key
+    # and kept across chunks: every call drawn on it — the initial ones, their
+    # retries, the halves a split produces — is counted once, wherever it starts.
     limiter = _rate_limiter_for(reviewer)
     calls = _plan_calls(texts, reviewer)
 

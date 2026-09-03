@@ -205,17 +205,21 @@ review: # LLM-based review
                                 # multi-article call is attempted once and then
                                 # split, so a large batch is never re-billed in
                                 # full for a failure the retry cannot fix.
-  max_concurrent_requests: 10    # keep 5-10 for Anthropic, up to 30 for OpenAI
-  items_per_call: 5             # articles per API call (backstory sent once).
+  max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
+  items_per_call: 10             # articles per API call (backstory sent once).
                                  # Measured optimum: 50 saves a further 2 %,
                                  # 1 would cost 108 % more.
-  requests_per_minute:           # calls STARTED per minute, per reviewer. Leave
-                                 # blank to use the provider's own quota — Albert
-                                 # publishes 10/min per key and answers 429 past
-                                 # it. max_concurrent_requests cannot stand in for
-                                 # this: it caps how many calls are in flight, and
-                                 # 10 concurrent calls of two seconds spend a
-                                 # whole minute's quota in two seconds.
+  requests_per_minute:           # calls STARTED per minute, for the whole run.
+                                 # Leave blank to use the provider's own quota —
+                                 # Albert publishes 10/min per key and answers 429
+                                 # past it. Counted once per provider+host, so the
+                                 # three reviewers below share those ten calls,
+                                 # across both rounds and across checkpoint chunks
+                                 # — the quota is metered on the key, not on the
+                                 # reviewer. max_concurrent_requests cannot stand
+                                 # in for this: it caps how many calls are in
+                                 # flight, and 10 concurrent calls of two seconds
+                                 # spend a whole minute's quota in two seconds.
 
   # Deferred batch: the same requests, answered within 24 h, billed at half
   # price on input AND output. It costs nothing but latency, which a screening
@@ -273,7 +277,7 @@ review: # LLM-based review
       model_id : openai/gpt-oss-120b # claude-haiku-4-5  # Model identifier
       host :
       provider : albert  # values : litellm, albert, open-ai, ollama, anthropic
-      max_tokens : 200   # output budget for ONE article: the call sends
+      max_tokens : 500   # output budget for ONE article: the call sends
                          # max_tokens x items_per_call for a batch. Too low and
                          # the JSON is cut off mid-answer — the run retries with
                          # a doubled budget and says so, but paying that on every
@@ -311,7 +315,7 @@ review: # LLM-based review
       model_id : openai/gpt-oss-120b # claude-haiku-4-5
       host :
       provider : albert
-      max_tokens : 200
+      max_tokens : 500
       temperature : 0.2
       reasoning_effort :
       backstory: Reviewer#2 is a seasoned researcher with a PhD in computer
@@ -338,7 +342,7 @@ review: # LLM-based review
       model_id : openai/gpt-oss-120b # gpt-4o-mini
       host :
       provider : albert
-      max_tokens : 200
+      max_tokens : 1000
       temperature : 0.2
       reasoning_effort : medium  # Left blank on purpose: `reasoning_effort` is an
                            # OpenAI parameter. The Anthropic Messages API has no

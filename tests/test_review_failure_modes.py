@@ -72,17 +72,19 @@ class _RecordingProvider:
         return [b for _, b in self.calls]
 
 
-def _reviewer(provider, *, max_tokens=200, max_retries=2,
-              requests_per_minute=None):
+def _reviewer(provider, *, name="Reviewer#1", max_tokens=200, max_retries=2,
+              requests_per_minute=None, provider_name="fake", host=None,
+              max_concurrent_requests=1):
     return Reviewer(
-        name="Reviewer#1", model_id="m", provider="fake",
+        name=name, model_id="m", provider=provider_name,
         provider_client=provider,
         backstory="bs", reasoning=None, max_tokens=max_tokens, temperature=None,
         reasoning_effort=None, additional_context=None,
         inclusion_criteria="inc", exclusion_criteria="exc",
         input_description="article title/abstract/keywords",
-        max_retries=max_retries, max_concurrent_requests=1, items_per_call=5,
-        requests_per_minute=requests_per_minute,
+        max_retries=max_retries,
+        max_concurrent_requests=max_concurrent_requests, items_per_call=5,
+        requests_per_minute=requests_per_minute, host=host,
     )
 
 
@@ -90,6 +92,14 @@ def _run(reviewer, texts, limiter=None):
     async def _call():
         return await _review_batch(texts, reviewer, asyncio.Semaphore(1), limiter)
     return asyncio.run(_call())
+
+
+@pytest.fixture(autouse=True)
+def fresh_limiters():
+    """The limiter registry is process-wide; no test may inherit another's window."""
+    llm._LIMITERS.clear()
+    yield
+    llm._LIMITERS.clear()
 
 
 @pytest.fixture
@@ -227,6 +237,73 @@ class TestRateLimiter:
         # Four calls against a quota of two must span more than one window,
         # however many of them are launched at once.
         assert asyncio.run(_race()) >= 0.1
+
+
+class TestSharedPacing:
+    """One quota, one limiter — whoever is spending it, and whenever.
+
+    The quota is metered per API key. A limiter scoped to one reviewer, or to
+    one checkpoint chunk, therefore starts every turn believing the window is
+    empty and opens with a full-quota burst on top of the burst the previous
+    turn has just spent — which is how a paced run still collected 429s.
+    """
+
+    def _albert(self, name, **kwargs):
+        return _reviewer(_RecordingProvider(None), name=name,
+                         provider_name="albert", requests_per_minute=10,
+                         **kwargs)
+
+    def test_reviewers_on_one_endpoint_share_a_limiter(self):
+        first, second = self._albert("Reviewer#1"), self._albert("Reviewer#2")
+        assert llm._rate_limiter_for(first) is llm._rate_limiter_for(second)
+
+    def test_a_separate_endpoint_keeps_its_own_quota(self):
+        assert llm._rate_limiter_for(self._albert("R", host="https://a/v1")) \
+            is not llm._rate_limiter_for(self._albert("R", host="https://b/v1"))
+
+    def test_the_strictest_pace_configured_wins(self):
+        llm._rate_limiter_for(self._albert("Reviewer#1"))
+        limiter = llm._rate_limiter_for(
+            _reviewer(_RecordingProvider(None), provider_name="albert",
+                      requests_per_minute=3))
+        assert limiter._limit == 3
+
+    def test_an_unpaced_reviewer_gets_no_limiter(self):
+        assert llm._rate_limiter_for(_reviewer(_RecordingProvider(None))) is None
+
+    def test_a_limiter_survives_the_per_chunk_event_loop(self):
+        """`process_per_batch` opens one `asyncio.run` per checkpoint chunk.
+
+        Two things used to break at that boundary: the window forgot the calls
+        of the previous chunk (which `api_pause` is too short to cover), and a
+        lock built in the closed loop raised as soon as it was awaited again.
+        """
+        limiter = _RateLimiter(2, window=0.3)
+        asyncio.run(limiter.acquire())
+        asyncio.run(limiter.acquire())
+
+        start = time.monotonic()
+        asyncio.run(limiter.acquire())
+        assert time.monotonic() - start >= 0.05
+
+    def test_the_second_reviewer_of_a_round_waits_out_the_first(self, monkeypatch):
+        """A round runs its reviewers one after another, on the same key."""
+        monkeypatch.setattr(llm, "RATE_LIMIT_WINDOW", 0.3)
+        texts = [f"a{i}" for i in range(10)]         # 2 calls of 5 per reviewer
+        reviewers = [_reviewer(_RecordingProvider(None), name=name,
+                               provider_name="albert", requests_per_minute=2,
+                               max_concurrent_requests=10)
+                     for name in ("Reviewer#1", "Reviewer#2")]
+
+        async def _round():
+            start = time.monotonic()
+            for reviewer in reviewers:
+                await llm._review_all(texts, reviewer)
+            return time.monotonic() - start
+
+        # Four calls against a quota of two: the second reviewer cannot start
+        # until the first one's window has slid, however fast its own calls are.
+        assert asyncio.run(_round()) >= 0.25
 
 
 # ── Pacing defaults ────────────────────────────────────────────────────────
