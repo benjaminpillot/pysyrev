@@ -248,6 +248,8 @@ review:
   # ---- Input -------------------------------------------------------------
   text_inputs: [title, abstract, author_keywords]
   # sample_size:                  # default: null (process full dataset); integer = random sample size
+  # sample_seed:                  # seed for that draw; set an integer to review the same
+                                  # sample on every run (comparable test runs)
 
   # ---- Screening criteria ------------------------------------------------
   inclusion_criteria: |

@@ -260,6 +260,9 @@ review: # LLM-based review
     biology, medicine, biomedical studies, etc.
   sample_size : 50    # Leave blank if the whole dataset must be processed. Otherwise,
                     # size of the corresponding random sample to withdraw from the dataset
+  sample_seed : 42    # Seed for that draw. Blank = a new sample every run; an integer
+                    # keeps the same 50 articles, so two test runs differ by the config
+                    # change and not by the draw. `pysyrev estimate` uses it too.
   decision_rule : majority   # majority, mean
   workflow :    # Workflow consists in as many rounds as defined by the
                 # user. Apart the first round, all rounds apply if and only

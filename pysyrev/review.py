@@ -146,6 +146,7 @@ class LLMReview:
     api_pause:         float
     sample_size:       Union[int, None]
     doc_dataset:       Union[str, None]
+    sample_seed:       Union[int, None] = None
     use_batch_api:     bool  = False
     batch_poll_interval: float = 30.0
     _reviewed_dataset: ReviewedDataset = field(default_factory=ReviewedDataset, init=False, repr=False)
@@ -180,6 +181,7 @@ class LLMReview:
             batch_size      = config.batch_size,
             api_pause       = config.api_pause,
             sample_size     = config.sample_size,
+            sample_seed     = config.sample_seed,
             doc_dataset     = config.doc_dataset,
             use_batch_api       = use_batch_api,
             batch_poll_interval = config.batch_poll_interval,
@@ -220,6 +222,7 @@ class LLMReview:
             self.api_pause,
             subset_file_fn,
             batch_run,
+            sample_seed = self.sample_seed,
         )
         self._reviewed_dataset.total_docs = reviewed_ds
         self._reviewed_dataset.included_docs = reviewed_ds.loc[reviewed_ds[REVIEW_SCORE] > 3, :]

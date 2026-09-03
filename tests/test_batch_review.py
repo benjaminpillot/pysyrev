@@ -366,6 +366,25 @@ class TestRunReviewWiring:
         assert backend.submitted == []
         assert provider.sync_calls                # the live path ran instead
 
+    def test_a_seeded_sample_draws_the_same_articles_every_run(self):
+        """Without it, two test runs differ by their draw, not by the config."""
+        def _titles(seed):
+            reviewer = _reviewer('Reviewer#1', _FakeProvider(_FakeBackend()))
+            out = run_review(_dataset(20), _schema([reviewer]), 'majority',
+                             batch_size=None, sample_size=5, pause=0,
+                             sample_seed=seed)
+            return list(out['title'])
+
+        assert _titles(42) == _titles(42)
+        assert _titles(42) != _titles(7)
+
+    def test_an_unseeded_sample_stays_random(self):
+        reviewer = _reviewer('Reviewer#1', _FakeProvider(_FakeBackend()))
+        draws = {tuple(run_review(_dataset(200), _schema([reviewer]), 'majority',
+                                  batch_size=None, sample_size=5, pause=0)['title'])
+                 for _ in range(3)}
+        assert len(draws) > 1
+
     def test_the_workflow_writes_the_same_columns_either_way(self):
         backend = _FakeBackend()
         reviewer = _reviewer('Reviewer#1', _FakeProvider(backend),

@@ -603,6 +603,7 @@ class ReviewConfig(ConfigField):
     api_pause:               float            = 30.0
     decision_rule:           str              = 'majority'    # majority | mean
     sample_size:             Union[None, int] = None          # None = process full dataset
+    sample_seed:             Union[None, int] = None          # seed for that draw; None = a new sample every run
     max_retries:             Union[None, int] = None          # None → module default (2);  overridable per reviewer
     max_concurrent_requests: Union[None, int] = None          # None → module default (10); overridable per reviewer
     items_per_call:          Union[None, int] = None          # None → module default (1);  overridable per reviewer

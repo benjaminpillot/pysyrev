@@ -541,7 +541,12 @@ def estimate_review(review_config,
         dataset = pd.read_csv(path, low_memory=False)
 
     if review_config.sample_size:
-        dataset = dataset.sample(review_config.sample_size, random_state=0)
+        # The run's own seed when there is one, so the estimate prices the very
+        # rows the review will draw; a fixed one otherwise, so re-estimating an
+        # unseeded config does not move the number around.
+        seed = review_config.sample_seed
+        dataset = dataset.sample(review_config.sample_size,
+                                 random_state=0 if seed is None else seed)
 
     # -- reviewers and workflow (no side effects: export is not resolved) --
     input_description = _input_description(review_config.text_inputs)

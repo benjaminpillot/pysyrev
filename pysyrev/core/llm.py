@@ -1482,14 +1482,17 @@ def process_per_batch(dataset, workflow_schema, batch_size, pause, subset_file_f
 
 def run_review(dataset, workflow_schema, decision_rule,
                batch_size, sample_size, pause, subset_file_fn=None,
-               batch_run: Optional[BatchRun] = None):
+               batch_run: Optional[BatchRun] = None,
+               sample_seed: Optional[int] = None):
 
     def ds_eval_keys():
         return [f"round-{s['round']}_{r.name}_evaluation"
                 for s in workflow_schema for r in s["reviewers"]]
 
     if sample_size:
-        dataset = dataset.sample(sample_size)
+        # A seed pins the subset, so two runs differ by what the config changed
+        # rather than by which articles they happened to draw.
+        dataset = dataset.sample(sample_size, random_state=sample_seed)
 
     if batch_run is not None:
         # Checkpoint chunking is deliberately bypassed here. A deferred run
