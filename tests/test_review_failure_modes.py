@@ -271,6 +271,30 @@ class TestSharedPacing:
     def test_an_unpaced_reviewer_gets_no_limiter(self):
         assert llm._rate_limiter_for(_reviewer(_RecordingProvider(None))) is None
 
+    def test_the_quota_is_spent_when_the_call_actually_goes_out(self):
+        """A slot taken while queued behind the semaphore stamps a send that has
+        not happened; the real request then lands in the next window, on top of
+        the calls that window had already budgeted for."""
+        limiter = _RateLimiter(10, window=30)     # never the constraint here
+        semaphore = asyncio.Semaphore(1)          # concurrency is
+
+        class _Slow(_RecordingProvider):
+            async def call(self, *args):
+                await asyncio.sleep(0.15)
+                return await super().call(*args)
+
+        reviewer = _reviewer(_Slow(None))
+
+        async def _three_at_once():
+            await asyncio.gather(*(_review_batch(["a"], reviewer, semaphore,
+                                                 limiter)
+                                   for _ in range(3)))
+
+        asyncio.run(_three_at_once())
+        stamps = list(limiter._started)
+        assert len(stamps) == 3
+        assert stamps[-1] - stamps[0] >= 0.25     # spread over the real sends
+
     def test_a_limiter_survives_the_per_chunk_event_loop(self):
         """`process_per_batch` opens one `asyncio.run` per checkpoint chunk.
 
@@ -304,6 +328,42 @@ class TestSharedPacing:
         # Four calls against a quota of two: the second reviewer cannot start
         # until the first one's window has slid, however fast its own calls are.
         assert asyncio.run(_round()) >= 0.25
+
+
+class TestLabellerPacing:
+    """The topic and community labellers spend the reviewers' quota."""
+
+    def _config(self, provider="albert", **kwargs):
+        from pysyrev.core.config import TopicLabelerConfig
+        return TopicLabelerConfig(provider=provider, model_id="m", **kwargs)
+
+    def test_the_labeller_draws_on_the_reviewers_limiter(self):
+        reviewer = _reviewer(_RecordingProvider(None), provider_name="albert",
+                             requests_per_minute=10)
+        assert llm._labeler_limiter(self._config()) \
+            is llm._rate_limiter_for(reviewer)
+
+    def test_an_unpaced_provider_still_gets_none(self):
+        assert llm._labeler_limiter(self._config(provider="anthropic")) is None
+
+    def test_a_429_waits_instead_of_burning_an_attempt(self, instant_backoff,
+                                                       monkeypatch, capsys):
+        """It used to retry immediately, spend both attempts and lose the label."""
+        class _Labeller:
+            calls = 0
+
+            async def call(self, messages, model_id, model_args, schema):
+                _Labeller.calls += 1
+                if _Labeller.calls == 1:
+                    raise _RateLimitError()
+                return {"label": "Solar PV adoption"}, None
+
+        monkeypatch.setattr(llm, "_make_provider", lambda *a, **k: _Labeller())
+        out = llm.label_clusters({0: ["solar", "pv"]},
+                                 self._config(max_retries=2))
+        assert out == {0: "Solar PV adoption"}
+        assert _Labeller.calls == 2
+        assert "rate-limited" in capsys.readouterr().out
 
 
 # ── Pacing defaults ────────────────────────────────────────────────────────

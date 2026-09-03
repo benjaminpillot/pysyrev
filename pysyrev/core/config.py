@@ -936,6 +936,7 @@ class TopicLabelerConfig(ConfigField):
     temperature:             float            = 0.3
     max_retries:             int              = 2
     max_concurrent_requests: int              = 5
+    requests_per_minute:     Union[None, int] = None   # None → provider default (Albert: 10)
     n_repr_docs_for_labeling: int             = 3
     system_prompt:           Union[None, str] = None
 

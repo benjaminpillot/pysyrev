@@ -1050,9 +1050,16 @@ async def _review_batch(
     while attempt < attempts:
         model_args = _bumped_max_tokens(base_args, bumps)
         try:
-            if limiter is not None:
-                await limiter.acquire()
+            # The quota slot is taken *inside* the semaphore, immediately
+            # before the call. Taken outside it, a task that then queues on a
+            # full semaphore stamps the window at a moment it sends nothing,
+            # and its real request goes out later — landing in the next window
+            # on top of the calls that window has already budgeted for. That is
+            # a 429 caused by the pacing itself, and it appears precisely when
+            # max_concurrent_requests is the binding constraint.
             async with semaphore:
+                if limiter is not None:
+                    await limiter.acquire()
                 raw, _ = await reviewer.provider_client.call(
                     messages, reviewer.model_id, model_args, response_schema,
                 )
@@ -1150,37 +1157,53 @@ def _plan_calls(texts: List[str], reviewer: Reviewer) -> List[List[str]]:
 _LIMITERS: Dict[tuple, _RateLimiter] = {}
 
 
-def _quota_key(reviewer: Reviewer) -> tuple:
-    """What the endpoint counts against: one provider account, one endpoint.
+def _limiter_for_quota(provider: str, host: Optional[str],
+                       requests_per_minute: Optional[int]) -> Optional['_RateLimiter']:
+    """The shared limiter for one provider account, or None when unpaced.
 
-    The API key is what the gateway meters, and a run reads one key per provider
-    from the environment — so the provider and its host identify the quota as
-    precisely as anything available here.
+    What the endpoint counts against is the API key, and a run reads one key per
+    provider from the environment — so provider + host identifies the quota as
+    precisely as anything available here. Everything that spends it comes
+    through this function: the reviewers of every round, and the topic and
+    community labellers, which are few calls but land on the same key.
+
+    Shared, not per caller: Albert's ten calls a minute are ten for the whole
+    run, not ten for each of the three reviewers a workflow puts on that key.
+    Callers take their turn one after another, so a per-caller limiter let each
+    one open with a full-quota burst on top of the burst the previous one had
+    just spent. The registry also survives the per-chunk ``asyncio.run`` of
+    :func:`process_per_batch`, where `api_pause` is shorter than the window it
+    would have to cover.
     """
-    return (reviewer.provider, reviewer.host)
+    if not requests_per_minute:
+        return None
+    key = (provider, host)
+    limiter = _LIMITERS.get(key)
+    if limiter is None:
+        limiter = _LIMITERS[key] = _RateLimiter(requests_per_minute)
+    else:
+        limiter.tighten(requests_per_minute)
+    return limiter
 
 
 def _rate_limiter_for(reviewer: Reviewer) -> Optional['_RateLimiter']:
-    """The limiter for this reviewer's quota, or None when nothing is paced.
+    """The limiter for this reviewer's quota, or None when nothing is paced."""
+    return _limiter_for_quota(reviewer.provider, reviewer.host,
+                              reviewer.requests_per_minute)
 
-    Shared, not per reviewer: the quota belongs to the API key, and Albert's
-    ten calls a minute are ten for the whole run, not ten for each of the three
-    reviewers a workflow puts on that key. Reviewers take their turn one after
-    another (`_run_workflow`), so a per-reviewer limiter let each one open with
-    a full-quota burst on top of the burst the previous one had just spent —
-    the 429 cascade that survived the first fix. The same registry survives the
-    per-chunk ``asyncio.run`` of :func:`process_per_batch`, where `api_pause` is
-    shorter than the window it has to cover.
+
+def _labeler_limiter(config) -> Optional['_RateLimiter']:
+    """The limiter for a labelling stage, from the same registry as the review.
+
+    A labelling run is a handful of short calls, which is exactly why it had
+    none: too few to be worth pacing on their own. But they are drawn on the
+    key the review has just been pacing itself against, so on their own they
+    are not the question — the quota is.
     """
-    if not reviewer.requests_per_minute:
-        return None
-    key = _quota_key(reviewer)
-    limiter = _LIMITERS.get(key)
-    if limiter is None:
-        limiter = _LIMITERS[key] = _RateLimiter(reviewer.requests_per_minute)
-    else:
-        limiter.tighten(reviewer.requests_per_minute)
-    return limiter
+    return _limiter_for_quota(
+        config.provider, config.host,
+        getattr(config, "requests_per_minute", None)
+        or _default_requests_per_minute(config.provider))
 
 
 async def _review_all(texts: List[str], reviewer: Reviewer) -> List[dict]:
@@ -1558,27 +1581,66 @@ def _build_labeler_messages(keywords: str, repr_docs: list, system_prompt: str) 
     ]
 
 
-async def _label_one_topic(topic_id: int, keywords: str, repr_docs: list,
-                           provider_client: _BaseProvider, model_id: str,
-                           model_args: dict, system_prompt: str,
-                           semaphore: asyncio.Semaphore,
-                           max_retries: int) -> tuple:
-    messages = _build_labeler_messages(keywords, repr_docs, system_prompt)
+async def _labeler_call(tag: str, what: str, messages: list,
+                        provider_client: _BaseProvider, model_id: str,
+                        model_args: dict, semaphore: asyncio.Semaphore,
+                        limiter: Optional[_RateLimiter],
+                        max_retries: int) -> str:
+    """One labelling call, with the review path's rate-limit recovery.
+
+    Shared by both labellers because a 429 needs the same answer wherever it is
+    met: an immediate retry against a gateway that is refusing requests is not a
+    recovery, it is a second refusal, and it used to burn both attempts and lose
+    the label. So a rate limit waits — holding back the other labelling calls
+    through the shared limiter — instead of consuming an attempt.
+    """
     last_exc = None
-    for attempt in range(max_retries):
+    attempt = waits = 0
+    while attempt < max_retries:
         try:
+            # Quota taken inside the semaphore, immediately before the call, so
+            # the window records a send rather than an intention to send.
             async with semaphore:
+                if limiter is not None:
+                    await limiter.acquire()
                 raw, _ = await provider_client.call(
                     messages, model_id, model_args, _TopicLabel,
                 )
             label = raw.get("label", "") if isinstance(raw, dict) else str(raw)
-            return topic_id, label.strip()
+            return label.strip()
         except Exception as exc:
             last_exc = exc
-            print(f"[topic-labeler] topic {topic_id} attempt {attempt + 1}/{max_retries}: {exc}")
+
+            if _is_rate_limited(exc) and waits < RATE_LIMIT_MAX_WAITS:
+                delay = _rate_limit_delay(exc, waits)
+                waits += 1
+                if limiter is not None:
+                    await limiter.penalise(delay)
+                print(f"[{tag}] {what}: rate-limited ({exc}); waiting "
+                      f"{delay:.0f}s ({waits}/{RATE_LIMIT_MAX_WAITS})")
+                await asyncio.sleep(delay)
+                continue
+
+            attempt += 1
+            print(f"[{tag}] {what} attempt {attempt}/{max_retries}: {exc}")
+
     raise RuntimeError(
-        f"[topic-labeler] topic {topic_id} failed after {max_retries} retries: {last_exc}"
+        f"[{tag}] {what} failed after {max_retries} retries: {last_exc}"
     )
+
+
+async def _label_one_topic(topic_id: int, keywords: str, repr_docs: list,
+                           provider_client: _BaseProvider, model_id: str,
+                           model_args: dict, system_prompt: str,
+                           semaphore: asyncio.Semaphore,
+                           max_retries: int,
+                           limiter: Optional[_RateLimiter] = None) -> tuple:
+    label = await _labeler_call(
+        "topic-labeler", f"topic {topic_id}",
+        _build_labeler_messages(keywords, repr_docs, system_prompt),
+        provider_client, model_id, model_args, semaphore, limiter, max_retries,
+    )
+    return topic_id, label
 
 
 async def _label_all_topics(topic_info, config) -> dict:
@@ -1591,6 +1653,9 @@ async def _label_all_topics(topic_info, config) -> dict:
 
     system_prompt = config.system_prompt or _DEFAULT_LABELER_SYSTEM_PROMPT
     semaphore     = asyncio.Semaphore(config.max_concurrent_requests)
+    # Same registry as the review: labelling draws on the key the
+    # reviewers have just been pacing themselves against.
+    limiter       = _labeler_limiter(config)
     nr_docs       = config.n_repr_docs_for_labeling
 
     # Only use semantically useful repr_doc columns: title, abstract, author keywords.
@@ -1626,7 +1691,7 @@ async def _label_all_topics(topic_info, config) -> dict:
         tasks.append(_label_one_topic(
             topic_id, keywords, doc_texts,
             provider_client, config.model_id, model_args, system_prompt,
-            semaphore, config.max_retries,
+            semaphore, config.max_retries, limiter,
         ))
 
     labels = {}
@@ -1684,25 +1749,14 @@ async def _label_one_cluster(comm_id: int, terms: list, titles: list,
                              provider_client: _BaseProvider, model_id: str,
                              model_args: dict, system_prompt: str,
                              semaphore: asyncio.Semaphore,
-                             max_retries: int) -> tuple:
-    messages = _build_cluster_labeler_messages(terms, titles, system_prompt)
-    last_exc = None
-    for attempt in range(max_retries):
-        try:
-            async with semaphore:
-                raw, _ = await provider_client.call(
-                    messages, model_id, model_args, _TopicLabel,
-                )
-            label = raw.get("label", "") if isinstance(raw, dict) else str(raw)
-            return comm_id, label.strip()
-        except Exception as exc:
-            last_exc = exc
-            print(f"[cluster-labeler] community {comm_id} "
-                  f"attempt {attempt + 1}/{max_retries}: {exc}")
-    raise RuntimeError(
-        f"[cluster-labeler] community {comm_id} failed after "
-        f"{max_retries} retries: {last_exc}"
+                             max_retries: int,
+                             limiter: Optional[_RateLimiter] = None) -> tuple:
+    label = await _labeler_call(
+        "cluster-labeler", f"community {comm_id}",
+        _build_cluster_labeler_messages(terms, titles, system_prompt),
+        provider_client, model_id, model_args, semaphore, limiter, max_retries,
     )
+    return comm_id, label
 
 
 async def _label_all_clusters(terms: dict, config, repr_docs=None) -> dict:
@@ -1715,6 +1769,9 @@ async def _label_all_clusters(terms: dict, config, repr_docs=None) -> dict:
 
     system_prompt = config.system_prompt or _DEFAULT_CLUSTER_LABELER_SYSTEM_PROMPT
     semaphore     = asyncio.Semaphore(config.max_concurrent_requests)
+    # Same registry as the review: labelling draws on the key the
+    # reviewers have just been pacing themselves against.
+    limiter       = _labeler_limiter(config)
     nr_docs       = config.n_repr_docs_for_labeling
     repr_docs     = repr_docs or {}
 
@@ -1724,7 +1781,7 @@ async def _label_all_clusters(terms: dict, config, repr_docs=None) -> dict:
         tasks.append(_label_one_cluster(
             int(comm_id), list(terms[comm_id]), titles,
             provider_client, config.model_id, model_args, system_prompt,
-            semaphore, config.max_retries,
+            semaphore, config.max_retries, limiter,
         ))
 
     labels = {}

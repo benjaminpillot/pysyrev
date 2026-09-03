@@ -512,4 +512,6 @@ topic_model:
 #   n_repr_docs_for_labeling: 3   # representative documents per topic sent to the LLM to generate topic labels
 #   # max_retries: 2
 #   # max_concurrent_requests: 5
+#   # requests_per_minute:    # blank → provider default (Albert: 10). Shared with
+#   #                         # the review's quota when both run on the same key.
 #   # system_prompt:          # override the default system prompt
