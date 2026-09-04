@@ -9,7 +9,7 @@ Every network type shares this drawing code — the layout and communities it
 visualises are produced upstream in :mod:`.common`.
 
 The matrix panels that accompany these graphs (connectivity, community × topic
-crosstab) are not network drawings and live in :mod:`pysyrev.core.figures`,
+crosstab) are not network drawings and live in :mod:`pysyrev.core.report.figures`,
 with every other heatmap of the report.
 """
 

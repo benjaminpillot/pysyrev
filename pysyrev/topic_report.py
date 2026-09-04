@@ -5,7 +5,7 @@ TopicReport reads the pre-exported outputs of a TopicModel run and builds a
 PDF report for the selected model. It mirrors TopicModel/LLMReview: pure
 runtime, no YAML knowledge, built from parsed configs via `from_config`.
 
-Business logic lives in pysyrev/core/report_data.py. This class only
+Business logic lives in pysyrev/core/report/. This class only
 coordinates the core functions and holds instance-level lazy-loaded state.
 
 Typical usage
@@ -25,13 +25,13 @@ import pandas as pd
 
 from pysyrev.core.config import Config
 from pysyrev.core.llm import label_topics
-from pysyrev.core.report import PDFReportEngine
-from pysyrev.core.report_data import (
-    find_best_results_csv,
+from pysyrev.core.report import (
+    PDFReportEngine,
     build_file_prefix,
-    load_topic_info,
-    load_bertopic_results,
     build_report_data,
+    find_best_results_csv,
+    load_bertopic_results,
+    load_topic_info,
 )
 from pysyrev.core.topic_labels import load_cached_labels, save_labels
 

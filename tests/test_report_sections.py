@@ -1,5 +1,5 @@
 """
-Tests for pysyrev.core.report_data section builders.
+Tests for the pysyrev.core.report section builders.
 
 All tests are fast: they use synthetic DataFrames from conftest and do not
 require any ML model or disk access beyond tmp_path.
@@ -25,15 +25,15 @@ from pysyrev.core.config import (
     TopicsSectionConfig,
     TopicSimilarityConfig,
 )
-from pysyrev.core.report_data import (
-    _build_networks_section,
-    _build_overview_section,
-    _build_paper_selection_section,
-    _build_temporal_section,
+from pysyrev.core.report import build_report_data
+from pysyrev.core.report.data import _build_overview_section
+from pysyrev.core.report.sections.networks import _build_networks_section
+from pysyrev.core.report.sections.papers import _build_paper_selection_section
+from pysyrev.core.report.sections.temporal import _build_temporal_section
+from pysyrev.core.report.sections.topics import (
     _build_topic_characteristics_section,
     _build_topic_similarity_section,
     _build_topics_section,
-    build_report_data,
 )
 
 
@@ -283,7 +283,7 @@ class TestCompositeSelection:
         return coupling, bt
 
     def test_scores_carry_three_axes(self, reviewed_dataset_path):
-        from pysyrev.core.report_data import _composite_scores
+        from pysyrev.core.report.sections.papers import _composite_scores
         coupling, bt = self._setup(reviewed_dataset_path)
         detail = _composite_scores(coupling, bt, aggregate="mean")
         assert detail
@@ -292,11 +292,11 @@ class TestCompositeSelection:
         assert {"centrality", "relevance", "representativeness"} <= set(d0)
 
     def test_empty_without_coupling(self):
-        from pysyrev.core.report_data import _composite_scores
+        from pysyrev.core.report.sections.papers import _composite_scores
         assert _composite_scores(None, None) == {}
 
     def test_composite_table_shows_axis_columns(self, reviewed_dataset_path):
-        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.report.sections.papers import _build_paper_selection_section
         coupling, bt = self._setup(reviewed_dataset_path)
         cfg = PaperSelectionConfig(min_year=2000, proportion_per_topic=0.5,
                                    selection_by="composite", export_annex=False)
@@ -308,7 +308,7 @@ class TestCompositeSelection:
         assert any(r[-1] == "Most relevant (3-axis)" for r in table["rows"])
 
     def test_tuning_params_change_scores(self, reviewed_dataset_path):
-        from pysyrev.core.report_data import _composite_scores
+        from pysyrev.core.report.sections.papers import _composite_scores
         coupling, bt = self._setup(reviewed_dataset_path)
         base = _composite_scores(coupling, bt, aggregate="mean")
         cpy  = _composite_scores(coupling, bt, aggregate="mean", relevance_mode="cpy")
@@ -323,7 +323,7 @@ class TestCompositeSelection:
     def test_split_current_year_adds_a_research_fronts_table(self):
         # Synthetic corpus with a clear current-year cohort so the split is
         # deterministic regardless of the fixture data's years.
-        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.report.sections.papers import _build_paper_selection_section
         from pysyrev.core.networks.common import NetworkResult
         ids = [f"W{i}" for i in range(6)]
         bt = pd.DataFrame({
@@ -357,7 +357,7 @@ class TestCompositeSelection:
         assert all(r[3] != "2026" for r in reading["rows"])  # Year column
 
     def test_csv_annex_holds_both_cohorts_with_a_cohort_column(self, tmp_path):
-        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.report.sections.papers import _build_paper_selection_section
         from pysyrev.core.networks.common import NetworkResult
         ids = [f"W{i}" for i in range(6)]
         bt = pd.DataFrame({
@@ -390,7 +390,7 @@ class TestCompositeSelection:
         # Many current-year papers, small proportion → the CSV fronts are a
         # top-N-per-topic selection, not the whole current year, and match the
         # research-fronts table count.
-        from pysyrev.core.report_data import _build_paper_selection_section
+        from pysyrev.core.report.sections.papers import _build_paper_selection_section
         from pysyrev.core.networks.common import NetworkResult
         n = 30
         ids = [f"W{i}" for i in range(n)]
@@ -820,7 +820,7 @@ class TestNetworkTableTitleDoi:
         })
 
     def _table(self, node_ids):
-        from pysyrev.core.report_data import _build_network_subsection
+        from pysyrev.core.report.sections.networks import _build_network_subsection
         from pysyrev.core.networks.common import NetworkResult
         n = len(node_ids)
         W = np.ones((n, n)) - np.eye(n)
@@ -858,7 +858,7 @@ class TestCommunitySubthemesTable:
     """The coupling subsection lists per-community TF-IDF sub-themes when present."""
 
     def _subsection(self, terms):
-        from pysyrev.core.report_data import _build_network_subsection
+        from pysyrev.core.report.sections.networks import _build_network_subsection
         from pysyrev.core.networks.common import NetworkResult
         ids = [f"W{i}" for i in range(4)]
         W = np.array([[0, 1, 0, 0], [1, 0, 0, 0],
@@ -891,7 +891,7 @@ class TestCommunityLLMLabelColumn:
     column, added alongside the raw TF-IDF terms (not replacing them)."""
 
     def _subsection(self, terms, cluster_labels):
-        from pysyrev.core.report_data import _build_network_subsection
+        from pysyrev.core.report.sections.networks import _build_network_subsection
         from pysyrev.core.networks.common import NetworkResult
         ids = [f"W{i}" for i in range(4)]
         W = np.array([[0, 1, 0, 0], [1, 0, 0, 0],
@@ -944,7 +944,7 @@ class TestCommunityTopicMapping:
                              coords=np.zeros((n, 2)), modularity=0.2), ids
 
     def test_heatmap_counts_documents_per_community_topic(self):
-        from pysyrev.core.report_data import _build_community_topic_mapping_subsection
+        from pysyrev.core.report.sections.networks import _build_community_topic_mapping_subsection
         coup, ids = self._coupling([0, 0, 0, 1, 1, 1])
         bt = pd.DataFrame({"id": ids, "Topic": [0, 0, 1, 1, 2, 2]})
         sub = _build_community_topic_mapping_subsection(coup, bt, None, None)
@@ -956,12 +956,12 @@ class TestCommunityTopicMapping:
         assert list(fig.data[0].y) == ["C0", "C1"]
 
     def test_none_without_bertopic(self):
-        from pysyrev.core.report_data import _build_community_topic_mapping_subsection
+        from pysyrev.core.report.sections.networks import _build_community_topic_mapping_subsection
         coup, _ = self._coupling([0, 0, 1, 1])
         assert _build_community_topic_mapping_subsection(coup, None, None, None) is None
 
     def test_tail_and_outliers_excluded(self):
-        from pysyrev.core.report_data import _build_community_topic_mapping_subsection
+        from pysyrev.core.report.sections.networks import _build_community_topic_mapping_subsection
         # community -1 (tail) and topic -1 (outlier) must not appear.
         coup, ids = self._coupling([0, 0, 1, 1, -1])
         bt = pd.DataFrame({"id": ids, "Topic": [0, 1, 0, 1, -1]})
@@ -994,7 +994,7 @@ class TestCompositeByCommunity:
         return bt, coup
 
     def test_composite_scores_ignore_topic_use_community(self):
-        from pysyrev.core.report_data import _composite_scores
+        from pysyrev.core.report.sections.papers import _composite_scores
         bt, coup = self._inputs()
         det = _composite_scores(coup, bt)
         assert det                                          # scored

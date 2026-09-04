@@ -66,7 +66,8 @@ class TestLabelClusters:
 
     def test_labels_every_community(self, monkeypatch):
         from pysyrev.core import llm
-        monkeypatch.setattr(llm, "_make_provider", lambda *a, **k: _FakeProvider())
+        from pysyrev.core.llm import labeling
+        monkeypatch.setattr(labeling, "_make_provider", lambda *a, **k: _FakeProvider())
         terms = {0: ["solar", "pv"], 2: ["wind", "turbine"]}
         out = llm.label_clusters(terms, self._config())
         assert set(out) == {0, 2}
@@ -81,7 +82,8 @@ class TestLabelClusters:
                 captured["user"] = messages[-1]["content"]
                 return {"label": "ok"}, None
 
-        monkeypatch.setattr(llm, "_make_provider", lambda *a, **k: _Capture())
+        from pysyrev.core.llm import labeling
+        monkeypatch.setattr(labeling, "_make_provider", lambda *a, **k: _Capture())
         llm.label_clusters({0: ["solar"]}, self._config(),
                            repr_docs={0: ["A study of rooftop solar"]})
         assert "rooftop solar" in captured["user"]
@@ -91,7 +93,7 @@ class TestLabelClusters:
 class TestCommunityReprTitles:
 
     def test_top_strength_titles_per_community(self):
-        from pysyrev.core.report_data import _community_repr_titles
+        from pysyrev.core.report.sections.networks import _community_repr_titles
         from pysyrev.core.networks.common import NetworkResult
         ids = ["W0", "W1", "W2", "W3"]
         # W0 strongly connected within comm 0; comm 1 = {W2, W3}.

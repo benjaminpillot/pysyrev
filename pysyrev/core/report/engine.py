@@ -2,7 +2,7 @@
 Generic PDF report engine built on ReportLab.
 
 Consumes a declarative `report_data` dict and renders it to a PDF file.
-Domain-specific report builders (e.g. core/report_data.py) are responsible
+Domain-specific report builders (see core/report/sections/) are responsible
 for assembling that dict; this module only handles layout and rendering.
 
 Supported block types
@@ -17,7 +17,6 @@ passed as ``block["figure"]``. plotly/kaleido must be installed separately.
 
 from __future__ import annotations
 
-import os
 import shutil
 import tempfile
 from dataclasses import dataclass

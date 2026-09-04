@@ -22,7 +22,7 @@ from hdbscan import HDBSCAN
 from sentence_transformers import SentenceTransformer
 from umap import UMAP
 
-from pysyrev.core.config import TopicModelConfig
+from pysyrev.core.config import Config, TopicModelConfig
 from pysyrev.core.topic import (clean_dataset, topic_modeling,
                                 derive_min_topic_size_range)
 from pysyrev.core.topic_labels import load_cached_labels, save_labels
@@ -148,9 +148,8 @@ class TopicModel:
     # ---- bridge from configuration --------------------------------------
 
     @classmethod
-    def from_config(cls, config: 'Config') -> 'TopicModel':
+    def from_config(cls, config: Config) -> 'TopicModel':
         """Build a TopicModel from a full Config object."""
-        from pysyrev.core.config import Config
         tc = config.topic_model
         ctfidf_model = ClassTfidfTransformer(
             bm25_weighting        = tc.ctfidf.bm25_weighting,
@@ -226,7 +225,7 @@ class TopicModel:
     def _label_selected_model(self) -> None:
         """Generate and cache LLM labels for the model at best_model_index."""
         from pysyrev.core.llm import label_topics
-        from pysyrev.core.report_data import find_best_results_csv, build_file_prefix
+        from pysyrev.core.report import find_best_results_csv, build_file_prefix
 
         csv_path, distance_name = find_best_results_csv(self._run_dir)
         best_results = pd.read_csv(csv_path)

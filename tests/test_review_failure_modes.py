@@ -22,6 +22,7 @@ import time
 import pytest
 
 from pysyrev.core import llm
+from pysyrev.core.llm import labeling, ratelimit
 from pysyrev.core.llm import (ALBERT_API_KEY_ENV, ALBERT_REQUESTS_PER_MINUTE,
                               TruncatedResponse, _extract_json, _is_rate_limited,
                               _RateLimiter, _review_batch, Reviewer,
@@ -105,8 +106,8 @@ def fresh_limiters():
 @pytest.fixture
 def instant_backoff(monkeypatch):
     """Keep the 429 waits out of the test clock."""
-    monkeypatch.setattr(llm, "RATE_LIMIT_BASE_DELAY", 0.001)
-    monkeypatch.setattr(llm, "RATE_LIMIT_MAX_DELAY", 0.01)
+    monkeypatch.setattr(ratelimit, "RATE_LIMIT_BASE_DELAY", 0.001)
+    monkeypatch.setattr(ratelimit, "RATE_LIMIT_MAX_DELAY", 0.01)
 
 
 # ── Truncation ─────────────────────────────────────────────────────────────
@@ -350,7 +351,7 @@ class TestSharedPacing:
 
     def test_the_second_reviewer_of_a_round_waits_out_the_first(self, monkeypatch):
         """A round runs its reviewers one after another, on the same key."""
-        monkeypatch.setattr(llm, "RATE_LIMIT_WINDOW", 0.3)
+        monkeypatch.setattr(ratelimit, "RATE_LIMIT_WINDOW", 0.3)
         texts = [f"a{i}" for i in range(10)]         # 2 calls of 5 per reviewer
         reviewers = [_reviewer(_RecordingProvider(None), name=name,
                                provider_name="albert", requests_per_minute=2,
@@ -396,7 +397,7 @@ class TestLabellerPacing:
                     raise _RateLimitError()
                 return {"label": "Solar PV adoption"}, None
 
-        monkeypatch.setattr(llm, "_make_provider", lambda *a, **k: _Labeller())
+        monkeypatch.setattr(labeling, "_make_provider", lambda *a, **k: _Labeller())
         out = llm.label_clusters({0: ["solar", "pv"]},
                                  self._config(max_retries=2))
         assert out == {0: "Solar PV adoption"}

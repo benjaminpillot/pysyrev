@@ -1,9 +1,9 @@
-"""Tests for the shared matrix-heatmap layout (pysyrev.core.figures)."""
+"""Tests for the shared matrix-heatmap layout (pysyrev.core.report.figures)."""
 
 import numpy as np
 import pytest
 
-from pysyrev.core.figures import (matrix_heatmap, plot_connectivity_matrix,
+from pysyrev.core.report.figures import (matrix_heatmap, plot_connectivity_matrix,
                                   plot_crosstab_heatmap, plot_similarity_matrix)
 
 
