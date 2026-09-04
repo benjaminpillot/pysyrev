@@ -21,7 +21,7 @@ YAML file:
 
 .. code-block:: text
 
-   bib  →  review  →  bib_network  →  topic_model  →  topic_report
+   bib  →  review  →  topic_model  →  topic_report
 
 
 .. rubric:: Output auto-wiring
@@ -29,10 +29,14 @@ YAML file:
 When ``doc_dataset`` / ``run_dir`` fields are left blank, ``Config.load()``
 automatically propagates outputs between stages:
 
-- ``bib.export.export_dir``       → ``review.doc_dataset``
-- ``review.export.export_dir``    → ``bib_network.doc_dataset``
-- ``review.export.export_dir``    → ``topic_model.doc_dataset``
+- ``bib.export.export_dir``         → ``review.doc_dataset``
+- ``review.export.export_dir``      → ``topic_model.doc_dataset``
 - ``topic_model.export.export_dir`` → ``topic_report.run_dir``
+
+.. note::
+   ``topic_model.doc_dataset`` is also the file the report's bibliographic
+   network panels are recomputed from, so it must carry the corpus' reference
+   columns even when you only want a report.
 
 
 ----
@@ -287,6 +291,20 @@ consolidated CSV.
       Same meaning as their ``open_alex.api`` counterparts.  These credentials
       are also reused by ``reference_keys`` when the source is seed-based.
 
+``scopus``
+   :Type: ``str``
+   :Default: —
+   :Required: no
+
+   Path to a Scopus CSV export.  File-only: there is no Scopus API source.
+
+``pubmed``
+   :Type: ``str``
+   :Default: —
+   :Required: no
+
+   Path to a PubMed export (MEDLINE ``.nbib`` / ``.txt``).  File-only.
+
 ``clean``
    :Type: mapping
    :Default: all defaults applied
@@ -307,6 +325,14 @@ consolidated CSV.
       :Default: ``[]``
 
       Additional literal phrases that count as garbage signals.
+
+   ``clean.max_abstract_chars``
+      :Type: ``int``
+      :Default: ``null`` (no truncation)
+
+      Cut abstracts longer than this, at a sentence boundary when possible.
+      Some sources return the whole full text in the abstract field; left
+      whole, one such record can dominate a review call's token budget.
 
    ``clean.use_langdetect``
       :Type: ``bool``
@@ -401,6 +427,14 @@ consolidated CSV.
       Maximum number of candidate duplicates inspected per record.
       Increase for large corpora if recall is insufficient.
 
+   ``merge.priority``
+      :Type: list of ``str``
+      :Default: ``[open_alex, wos, scopus, pubmed]``
+
+      Which source wins when the same document is found twice.  The default
+      keeps OpenAlex records for their stable ids; the losing duplicates are
+      aliased, so references pointing at them still resolve.
+
    ``merge.scorer``
       :Type: ``str``
       :Default: ``token_set_ratio``
@@ -450,6 +484,65 @@ consolidated CSV.
       :Default: ``token_set_ratio``
       :Values: any ``rapidfuzz`` scorer name
 
+``abstract_completion``
+   :Type: list of mappings
+   :Default: ``null``
+   :Required: no
+
+   Fill abstracts the primary source left empty, before ``clean`` drops those
+   records.  Entries run in order, so a later provider only sees what the
+   earlier ones could not fill.  Nothing but the ``abstract`` column is
+   touched — the ids and reference lists the coupling network needs are
+   preserved.
+
+   .. code-block:: yaml
+
+      abstract_completion:
+        - provider: wos
+          api_key: ${WOS_API_KEY}
+          cache_dir: /path/to/wos_cache
+
+   ``abstract_completion[].provider``
+      :Type: ``str``
+      :Required: yes
+      :Values: ``wos``
+
+   ``abstract_completion[].api_key``
+      :Type: ``str``
+      :Default: ``null``
+
+   ``abstract_completion[].cache_dir``
+      :Type: ``str``
+      :Default: ``null``
+
+``reference_keys``
+   :Type: mapping
+   :Default: ``null`` (references keep their per-source form)
+   :Required: no
+
+   Remap every reference onto a shared DOI key space, written to a
+   ``reference_keys`` column.  Without it, bibliographic coupling across merged
+   sources depends on the merge order: a WoS record and an OpenAlex record can
+   cite the same paper under two different reference strings and never couple.
+
+   Intra-corpus references and references that already carry a DOI map for
+   free; extra-corpus OpenAlex ids are resolved to DOIs through the OpenAlex
+   API and cached.  The resolution step is skipped automatically when there is
+   no other-source DOI to bridge to.
+
+   ``reference_keys.cache``
+      :Type: ``str``
+      :Default: ``null``
+
+      JSON cache of resolved ``openalex id → DOI`` pairs, reused across runs.
+
+   ``reference_keys.resolve_external``
+      :Type: ``bool``
+      :Default: ``true``
+
+      Call the OpenAlex API for references outside the corpus.  Set to
+      ``false`` to stay offline and key only what can be mapped locally.
+
 ``export`` *(bib)*
    :Type: mapping
    :Required: yes
@@ -467,6 +560,12 @@ consolidated CSV.
 
       A human-readable label for the run, e.g. ``may_2026_wos_oa``.
       Re-using an existing name reopens that run directory.
+
+   ``export.dataset``
+      :Type: ``str``
+      :Default: ``bib_dataset.csv``
+
+      File name of the consolidated corpus written inside the run directory.
 
 
 ----
@@ -540,6 +639,12 @@ included in the review.
    If set, a random sample of this size is drawn from the dataset.
    Useful for pilot runs.
 
+``review.sample_seed``
+   :Type: ``int``
+   :Default: ``null`` (a fresh sample every run)
+
+   Seed for the ``sample_size`` draw.  Set it to make a test run reproducible.
+
 ``review.max_retries``
    :Type: ``int``
    :Default: ``null`` → module default (2)
@@ -561,6 +666,38 @@ included in the review.
    Number of records sent per API call.  Batching records reduces cost;
    the backstory is sent only once per call.  Can be overridden per
    reviewer.
+
+``review.requests_per_minute``
+   :Type: ``int``
+   :Default: ``null`` → provider default (Albert: 10; others: unpaced)
+
+   Client-side quota, shared by every reviewer and by the ``llm`` labeller
+   running on the same key — a gateway counts requests per key, not per
+   reviewer, so pacing each reviewer separately overshoots as soon as there is
+   more than one.  A slot is taken at the moment a request is sent, and a 429
+   makes the whole run wait rather than burning a retry.
+
+``review.timeout``
+   :Type: ``float``
+   :Default: ``null`` → provider default
+
+   Seconds allowed per call.  Overridable per reviewer.
+
+``review.use_batch_api``
+   :Type: ``bool``
+   :Default: ``false``
+
+   Screen the corpus through the provider's batch endpoint instead of live
+   calls: same prompts, results within 24 h, half price on input and output.
+   The run blocks until the batch completes, and an interrupted run re-attaches
+   to the batch already paid for rather than resubmitting it.  Supported on
+   Anthropic; other providers fall back to live calls.
+
+``review.batch_poll_interval``
+   :Type: ``float``
+   :Default: ``30.0``
+
+   Seconds between batch status checks when ``use_batch_api`` is on.
 
 ``review.export`` *(review)*
    :Type: mapping
@@ -625,7 +762,7 @@ included in the review.
    ``provider``
       :Type: ``str``
       :Required: yes
-      :Values: ``anthropic`` | ``openai`` | ``litellm`` | ``ollama``
+      :Values: ``anthropic`` | ``openai`` | ``albert`` | ``litellm`` | ``ollama``
 
       LLM provider.  Use ``litellm`` or ``ollama`` for custom or
       self-hosted endpoints.
@@ -701,81 +838,13 @@ included in the review.
       :Type: ``int``
       :Default: ``null`` → section-level ``review.items_per_call``
 
-
-----
-
-
-``bib_network`` — bibliographic networks
-------------------------------------------
-
-Builds bibliographic coupling and co-citation graphs from resolved and
-unresolved reference lists.  Outputs two GraphML files per run.
-
-``bib_network.doc_dataset``
-   :Type: ``str``
-   :Default: ``null`` (auto-detect latest review run)
-
-   Path to a ``reviewed_included.csv``.  Leave blank to use the most
-   recent file in ``review.export.export_dir``.
-
-``bib_network.coupling_network``
-   :Type: mapping
-   :Default: all defaults applied
-
-   Bibliographic coupling graph: two documents are linked if they cite
-   at least one common reference.
-
-   ``coupling_network.use_resolved``
-      :Type: ``bool``
-      :Default: ``false``
-
-      Include edges based on resolved (matched) references.
-
-   ``coupling_network.use_unresolved``
-      :Type: ``bool``
-      :Default: ``false``
-
-      Include edges based on unresolved (raw string) references.
-
-   ``coupling_network.min_shared``
+   ``requests_per_minute``
       :Type: ``int``
-      :Default: ``1``
+      :Default: ``null`` → section-level ``review.requests_per_minute``
 
-      Minimum number of shared references required to draw an edge.
-      Increase to reduce noise in dense corpora.
-
-``bib_network.cocitation_network``
-   :Type: mapping
-   :Default: all defaults applied
-
-   Co-citation graph: two documents are linked if they are cited
-   together by at least one paper in the corpus.
-
-   ``cocitation_network.use_resolved``
-      :Type: ``bool``
-      :Default: ``false``
-
-   ``cocitation_network.use_unresolved``
-      :Type: ``bool``
-      :Default: ``false``
-
-   ``cocitation_network.min_cocitations``
-      :Type: ``int``
-      :Default: ``1``
-
-      Minimum co-occurrence count required to draw an edge.
-
-``bib_network.export`` *(bib_network)*
-   :Type: mapping
-   :Required: yes
-
-   ``export.export_dir``
-      :Type: ``str``
-      :Required: yes
-
-   ``export.run_name``
-      :Type: ``str``
-      :Default: ``null`` → auto-generated timestamp
+   ``timeout``
+      :Type: ``float``
+      :Default: ``null`` → section-level ``review.timeout``
 
 
 ----
@@ -1027,22 +1096,11 @@ configurations to ``best_results.csv``.
 ``topic_report`` — PDF report generation
 ------------------------------------------
 
-Selects one model configuration from the topic-model results and generates
-a PDF bibliographic report.  Requires the ``report`` section for layout
-options and, optionally, the ``llm`` section for topic label generation.
+Selects one model configuration from the topic-model results and generates the
+PDF report. Optionally uses the ``llm`` section for topic and community labels.
 
-``topic_report.model_index``
-   :Type: ``int``
-   :Default: ``0``
-
-   Row index in ``best_results.csv`` (0-based).  ``0`` selects the
-   highest-ranked model configuration.
-
-``topic_report.export_to``
-   :Type: ``str``
-   :Required: yes
-
-   Directory where the generated PDF is written.
+Which configuration is rendered is decided by ``topic_model.best_model_index``,
+not here.
 
 ``topic_report.run_dir``
    :Type: ``str``
@@ -1051,75 +1109,18 @@ options and, optionally, the ``llm`` section for topic label generation.
    Path to a specific topic-model run directory.  Leave blank to use
    the most recent run in ``topic_model.export.export_dir``.
 
-
-----
-
-
-``llm`` — topic label generation
-----------------------------------
-
-When present, an LLM generates human-readable labels for each topic
-discovered by the topic-model stage.  Used together with ``topic_report``.
-
-``llm.provider``
-   :Type: ``str``
-   :Required: yes
-   :Values: ``anthropic`` | ``openai`` | ``litellm`` | ``ollama``
-
-``llm.model_id``
+``topic_report.export_to``
    :Type: ``str``
    :Required: yes
 
-   Model identifier, e.g. ``claude-haiku-4-5-20251001``.
+   Directory where the generated PDF is written.  Interactive HTML versions of
+   the network figures and the paper-selection annex are written here too.
 
-``llm.host``
-   :Type: ``str``
-   :Default: ``null`` (use default hosted endpoint)
-
-   Custom endpoint for ``litellm`` or ``ollama``.
-
-``llm.max_tokens``
-   :Type: ``int``
-   :Default: ``200``
-
-``llm.temperature``
-   :Type: ``float``
-   :Default: ``0.3``
-
-``llm.max_retries``
-   :Type: ``int``
-   :Default: ``2``
-
-``llm.max_concurrent_requests``
-   :Type: ``int``
-   :Default: ``5``
-
-``llm.n_repr_docs_for_labeling``
-   :Type: ``int``
-   :Default: ``3``
-
-   Number of representative documents (closest to the topic centroid)
-   sent to the LLM to generate each topic label.
-
-``llm.system_prompt``
-   :Type: ``str``
-   :Default: ``null`` (built-in default prompt)
-
-   Override the default system prompt for topic labelling.
-
-
-----
-
-
-``report`` — PDF layout
--------------------------
-
-PDF layout and section parameters.  All keys are optional; built-in
-defaults are used for any omitted key.
-
-``report.meta``
+``topic_report.meta``
    :Type: mapping
    :Default: all defaults applied
+
+   Cover-page metadata.
 
    ``meta.title``
       :Type: ``str``
@@ -1149,9 +1150,14 @@ defaults are used for any omitted key.
 
       Optional introductory paragraph shown on the cover page.
 
-``report.sections``
+``topic_report.sections``
    :Type: mapping
    :Default: all defaults applied
+
+   Every section is rendered with its defaults unless you override it.  A
+   section is skipped only when the data it needs is missing — the network
+   panels, for instance, need a ``topic_model.doc_dataset`` carrying reference
+   columns.
 
    ``sections.topics``
 
@@ -1163,21 +1169,105 @@ defaults are used for any omitted key.
          centroid) displayed in the per-topic section.
 
    ``sections.bib_network``
+      :Type: mapping
+      :Default: all defaults applied
 
-      ``bib_network.enabled``
-         :Type: ``str``
-         :Default: ``auto``
-         :Values: ``auto`` | ``true`` | ``false``
+      Bibliographic coupling and co-citation panels, recomputed from the
+      reviewed corpus' references at report time.  When the corpus carries a
+      ``reference_keys`` column (see ``bib.reference_keys``) it is preferred
+      over the raw ``references`` column, so coupling holds across merged
+      sources.
 
-         Whether to include the bibliographic network graphs in the
-         report.  ``auto`` includes them when the ``bib_network`` stage
-         was run and its outputs are detected.
+      ``bib_network.coupling``
+
+         ``coupling.resolution_range``
+            :Type: list of ``float``
+            :Default: ``[0.4, 1.2]``
+
+            ``[min, max]`` bounds of the Leiden resolution sweep; the partition
+            with the best modularity is kept.
+
+         ``coupling.resolution_step``
+            :Type: ``float``
+            :Default: ``0.1``
+
+         ``coupling.min_size``
+            :Type: ``int``
+            :Default: ``5``
+
+            Communities smaller than this fall into the uncoupled tail.
+
+         ``coupling.backbone_k``
+            :Type: ``int``
+            :Default: ``3``
+
+            Draw only each node's *k* strongest couplings, so the figure stays
+            readable on a dense corpus.
+
+         ``coupling.color_by``
+            :Type: ``str``
+            :Default: ``topic``
+            :Values: ``topic`` | ``community``
+
+      ``bib_network.cocitation``
+
+         Same keys as ``coupling`` (``resolution_range``, ``resolution_step``,
+         ``min_size``, ``backbone_k``, ``color_by``, the last defaulting to
+         ``community``), plus:
+
+         ``cocitation.min_ref_freq``
+            :Type: ``int``
+            :Default: ``2``
+
+            Keep only references cited by at least this many documents.  The
+            once-cited long tail is dropped before anything is looked up.
+
+         ``cocitation.metadata``
+            :Type: mapping
+            :Default: ``null`` (nodes left unresolved)
+
+            Resolve co-citation nodes to real works, so communities can be read
+            as intellectual bases (authors, venues, period) rather than opaque
+            ids.  A failure here degrades to unnamed clusters; it never fails
+            the report.
+
+            ``metadata.provider``
+               :Type: ``str``
+               :Default: ``openalex``
+
+            ``metadata.api_key`` / ``metadata.email``
+               :Type: ``str``
+               :Default: ``null``
+
+               Typically ``${OPENALEX_API_KEY}``; the e-mail opts into the
+               polite pool.
+
+            ``metadata.cache``
+               :Type: ``str``
+               :Default: ``null``
+
+               JSON cache path.  Resolved references are reused across runs.
+
+            ``metadata.include_abstracts``
+               :Type: ``bool``
+               :Default: ``false``
+
+      ``bib_network.connectivity``
+
+         Inter-community and inter-topic connectivity matrices (mean coupling
+         between groups).
+
+         ``connectivity.scale``
+            :Type: ``float``
+            :Default: ``1000.0``
+
+            Rescales the very small coupling values so the matrix is readable.
 
    ``sections.temporal``
 
       ``temporal.variants``
          :Type: list of ``str``
-         :Default: ``[absolute, cumulative, normalized, weighted]``
+         :Default: ``[absolute, normalized, weighted]``
          :Values: any subset of ``absolute``, ``cumulative``, ``normalized``, ``weighted``
 
          Publication-trend chart variants included in the temporal
@@ -1216,36 +1306,245 @@ defaults are used for any omitted key.
 
    ``sections.paper_selection``
 
+      The reading list: the papers worth reading first in each topic.
+
       ``paper_selection.min_year``
          :Type: ``int``
          :Default: ``2000``
 
-         Only papers published from this year onward are eligible for
-         the curated paper-selection section.
+         Only papers published from this year onward are eligible.
 
       ``paper_selection.proportion_per_topic``
          :Type: ``float``
          :Default: ``0.15``
 
-         Fraction of each topic's documents included in the curated
-         selection.
+         Fraction of each topic's documents included in the selection.
 
       ``paper_selection.selection_by``
          :Type: ``str``
          :Default: ``citations``
-         :Values: ``citations`` | ``random``
+         :Values: ``citations`` | ``centrality`` | ``composite``
 
-         Criterion for selecting papers within each topic.
+         How papers are ranked within a topic.  ``citations`` uses the raw
+         citation count; ``centrality`` uses coupling-network centrality;
+         ``composite`` combines three axes (see ``composite`` below) and needs
+         the coupling network, i.e. a corpus carrying references.
+
+      ``paper_selection.composite``
+         :Type: mapping
+         :Default: all defaults applied
+
+         Parameters of the three-axis composite score — coupling centrality,
+         thematic representativeness, and citation relevance.
+
+         ``composite.aggregate``
+            :Type: ``str``
+            :Default: ``mean``
+            :Values: ``mean`` | ``gmean`` | ``chebyshev``
+
+            How the three axes are combined.  ``gmean`` and ``chebyshev``
+            penalise a paper that is weak on any single axis.
+
+         ``composite.weights``
+            :Type: list of ``float``
+            :Default: ``null`` (equal weights)
+
+            ``(centrality, representativeness, relevance)``.
+
+         ``composite.relevance_mode``
+            :Type: ``str``
+            :Default: ``blend``
+            :Values: ``blend`` | ``cpy``
+
+            ``blend`` mixes citations per year with raw citations, so an old
+            landmark is not beaten by a recent paper with a good rate;
+            ``cpy`` uses citations per year alone.
+
+         ``composite.drop_current_year``
+            :Type: ``bool``
+            :Default: ``true``
+
+            Drop the incomplete current year from the citations-per-year
+            denominator.
+
+         ``composite.current_year``
+            :Type: ``int``
+            :Default: ``null`` (latest year in the corpus)
+
+         ``composite.split_current_year``
+            :Type: ``bool``
+            :Default: ``false``
+
+            List current-year "research fronts" separately, ranked on two axes,
+            instead of mixing them into the historical three-axis list.
 
       ``paper_selection.export_annex``
          :Type: ``bool``
          :Default: ``true``
 
-         Append a full reference list of selected papers as an annex.
+         Write the full reference list of selected papers next to the PDF.
 
       ``paper_selection.annex_format``
          :Type: ``str``
          :Default: ``csv``
          :Values: ``csv`` | ``txt``
 
-         File format for the exported annex.
+   ``sections.extra``
+      :Type: list of mappings
+      :Default: ``null``
+
+      Extra sections appended verbatim to the report, in the declarative block
+      format the PDF engine consumes (``paragraph``, ``table``, ``image``,
+      ``callout``, …).
+
+
+----
+
+
+``llm`` — topic label generation
+----------------------------------
+
+When present, an LLM generates human-readable labels for each topic
+discovered by the topic-model stage **and** for each bibliographic-coupling and
+co-citation community of the report's network panels.  Used together with
+``topic_report``.
+
+Both label sets are cached under the run directory (``topic_labels/`` and
+``cluster_labels/``), the community cache keyed on a hash of the sub-theme
+terms themselves.  So the labeller runs once and re-runs only when the
+partition actually changes — never on every report.
+
+``llm.provider``
+   :Type: ``str``
+   :Required: yes
+   :Values: ``anthropic`` | ``openai`` | ``albert`` | ``litellm`` | ``ollama``
+
+``llm.model_id``
+   :Type: ``str``
+   :Required: yes
+
+   Model identifier, e.g. ``claude-haiku-4-5-20251001``.
+
+``llm.host``
+   :Type: ``str``
+   :Default: ``null`` (use default hosted endpoint)
+
+   Custom endpoint for ``litellm`` or ``ollama``.
+
+``llm.max_tokens``
+   :Type: ``int``
+   :Default: ``200``
+
+``llm.temperature``
+   :Type: ``float``
+   :Default: ``0.3``
+
+``llm.max_retries``
+   :Type: ``int``
+   :Default: ``2``
+
+``llm.max_concurrent_requests``
+   :Type: ``int``
+   :Default: ``5``
+
+``llm.requests_per_minute``
+   :Type: ``int``
+   :Default: ``null`` → provider default (Albert: 10)
+
+   Shares the review's quota when both run against the same key.
+
+``llm.timeout``
+   :Type: ``float``
+   :Default: ``null`` → provider default
+
+   Seconds allowed per labelling call.
+
+``llm.n_repr_docs_for_labeling``
+   :Type: ``int``
+   :Default: ``3``
+
+   Number of representative documents sent to the LLM per label — the
+   documents closest to a topic's centroid, or the most central papers of a
+   bibliographic-coupling community.
+
+``llm.system_prompt``
+   :Type: ``str``
+   :Default: ``null`` (built-in default prompt)
+
+   Override the default system prompt for topic labelling.
+
+
+----
+
+
+``download`` — full-text retrieval (separate file)
+----------------------------------------------------
+
+``pysyrev download`` reads its own YAML file, not the pipeline config. Load it
+with ``--config``; the positional arguments always override ``doc_dataset`` and
+``output_dir``. Without ``--config``, only the OpenAlex step runs — no key
+needed. See ``config_examples/download_config.yaml``.
+
+Each paper is tried in cascade order: **Unpaywall** (legal open-access PDF by
+DOI) → **OpenAlex** (the ``open_access.oa_url`` already in the input dataset)
+→ **Elsevier TDM** (only when a key is set). Papers that could not be retrieved
+are listed in ``download_report.csv`` with ``status = manual``.
+
+``doc_dataset``
+   :Type: ``str``
+   :Required: yes
+
+   CSV listing the papers to download; must contain a ``doi`` column.  The
+   report's paper-selection annex and ``reviewed_included.csv`` both qualify.
+
+``output_dir``
+   :Type: ``str``
+   :Required: yes
+
+   Root for the output: ``papers/`` holds the files, ``download_report.csv``
+   holds one row per paper (doi | title | status | source | file_path).
+
+``format``
+   :Type: ``str``
+   :Default: ``pdf``
+   :Values: ``pdf`` | ``xml``
+
+   Default format for the open-access sources.  ``xml`` gives structured
+   full text — smaller, and already sectioned, when the next step is an LLM.
+
+``max_papers``
+   :Type: ``int``
+   :Default: ``null`` (all)
+
+``request_delay``
+   :Type: ``float``
+   :Default: ``1.0``
+
+   Seconds between HTTP requests.  Unpaywall's fair-use policy requires ≤ 1
+   request per second.
+
+``unpaywall``
+   :Type: mapping
+   :Default: ``null`` (step skipped)
+
+   ``unpaywall.email``
+      :Type: ``str``
+      :Required: yes
+
+      Required by Unpaywall's politeness policy; unlocks the
+      higher-throughput pool.
+
+``elsevier``
+   :Type: mapping
+   :Default: ``null`` (step skipped)
+
+   ``elsevier.api_key``
+      :Type: ``str``
+      :Required: yes
+
+      Institutional Elsevier TDM key.
+
+   ``elsevier.format``
+      :Type: ``str``
+      :Default: ``xml``
+      :Values: ``xml`` | ``pdf``

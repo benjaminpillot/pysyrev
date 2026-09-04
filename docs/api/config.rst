@@ -35,6 +35,14 @@ bib section
    :members:
    :show-inheritance:
 
+.. autoclass:: pysyrev.core.config.SeedExpansionConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.OpenAlexSeedConfig
+   :members:
+   :show-inheritance:
+
 .. autoclass:: pysyrev.core.config.CleanConfig
    :members:
    :show-inheritance:
@@ -48,6 +56,14 @@ bib section
    :show-inheritance:
 
 .. autoclass:: pysyrev.core.config.ResolveReferencesConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.ReferenceKeysConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.AbstractCompletionConfig
    :members:
    :show-inheritance:
 
@@ -67,25 +83,6 @@ review section
    :show-inheritance:
 
 .. autoclass:: pysyrev.core.config.ReviewExportConfig
-   :members:
-   :show-inheritance:
-
-bib_network section
---------------------
-
-.. autoclass:: pysyrev.core.config.BibNetworkConfig
-   :members:
-   :show-inheritance:
-
-.. autoclass:: pysyrev.core.config.CouplingNetworkConfig
-   :members:
-   :show-inheritance:
-
-.. autoclass:: pysyrev.core.config.CocitationNetworkConfig
-   :members:
-   :show-inheritance:
-
-.. autoclass:: pysyrev.core.config.BibNetworkExportConfig
    :members:
    :show-inheritance:
 
@@ -112,18 +109,10 @@ topic_model section
    :members:
    :show-inheritance:
 
-topic_report / llm / report sections
---------------------------------------
+topic_report section
+--------------------
 
 .. autoclass:: pysyrev.core.config.TopicReportConfig
-   :members:
-   :show-inheritance:
-
-.. autoclass:: pysyrev.core.config.TopicLabelerConfig
-   :members:
-   :show-inheritance:
-
-.. autoclass:: pysyrev.core.config.ReportConfig
    :members:
    :show-inheritance:
 
@@ -132,5 +121,76 @@ topic_report / llm / report sections
    :show-inheritance:
 
 .. autoclass:: pysyrev.core.config.ReportSectionsConfig
+   :members:
+   :show-inheritance:
+
+Report sections
+~~~~~~~~~~~~~~~
+
+.. autoclass:: pysyrev.core.config.TopicsSectionConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.BibNetworkSectionConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.CouplingPanelConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.CocitationPanelConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.ReferenceMetadataConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.ConnectivityConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.TemporalSectionConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.TopicCharacteristicsConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.TopicSimilarityConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.PaperSelectionConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.CompositeConfig
+   :members:
+   :show-inheritance:
+
+llm section
+-----------
+
+.. autoclass:: pysyrev.core.config.TopicLabelerConfig
+   :members:
+   :show-inheritance:
+
+download config
+---------------
+
+Used by the standalone ``pysyrev download`` sub-command, not by the pipeline.
+
+.. autoclass:: pysyrev.core.config.DownloadConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.UnpaywallConfig
+   :members:
+   :show-inheritance:
+
+.. autoclass:: pysyrev.core.config.ElsevierDownloadConfig
    :members:
    :show-inheritance:

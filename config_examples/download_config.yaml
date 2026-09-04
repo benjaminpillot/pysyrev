@@ -5,8 +5,8 @@
 #   from pysyrev.core.config import DownloadConfig
 #   cfg = DownloadConfig.load("download_config.yaml")
 #
-# Or from the CLI (when implemented):
-#   pysyrev download --config download_config.yaml
+# Or from the CLI:
+#   pysyrev download candidates.csv output_folder/ --config download_config.yaml
 # =============================================================================
 
 # Path to the .env file.  Loaded first so every ${VAR} reference below

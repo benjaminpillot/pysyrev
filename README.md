@@ -26,7 +26,7 @@
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **Reading-list selection** — rank the most relevant papers per topic by citations, network centrality, or a three-axis composite (coupling centrality + citation impact + thematic representativeness)
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
-- **Download full-text PDFs** — download full-test PDFs for a list of candidates, e.g. the reading-list selection
+- **Download full-text PDFs** — retrieve full-text PDFs for a list of candidates, e.g. the reading-list selection
 - **Token cost estimation** — price review stage before running it when calling external API (anthropic, OpenAI, etc.)
 - **Deferred batch reviewing** — screen the corpus through the provider's batch endpoint (`review.use_batch_api`): same prompts, results within 24 h, half price on input and output; interrupted runs re-attach to the batch already paid for
 
@@ -55,10 +55,17 @@ All sections are optional — only the stages declared in the config file are ex
 pip install pysyrev
 ```
 
-To enable Plotly figure embedding in PDF reports:
+Optional extras:
 
 ```bash
-pip install "pysyrev[plotly]"
+pip install "pysyrev[citations]"   # BibDataset.fetch_citations (CrossRef, Semantic Scholar)
+pip install "pysyrev[langdetect]"  # bib.clean.use_langdetect
+```
+
+Topic-model pre-processing also needs a spaCy English model, which is not a pip dependency:
+
+```bash
+python -m spacy download en_core_web_lg
 ```
 
 ### From source
@@ -141,9 +148,10 @@ A config containing only the `topic_report` (and optionally `report` and `llm`) 
 # report_only.yaml
 topic_report:
   run_dir: /path/to/topic_modeling/run_2026-05-01T120000/  # or leave blank to auto-detect
-  model_index: 0
   export_to: /path/to/output/report/
 ```
+
+Which model configuration is rendered comes from `topic_model.best_model_index` (default `0`, the highest-ranked one), not from the `topic_report` section.
 
 ```bash
 pysyrev report_only.yaml
@@ -153,7 +161,7 @@ pysyrev report_only.yaml
 
 ## Configuration
 
-A single YAML file controls all stages. Copy `pysyrev/config_examples/config_template.yaml` and fill in the sections you need. Sections not present in the file are simply skipped.
+A single YAML file controls all stages. Copy `pysyrev/templates/config.yaml` and fill in the sections you need — or start from one of the fuller, annotated files in `config_examples/`. Sections not present in the file are simply skipped.
 
 Key auto-detection rules (when fields are left blank):
 
@@ -210,7 +218,7 @@ See the `tutorials/` folder for step-by-step Jupyter notebooks and annotated con
 ### Conceptualization and Coordination
 
 - Benjamin Pillot
-- 
+
 ---
 
 <div align="center">

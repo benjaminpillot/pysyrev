@@ -1,6 +1,9 @@
 sphinx>=7.2
 furo>=2024.1.29
 sphinx-autodoc-typehints>=1.25
+
+# Only the light dependencies autodoc actually needs to import the package;
+# everything heavy is listed in conf.py's autodoc_mock_imports.
 pandas>=2.0
 numpy>=1.24
 pyyaml>=6.0
@@ -8,5 +11,4 @@ python-dotenv>=1.0
 rapidfuzz>=3.0
 requests>=2.28
 tqdm>=4.64
-networkx>=3.0
 pydantic>=2.0

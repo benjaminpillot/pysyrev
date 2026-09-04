@@ -12,7 +12,16 @@ sys.path.insert(0, os.path.abspath('..'))
 project = 'pysyrev'
 copyright = '2026, Benjamin Pillot'
 author = 'Benjamin Pillot'
-release = '0.1.0'
+
+# Single source of truth: setup.py (kept in step by bump-my-version).
+def _release():
+    import pathlib, re
+    setup_py = (pathlib.Path(__file__).parent.parent / 'setup.py').read_text()
+    m = re.search(r'version="([^"]+)"', setup_py)
+    return m.group(1) if m else '0.0.0'
+
+release = _release()
+version = release
 
 # =============================================================================
 # Extensions
@@ -38,6 +47,11 @@ intersphinx_mapping = {
 # =============================================================================
 
 autodoc_mock_imports = [
+    'anthropic',
+    'openai',
+    'igraph',
+    'leidenalg',
+    'scipy',
     'bertopic',
     'hdbscan',
     'umap',

@@ -2,9 +2,9 @@ name: tests
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, development]
   pull_request:
-    branches: [master, main]
+    branches: [master, main, development]
 
 jobs:
   test:
@@ -23,7 +23,7 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install numpy              # must precede gensim to avoid build failure
           pip install pytest
-          pip install -e ".[plotly]"
+          pip install -e .   # plotly + kaleido are install_requires now
 
       - name: Run tests (fast, no ML stack)
         run: pytest -m "not slow and not integration" -q
