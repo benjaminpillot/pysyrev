@@ -170,16 +170,6 @@ class BibDataset:
 
         return self
 
-    def fetch_abstracts(self):
-        """ Use online APIs to retrieve abstracts
-
-        Returns
-        -------
-
-        """
-        #TODO
-        pass
-
     def complete_abstracts(self, completer, provider="completion", verbose=True):
         """Fill missing abstracts using a completion strategy.
 

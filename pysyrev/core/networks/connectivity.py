@@ -41,10 +41,12 @@ def inter_cluster_matrix(W: np.ndarray, groups: Sequence[Tuple[str, np.ndarray]]
     row/col positions in ``W`` for that group; its order defines the matrix order.
 
     Returns ``(M, labels)``:
-      * ``M[i,j]`` (``i != j``) — plain mean of the block ``W[group_i, group_j]``.
-      * ``M[i,i]`` — mean over the strict upper triangle of the within-group
-        block (every distinct intra-group pair, excluding the zero self-diagonal):
-        the group's internal cohesion.
+
+    * ``M[i,j]`` (``i != j``) — plain mean of the block ``W[group_i, group_j]``.
+    * ``M[i,i]`` — mean over the strict upper triangle of the within-group
+      block (every distinct intra-group pair, excluding the zero self-diagonal):
+      the group's internal cohesion.
+
     ``scale`` only rescales for readability (coupling values are tiny); ratios and
     the baseline comparison are unaffected. Symmetric by construction.
     """

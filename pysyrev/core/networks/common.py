@@ -92,10 +92,6 @@ class NetworkResult:
     def n_communities(self) -> int:
         return len({c for c in self.labels.tolist() if c >= 0})
 
-    def community_sizes(self) -> dict:
-        vals, counts = np.unique(self.labels, return_counts=True)
-        return {int(v): int(c) for v, c in zip(vals, counts)}
-
     def plot(self, **kwargs):
         """Draw this network — see :func:`pysyrev.core.networks.plotting.plot_network`."""
         # Local import: plotting imports from this module (backbone_edges), so a

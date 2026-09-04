@@ -1,12 +1,21 @@
 """
-Shared utilities for caching LLM-generated topic labels.
+Shared utilities for caching LLM-generated topic and community labels.
 
-Labels are stored as JSON files alongside the other topic-model outputs:
-    <run_dir>/topic_labels/<file_prefix>.json
+Both caches are ``{int id: label}`` JSON files written under the topic-model
+run directory; they differ only in where they live and what identifies a run:
 
-The file_prefix matches the naming convention used for topic_info and
-bertopic_results CSVs (hdbscan=…_umap=…_distance=…), so each cached
-label file is unambiguously tied to one specific model run.
+- **Topic labels** — ``<run_dir>/topic_labels/<file_prefix>.json``. The
+  file_prefix matches the naming convention used for topic_info and
+  bertopic_results CSVs (hdbscan=…_umap=…_distance=…), so each cached label
+  file is unambiguously tied to one specific model run.
+
+- **Community labels** — ``<run_dir>/cluster_labels/<fingerprint>.json``, keyed
+  on a stable hash of the *terms themselves* rather than on model
+  hyperparameters. This self-invalidates: if the corpus or the Leiden partition
+  changes, the community sub-theme terms change, the hash changes, and the LLM
+  re-runs; otherwise the cached labels are reused and no call is made. So the
+  labeller runs once, never on every report. Coupling and co-citation share the
+  directory without colliding — different terms, different key.
 """
 
 import hashlib
@@ -15,12 +24,12 @@ import os
 from typing import Optional
 
 
-def labels_cache_path(run_dir: str, file_prefix: str) -> str:
-    return os.path.join(run_dir, "topic_labels", f"{file_prefix}.json")
+def _cache_path(run_dir: str, subdir: str, key: str) -> str:
+    return os.path.join(run_dir, subdir, f"{key}.json")
 
 
-def load_cached_labels(run_dir: str, file_prefix: str) -> Optional[dict]:
-    path = labels_cache_path(run_dir, file_prefix)
+def _load(run_dir: str, subdir: str, key: str) -> Optional[dict]:
+    path = _cache_path(run_dir, subdir, key)
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8") as f:
@@ -28,24 +37,14 @@ def load_cached_labels(run_dir: str, file_prefix: str) -> Optional[dict]:
     return {int(k): v for k, v in raw.items()}
 
 
-def save_labels(run_dir: str, file_prefix: str, labels: dict) -> str:
+def _save(run_dir: str, subdir: str, key: str, labels: dict) -> str:
     """Write labels to the cache file. Returns the path written."""
-    path = labels_cache_path(run_dir, file_prefix)
+    path = _cache_path(run_dir, subdir, key)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({str(k): v for k, v in labels.items()}, f,
                   ensure_ascii=False, indent=2)
     return path
-
-
-# ── Coupling-community labels ────────────────────────────────────────────────
-#
-# Community labels are cached alongside the topic labels, but keyed on a stable
-# hash of the *terms themselves* (``<run_dir>/cluster_labels/<hash>.json``)
-# rather than on model hyperparameters. This self-invalidates: if the corpus or
-# the Leiden partition changes, the community sub-theme terms change, the hash
-# changes, and the LLM re-runs; otherwise the cached labels are reused and no
-# call is made. So the labeller runs once, never on every report.
 
 
 def terms_fingerprint(terms: dict) -> str:
@@ -60,24 +59,17 @@ def terms_fingerprint(terms: dict) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def cluster_labels_cache_path(run_dir: str, fingerprint: str) -> str:
-    return os.path.join(run_dir, "cluster_labels", f"{fingerprint}.json")
+def load_cached_labels(run_dir: str, file_prefix: str) -> Optional[dict]:
+    return _load(run_dir, "topic_labels", file_prefix)
+
+
+def save_labels(run_dir: str, file_prefix: str, labels: dict) -> str:
+    return _save(run_dir, "topic_labels", file_prefix, labels)
 
 
 def load_cached_cluster_labels(run_dir: str, terms: dict) -> Optional[dict]:
-    path = cluster_labels_cache_path(run_dir, terms_fingerprint(terms))
-    if not os.path.isfile(path):
-        return None
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
-    return {int(k): v for k, v in raw.items()}
+    return _load(run_dir, "cluster_labels", terms_fingerprint(terms))
 
 
 def save_cluster_labels(run_dir: str, terms: dict, labels: dict) -> str:
-    """Write community labels to their fingerprint-keyed cache file."""
-    path = cluster_labels_cache_path(run_dir, terms_fingerprint(terms))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({str(k): v for k, v in labels.items()}, f,
-                  ensure_ascii=False, indent=2)
-    return path
+    return _save(run_dir, "cluster_labels", terms_fingerprint(terms), labels)

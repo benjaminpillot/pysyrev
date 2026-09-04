@@ -301,14 +301,6 @@ class GroupEstimate:
         return factor * (self.input_tokens  * self.price.input +
                          self.output_tokens * self.price.output) / 1e6
 
-    @property
-    def input_cost(self) -> float:
-        return self.input_tokens * self.price.input / 1e6
-
-    @property
-    def output_cost(self) -> float:
-        return self.output_tokens * self.price.output / 1e6
-
 
 @dataclass
 class ReviewEstimate:

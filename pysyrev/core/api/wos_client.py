@@ -4,15 +4,11 @@ Low-level Web of Science (Expanded API) client.
 Responsibilities:
   - Authenticate via the X-ApiKey header.
   - Run a query in WoS Query Language and iterate the paginated results.
-  - Retry transient errors (5xx, 429) with exponential backoff.
-  - Resume mid-pagination when retries fail, so a partial run can be
-    completed without re-fetching everything.
   - Surface the raw JSON of each record. Mapping to the project schema
     (`DEFAULT_FIELDS`) is the responsibility of a higher layer.
 
-Not done here (on purpose):
-  - Mapping to the project DataFrame schema -> see wos_search.py.
-  - Caching to disk -> see cache.py.
+Throttling, retry/backoff and resume-after-interrupt are shared with the other
+REST clients — see :class:`pysyrev.core.api.base.PaginatedClient`.
 
 Reference:
   https://developer.clarivate.com/apis/wos
@@ -20,14 +16,12 @@ Reference:
 
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, Iterator, List, Optional
+from typing import List, Optional
 
-import requests
 from tqdm import tqdm
+
+from pysyrev.core.api.base import PaginatedClient
 
 
 # WoS Expanded API base URL. The Starter API has a different URL scheme;
@@ -38,13 +32,6 @@ _WOS_BASE_URL = 'https://wos-api.clarivate.com/api/wos'
 # for Expanded.
 _PAGE_SIZE = 100
 
-# Retry policy.
-_MAX_RETRIES = 5
-_INITIAL_BACKOFF_SECONDS = 2.0   # doubles on each retry: 2, 4, 8, 16, 32
-
-# Rate limiting (client-side guard rail). Expanded typically allows 5 req/s.
-_MIN_INTERVAL_SECONDS = 0.25
-
 
 @dataclass
 class WosSearchResult:
@@ -53,7 +40,7 @@ class WosSearchResult:
     records: List[dict]
 
 
-class WosClient:
+class WosClient(PaginatedClient):
     """Low-level client for WoS Expanded API.
 
     Usage:
@@ -62,6 +49,11 @@ class WosClient:
         for record in result.records:
             ...
     """
+
+    name = 'WoS API'
+    # Rate limiting (client-side guard rail). Expanded typically allows 5 req/s.
+    min_interval = 0.25
+    resume_fields = {'next_first_record': 1}
 
     def __init__(self,
                  api_key: str,
@@ -82,95 +74,22 @@ class WosClient:
             Path to a JSON file storing pagination state. When provided,
             an interrupted run can be resumed from the last saved page.
         """
+        super().__init__(base_url, session_file)
         self.api_key = api_key
         self.database = database
-        self.base_url = base_url.rstrip('/')
-        self.session_file = Path(session_file) if session_file else None
-
-        self._session = requests.Session()
         self._session.headers.update({
             'X-ApiKey': self.api_key,
             'Accept': 'application/json',
         })
 
-        self._last_request_at = 0.0  # monotonic-style throttling
-
-    # ---- single-page primitive ----------------------------------------------
-
     def _fetch_page(self, query: str, first_record: int, count: int) -> dict:
-        """Fetch a single page (max `count` records starting at `first_record`).
-        Returns the raw JSON body."""
-        # Client-side throttling.
-        elapsed = time.monotonic() - self._last_request_at
-        if elapsed < _MIN_INTERVAL_SECONDS:
-            time.sleep(_MIN_INTERVAL_SECONDS - elapsed)
-
-        params = {
-            'databaseId': self.database,
-            'usrQuery': query,
-            'count': count,
+        """Fetch a single page (max `count` records starting at `first_record`)."""
+        return self._get({
+            'databaseId':  self.database,
+            'usrQuery':    query,
+            'count':       count,
             'firstRecord': first_record,
-        }
-
-        last_error = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                response = self._session.get(self.base_url, params=params, timeout=60)
-                self._last_request_at = time.monotonic()
-
-                # 429 (rate limit) and 5xx (server side): retryable.
-                if response.status_code == 429 or response.status_code >= 500:
-                    raise requests.HTTPError(
-                        f'Retryable HTTP {response.status_code}: {response.text[:200]}',
-                        response=response,
-                    )
-                response.raise_for_status()
-                return response.json()
-
-            except requests.HTTPError as e:
-                # Re-raise non-retryable client errors (4xx != 429) immediately.
-                sc = e.response.status_code if e.response is not None else 0
-                if sc != 429 and sc < 500:
-                    raise
-                last_error = e
-                if attempt == _MAX_RETRIES - 1:
-                    break
-                backoff = _INITIAL_BACKOFF_SECONDS * (2 ** attempt)
-                time.sleep(backoff)
-            except requests.RequestException as e:
-                last_error = e
-                if attempt == _MAX_RETRIES - 1:
-                    break
-                backoff = _INITIAL_BACKOFF_SECONDS * (2 ** attempt)
-                time.sleep(backoff)
-
-        raise RuntimeError(
-            f'WoS API request failed after {_MAX_RETRIES} retries: {last_error}'
-        ) from last_error
-
-    # ---- session state for resume -------------------------------------------
-
-    def _load_session(self, query: str) -> dict:
-        """Read existing session state for this query, if any."""
-        if not self.session_file or not self.session_file.exists():
-            return {'query': query, 'records': [], 'next_first_record': 1, 'total_found': None}
-        with open(self.session_file, 'r') as fh:
-            state = json.load(fh)
-        if state.get('query') != query:
-            # Different query than what was saved; ignore the stale session.
-            return {'query': query, 'records': [], 'next_first_record': 1, 'total_found': None}
-        return state
-
-    def _save_session(self, state: dict) -> None:
-        if not self.session_file:
-            return
-        self.session_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.session_file, 'w') as fh:
-            json.dump(state, fh)
-
-    def _clear_session(self) -> None:
-        if self.session_file and self.session_file.exists():
-            self.session_file.unlink()
+        })
 
     # ---- public API ---------------------------------------------------------
 
@@ -225,7 +144,7 @@ class WosClient:
                 # Persist state after every successful page so an interrupt
                 # (Ctrl+C, network outage, kernel crash) is recoverable.
                 self._save_session({
-                    'query': query,
+                    'key': query,
                     'records': records,
                     'next_first_record': first_record,
                     'total_found': total_found,

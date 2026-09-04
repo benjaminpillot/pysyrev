@@ -5,15 +5,15 @@ Responsibilities:
   - Run a query against the /works endpoint, with full-text search
     (`search=`) and/or structured filters (`filter=`).
   - Iterate the cursor-based pagination automatically.
-  - Retry transient errors (5xx, 429) with exponential backoff.
-  - Resume mid-pagination when retries fail, so a partial run can be
-    completed without re-fetching everything.
   - Surface the raw JSON of each work. Mapping to the project schema
     (`DEFAULT_FIELDS`) is the responsibility of a higher layer.
 
+Throttling, retry/backoff and resume-after-interrupt are shared with the other
+REST clients — see :class:`pysyrev.core.api.base.PaginatedClient`.
+
 Notes:
-  - No authentication required. Optionally accept an email for the polite
-    pool, which gives more generous rate limits (100k req/day).
+  - Optionally accept an email for the polite pool, which gives more
+    generous rate limits (100k req/day).
   - Cursor-based pagination scales to arbitrary result sizes (no 10k cap
     like the offset-based pagination).
 
@@ -24,26 +24,18 @@ Reference:
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List, Optional, Union
 
-import requests
 from tqdm import tqdm
+
+from pysyrev.core.api.base import PaginatedClient
 
 
 _OPENALEX_BASE_URL = 'https://api.openalex.org/works'
 
 # Max items per page (OpenAlex's documented hard cap).
 _PAGE_SIZE = 200
-
-# Retry policy (mirrors WosClient).
-_MAX_RETRIES = 5
-_INITIAL_BACKOFF_SECONDS = 2.0   # doubles on each retry: 2, 4, 8, 16, 32
-
-# Client-side throttling. OpenAlex recommends <= 10 req/s.
-_MIN_INTERVAL_SECONDS = 0.1
 
 
 @dataclass
@@ -53,7 +45,7 @@ class OpenAlexSearchResult:
     records: List[dict]
 
 
-class OpenAlexClient:
+class OpenAlexClient(PaginatedClient):
     """Low-level client for OpenAlex /works.
 
     Usage:
@@ -71,6 +63,11 @@ class OpenAlexClient:
         for work in result.records:
             ...
     """
+
+    name = 'OpenAlex'
+    # Client-side throttling. OpenAlex recommends <= 10 req/s.
+    min_interval = 0.1
+    resume_fields = {'cursor': '*'}
 
     def __init__(self,
                  api_key: str,
@@ -92,62 +89,23 @@ class OpenAlexClient:
             Path to a JSON file storing pagination state. When provided,
             an interrupted run can be resumed from the last saved cursor.
         """
+        super().__init__(base_url, session_file)
         self.api_key = api_key
         self.email = email
-        self.base_url = base_url.rstrip('/')
-        self.session_file = Path(session_file) if session_file else None
-
-        self._session = requests.Session()
-        ua = 'pysyrev'
-        if email:
-            ua = f'pysyrev (mailto:{email})'
         self._session.headers.update({
-            'Authorization' : f"Bearer {self.api_key}",
-            'User-Agent': ua,
+            'Authorization': f"Bearer {self.api_key}",
+            'User-Agent': f'pysyrev (mailto:{email})' if email else 'pysyrev',
             'Accept': 'application/json',
         })
 
-        self._last_request_at = 0.0
-
-    # ---- single-page primitive ----------------------------------------------
-
     def _fetch_page(self, params: dict) -> dict:
-        """Fetch one page. `params` must already carry the search/filter/cursor.
-        Returns the raw JSON body."""
-        elapsed = time.monotonic() - self._last_request_at
-        if elapsed < _MIN_INTERVAL_SECONDS:
-            time.sleep(_MIN_INTERVAL_SECONDS - elapsed)
-
+        """Fetch one page. `params` must already carry the search/filter/cursor."""
         # Polite-pool credit can also be passed as a query param when you
         # cannot set headers (e.g. some proxies strip them).
         full_params = dict(params)
         if self.email and 'mailto' not in full_params:
             full_params['mailto'] = self.email
-
-        last_error = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                response = self._session.get(self.base_url, params=full_params, timeout=60)
-                self._last_request_at = time.monotonic()
-
-                if response.status_code == 429 or response.status_code >= 500:
-                    raise requests.HTTPError(
-                        f'Retryable HTTP {response.status_code}: {response.text[:200]}',
-                        response=response,
-                    )
-                response.raise_for_status()
-                return response.json()
-
-            except (requests.RequestException, requests.HTTPError) as e:
-                last_error = e
-                if attempt == _MAX_RETRIES - 1:
-                    break
-                backoff = _INITIAL_BACKOFF_SECONDS * (2 ** attempt)
-                time.sleep(backoff)
-
-        raise RuntimeError(
-            f'OpenAlex request failed after {_MAX_RETRIES} retries: {last_error}'
-        ) from last_error
+        return self._get(full_params)
 
     # ---- session state for resume -------------------------------------------
 
@@ -156,26 +114,6 @@ class OpenAlexClient:
         """Stable identity for a (query, filters) pair, used to detect when
         a saved session refers to a different request."""
         return json.dumps({'q': query, 'f': filters or {}}, sort_keys=True)
-
-    def _load_session(self, key: str) -> dict:
-        if not self.session_file or not self.session_file.exists():
-            return {'key': key, 'records': [], 'cursor': '*', 'total_found': None}
-        with open(self.session_file, 'r') as fh:
-            state = json.load(fh)
-        if state.get('key') != key:
-            return {'key': key, 'records': [], 'cursor': '*', 'total_found': None}
-        return state
-
-    def _save_session(self, state: dict) -> None:
-        if not self.session_file:
-            return
-        self.session_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.session_file, 'w') as fh:
-            json.dump(state, fh)
-
-    def _clear_session(self) -> None:
-        if self.session_file and self.session_file.exists():
-            self.session_file.unlink()
 
     # ---- public API ---------------------------------------------------------
 
