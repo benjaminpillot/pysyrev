@@ -214,6 +214,7 @@ See the `tutorials/` folder for step-by-step Jupyter notebooks and annotated con
 - Benjamin Pillot
 - Théo Chamarande
 - Kevin Chapuis
+- Claude code (Opus 5)
 
 ### Conceptualization and Coordination
 
