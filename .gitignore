@@ -84,6 +84,9 @@ Thumbs.db
 **/bib_network_results/
 **/topic_modeling/
 **/report/
+# ...but `report` is also the name of a source package. The catch-all above
+# would silently swallow it, so re-include it explicitly.
+!pysyrev/core/report/
 
 # Compiled bytecode in non-standard locations
 *.cpython-*.pyc

@@ -10,10 +10,9 @@ setup(
     author_email="benjamin.pillot@ird.fr",
     license="MIT",
     python_requires=">=3.10",
-    packages=find_packages(exclude=["old_version*", "data*", "docs*"]),
+    packages=find_packages(exclude=["tests*", "old_version*", "data*", "docs*"]),
     package_data={
         "pysyrev": [
-            "config_examples/*.yaml",
             "templates/*.yaml",
             "core/berteley/*.csv",
         ],
@@ -29,8 +28,14 @@ setup(
         "nest-asyncio>=1.5",
         "pydantic>=2.0",
         "litellm>=1.0",
-        "networkx>=3.0",
+        "anthropic>=0.40",
         "reportlab>=4.0",
+        # Report figures: plotly comes in with bertopic, kaleido is what turns
+        # a figure into the PNG the PDF embeds.
+        "kaleido>=0.2",
+        # Leiden communities for the coupling / co-citation networks.
+        "python-igraph>=0.11",
+        "leidenalg>=0.10",
         "bertopic>=0.16",
         "hdbscan>=0.8",
         "umap-learn>=0.5",
@@ -43,9 +48,20 @@ setup(
         "contractions>=0.1",
     ],
     extras_require={
+        # Kept for backward compatibility: both are installed by default now
+        # (the default report renders plotly figures).
         "plotly": [
             "plotly>=5.0",
             "kaleido>=0.2",
+        ],
+        # bib.extract citation counts (BibDataset.fetch_citations).
+        "citations": [
+            "crossrefapi>=1.5",
+            "semanticscholar>=0.7",
+        ],
+        # bib.clean.use_langdetect: statistical language detection.
+        "langdetect": [
+            "langdetect>=1.0",
         ],
     },
     entry_points={

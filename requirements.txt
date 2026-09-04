@@ -3,8 +3,8 @@
 # =============================================================================
 # Install with:  pip install -r requirements.txt
 #
-# berteley (text pre-processing) is a local package — install it separately:
-#   pip install /path/to/berteley
+# This mirrors setup.py's install_requires. `pip install -e .` is enough on
+# its own; this file is here for environments built without the package.
 # =============================================================================
 
 # ---- Core -------------------------------------------------------------------
@@ -18,14 +18,18 @@ tqdm>=4.64
 nest-asyncio>=1.5
 pydantic>=2.0
 
-# ---- LLM gateway (review stage) --------------------------------------------
+# ---- LLM gateways (review stage, topic/community labelling) -----------------
 litellm>=1.0
+anthropic>=0.40      # provider: anthropic, and `pysyrev estimate` token counting
 
-# ---- Bibliographic network (bib-network stage) -----------------------------
-networkx>=3.0
+# ---- Bibliographic networks (report coupling / co-citation panels) ----------
+python-igraph>=0.11  # Leiden communities
+leidenalg>=0.10
 
 # ---- PDF report engine ------------------------------------------------------
 reportlab>=4.0
+kaleido>=0.2         # renders the plotly figures the PDF embeds
+# plotly itself arrives with bertopic; pin it here if you install without it.
 
 # ---- Topic modelling (topic-model stage) ------------------------------------
 bertopic>=0.16
@@ -34,7 +38,7 @@ umap-learn>=0.5
 sentence-transformers>=2.0
 gensim>=4.0
 octis>=1.0
-# Text pre-processing (integrated from berteley — see pysyrev/core/berteley/)
+# Text pre-processing (vendored from berteley — see pysyrev/core/berteley/)
 nltk>=3.8
 spacy>=3.0
 beautifulsoup4>=4.11
@@ -42,7 +46,9 @@ contractions>=0.1
 # Note: spacy also requires the en_core_web_lg model (~700 MB), installed once with:
 #   python -m spacy download en_core_web_lg
 
-# ---- Optional: Plotly figure export in PDF reports --------------------------
-# Uncomment if you use the "plotly" block type in your report configuration.
-# plotly>=5.0
-# kaleido>=0.2
+# ---- Optional extras --------------------------------------------------------
+# pip install "pysyrev[citations]"  — BibDataset.fetch_citations
+# crossrefapi>=1.5
+# semanticscholar>=0.7
+# pip install "pysyrev[langdetect]" — bib.clean.use_langdetect
+# langdetect>=1.0
