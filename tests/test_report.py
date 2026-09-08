@@ -10,7 +10,7 @@ import pytest
 from reportlab.lib.units import cm
 from reportlab.platypus import HRFlowable, KeepTogether, PageBreak, Paragraph, Spacer, Table
 
-from pysyrev.core.report import PDFReportEngine, ReportLayout, ReportTheme
+from pysyrev.core.report import PDFReportEngine, ReportLayout, ReportTheme, pdf_text
 
 
 # =============================================================================
@@ -278,3 +278,64 @@ class TestGenerate:
         PDFReportEngine().generate(minimal_report_data, output)
         with open(output, "rb") as f:
             assert f.read(4) == b"%PDF"
+
+
+# =============================================================================
+# pdf_text — the base-14 fonts only draw cp1252
+# =============================================================================
+
+class TestPdfText:
+    """Anything the fonts cannot encode is drawn as a black box, so it has to be
+    transliterated first. LLM-written prose is the usual source: it spells
+    'agent-based' with a non-breaking hyphen (U+2011)."""
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("agent\u2011based", "agent-based"),        # non-breaking hyphen
+        ("low\u2010carbon", "low-carbon"),          # hyphen
+        ("\u22125 %", "-5 %"),                      # minus sign
+        ("CO\u2082", "CO2"),                        # subscript, via NFKD
+        ("a \u2192 b", "a -> b"),                   # arrow
+        ("\u03b2-diversity", "beta-diversity"),     # Greek
+        ("T \u2264 2\u00b0C", "T <= 2\u00b0C"),     # cp1252 degree sign kept
+        ("zero\u200bwidth", "zerowidth"),
+    ])
+    def test_transliterates_what_the_fonts_cannot_draw(self, raw, expected):
+        assert pdf_text(raw) == expected
+
+    @pytest.mark.parametrize("text", [
+        "plain ascii - untouched",
+        "accents: mod\u00e9lisation, co\u00fbt, \u0153uvre",   # all cp1252
+        "dashes \u2013 and \u2014 and quotes \u201cx\u201d",
+    ])
+    def test_leaves_drawable_text_alone(self, text):
+        assert pdf_text(text) == text
+
+    def test_falls_back_to_a_question_mark(self):
+        assert pdf_text("\u4e2d") == "?"
+
+    def test_accepts_non_strings(self):
+        assert pdf_text(None) == "-"
+        assert pdf_text(12) == "12"
+
+    def test_the_generated_pdf_carries_the_plain_hyphen(self, tmp_path, monkeypatch):
+        # Uncompressed, the page's text operators are readable in the raw bytes.
+        import reportlab.rl_config as rl_config
+        monkeypatch.setattr(rl_config, "pageCompression", 0)
+
+        output = str(tmp_path / "dashes.pdf")
+        PDFReportEngine().generate({
+            "meta": {"title": "Revue agent\u2011based"},
+            "sections": [{
+                "title": "Analyse",
+                "blocks": [
+                    {"type": "paragraph", "text": "low\u2011carbon transitions"},
+                    {"type": "table", "headers": ["DOI", "Titre"],
+                     "rows": [["10.1/a", "agent\u2011based model"]]},
+                ],
+            }],
+        }, output)
+
+        raw = Path(output).read_bytes()
+        assert b"low-carbon" in raw
+        assert b"agent-based" in raw        # both the title and the table cell
+        assert b"(agent) Tj" not in raw     # the tofu split the word in two

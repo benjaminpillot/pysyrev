@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -37,11 +38,11 @@ from reportlab.platypus import (
     KeepTogether,
     PageBreak,
     PageTemplate,
-    Paragraph,
     Spacer,
     Table,
     TableStyle,
 )
+from reportlab.platypus import Paragraph as _RLParagraph
 
 
 # =============================================================================
@@ -230,6 +231,88 @@ def safe_str(value: Any) -> str:
     return str(value)
 
 
+# The base-14 PDF fonts this engine draws with (Helvetica, Courier) only encode
+# cp1252: every other character comes out as a black box, with nothing raised to
+# say so. LLM-written prose is the usual source — it writes "agent-based" and
+# "low-carbon" with a non-breaking hyphen (\u2011) rather than the plain one —
+# but arrows, primes and Greek letters reach the report from paper titles too.
+_PDF_FONT_ENCODING = "cp1252"
+
+_PDF_TEXT_MAP = {
+    # Dashes and hyphens outside cp1252 (which has - , \u00ad, \u2013, \u2014).
+    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2015": "-",
+    "\u2212": "-", "\u2043": "-",
+    # Spaces that must not disappear, and zero-width ones that must.
+    "\u2007": " ", "\u2008": " ", "\u2009": " ", "\u200a": " ",
+    "\u202f": " ", "\u2028": " ", "\u2029": " ",
+    "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
+    # Primes, maths, arrows.
+    "\u2032": "'", "\u2033": '"', "\u2035": "'",
+    "\u2260": "!=", "\u2264": "<=", "\u2265": ">=", "\u2248": "~=",
+    "\u221e": "inf",
+    "\u2190": "<-", "\u2192": "->", "\u2194": "<->",
+    "\u21d0": "<=", "\u21d2": "=>", "\u21d4": "<=>",
+}
+
+# Greek letters, spelled out: a topic label reading 'beta-diversity' beats one
+# reading '?-diversity'.
+_PDF_TEXT_MAP.update({
+    letter: name for letter, name in zip(
+        "\u03b1\u03b2\u03b3\u03b4\u03b5\u03b6\u03b7\u03b8\u03b9\u03ba"
+        "\u03bb\u03bc\u03bd\u03be\u03bf\u03c0\u03c1\u03c3\u03c4\u03c5"
+        "\u03c6\u03c7\u03c8\u03c9",
+        ("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu "
+         "xi omicron pi rho sigma tau upsilon phi chi psi omega").split())
+})
+_PDF_TEXT_MAP.update({letter.upper(): name.capitalize()
+                      for letter, name in list(_PDF_TEXT_MAP.items())
+                      if letter.isalpha()})
+_PDF_TEXT_MAP["\u03c2"] = "sigma"   # final sigma
+
+
+def _drawable(char: str) -> bool:
+    """True when the base-14 fonts have a glyph for *char*."""
+    try:
+        char.encode(_PDF_FONT_ENCODING)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def pdf_text(value: Any) -> str:
+    """*value* as text the base-14 PDF fonts can actually draw.
+
+    Characters they cannot encode are transliterated to a close equivalent —
+    an explicit one, else the ASCII part of their compatibility decomposition
+    (so 'CO\u2082' becomes 'CO2'), else '?'. Left alone they would each render
+    as a black box.
+    """
+    text = value if isinstance(value, str) else safe_str(value)
+    if text.isascii():
+        return text
+    out = []
+    for char in text:
+        if _drawable(char):
+            out.append(char)
+            continue
+        replacement = _PDF_TEXT_MAP.get(char)
+        if replacement is None:
+            replacement = "".join(
+                c for c in unicodedata.normalize("NFKD", char) if _drawable(c)
+            ) or "?"
+        out.append(replacement)
+    return "".join(out)
+
+
+def Paragraph(text: Any, style, **kwargs) -> _RLParagraph:
+    """A ReportLab Paragraph whose text the report's fonts can draw.
+
+    Every paragraph in the report goes through :func:`pdf_text` here, rather
+    than at each of the call sites that build one.
+    """
+    return _RLParagraph(pdf_text(text), style, **kwargs)
+
+
 def build_resized_image(path: str, max_width: float, max_height: float):
     img_reader = utils.ImageReader(path)
     width, height = img_reader.getSize()
@@ -244,10 +327,12 @@ def build_table(data: List[List[Any]], theme: ReportTheme,
     processed = []
     for i, row in enumerate(data):
         if i == 0 or cell_style is None:
-            processed.append(list(row))
+            # Drawn straight by Table, so the text needs sanitizing here.
+            processed.append([pdf_text(cell) if isinstance(cell, str) else cell
+                              for cell in row])
         else:
             processed.append([
-                Paragraph(str(cell), cell_style) if isinstance(cell, str) else cell
+                Paragraph(cell, cell_style) if isinstance(cell, str) else cell
                 for cell in row
             ])
     table = Table(processed, colWidths=col_widths, hAlign="LEFT")
@@ -320,8 +405,9 @@ def _draw_header_footer(canvas, doc):
 class _ReportDoc(BaseDocTemplate):
     def __init__(self, filename, report_title, generated_at, theme: ReportTheme, **kwargs):
         super().__init__(filename, **kwargs)
-        self.report_title = report_title
-        self.generated_at = generated_at
+        # Drawn on the canvas by _draw_header_footer, past the Paragraph wrapper.
+        self.report_title = pdf_text(report_title)
+        self.generated_at = pdf_text(generated_at)
         self.theme = theme
 
         frame = Frame(self.leftMargin, self.bottomMargin,
