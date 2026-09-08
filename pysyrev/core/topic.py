@@ -23,6 +23,48 @@ def _compute_distance(distance, *values):
         return np.maximum.reduce([1 - norm_n for norm_n in norm])
 
 
+def topic_entropy(topic_sizes) -> float:
+    """Shannon entropy (in nats) of the distribution of *topic_sizes*.
+
+    The distribution is over the clustered documents: an outlier belongs to no
+    topic, and outliers already have a ranking criterion of their own (the
+    coverage term). Taking the whole corpus as the denominator instead folds
+    them into this metric a second time — for a clustered fraction ``f`` it
+    yields ``f * (H + ln(1/f))`` rather than ``H`` — which leaves two of the
+    four criteria measuring the same thing, and makes a model look unbalanced
+    for having outliers rather than for having lopsided topics.
+    """
+    sizes = np.asarray(list(topic_sizes), dtype=float)
+    total = sizes.sum()
+    if sizes.size == 0 or total == 0:
+        return 0.0
+    p = sizes / total
+    return float(-np.sum(p * np.log(p)))
+
+
+def rank_by_distance(results, distance_name, nb_documents, coherence_col):
+    """Add the ``distance`` column to *results* and sort it best-first.
+
+    Ranking has to come after every filter that removes candidates, because
+    :func:`_compute_distance` min-max normalizes each metric: the models present
+    here set the scale the others are scored against. Ranking the whole grid and
+    filtering afterwards leaves the survivors scored against models that are no
+    longer in contention — on a real run, out-of-band models (a degenerate
+    2-topic fit, say) stretched the entropy scale enough to hand every one of the
+    25 best slots to the smallest topic count in the band.
+    """
+    distance = _compute_distance(distance_name,
+                                 results["entropy"].to_numpy(),
+                                 results[coherence_col].to_numpy(),
+                                 nb_documents - results["nb_outliers"].to_numpy(),
+                                 results["diversity"].to_numpy())
+    results = results.copy()
+    position = (results.columns.get_loc("model") if "model" in results.columns
+                else len(results.columns))
+    results.insert(position, "distance", distance)
+    return results.sort_values(by="distance", ascending=True)
+
+
 _META_COLS = ["id", "year", "cited_by", "document_type", "title", "doi"]
 
 
@@ -182,23 +224,12 @@ def topic_modeling(dataset,
                         nb_outliers.append(topic_sizes.pop(-1))
                     except KeyError:
                         nb_outliers.append(np.nan)
-                    values = np.asarray(list(topic_sizes.values()))
-                    p_i_log_p_i = values / nb_documents * np.log(values / nb_documents)
-                    entropy.append(-1 * np.sum(p_i_log_p_i))
+                    entropy.append(topic_entropy(topic_sizes.values()))
                     coherence.append(metrics["Coherence"])
                     diversity.append(metrics["Diversity"])
 
     #---------
     # Rank models according to entropy, coherence, and nb of outliers
-    entropy = np.asarray(entropy)
-    coherence = np.asarray(coherence)
-    nb_outliers = np.asarray(nb_outliers)
-    distance = _compute_distance(distance_name,
-                                 entropy,
-                                 coherence,
-                                 nb_documents - nb_outliers,
-                                 diversity)
-
     results = pd.DataFrame({
         "hdbscan"                       : hdbscan,
         "umap"                          : umap,
@@ -207,12 +238,13 @@ def topic_modeling(dataset,
         ranking_scorer                  : coherence,
         "diversity"                     : diversity,
         "nb_outliers"                   : nb_outliers,
-        "distance"                      : distance,
         "model"                         : topic_models
-    }).sort_values(by="distance", ascending=True)
+    })
 
-    # Keep only models whose topic count falls in the desired band (if set).
+    # Keep only models whose topic count falls in the desired band (if set),
+    # *then* rank: the ranking is relative to the models still in contention.
     results = filter_to_topic_band(results, topic_range)
+    results = rank_by_distance(results, distance_name, nb_documents, ranking_scorer)
 
     best_results = results.iloc[:keep_n_results]
 
