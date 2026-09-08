@@ -1,3 +1,4 @@
+import re
 import tempfile
 
 import numpy as np
@@ -22,6 +23,27 @@ DOC_TYPE: str = "document_type"
 REFS: str = "references"
 YEAR: str = "year"
 CITED_BY: str = "cited_by"
+
+# Separator between the references of one `references` / `reference_keys` cell.
+REF_SEP: str = "; "
+
+# Splitting a cell on a bare ';' cuts the old SICI-style DOIs in two — the ';' of
+# `10.1002/(SICI)1096-9845(199908)28:8<879::AID-EQE845>3.0.CO;2-1` belongs to the
+# DOI and is never followed by a space, whereas the separator always is (or ends
+# the cell, for a trailing one).
+_REF_SPLIT_RE = re.compile(r';(?=\s|$)')
+
+
+def split_references(value) -> list:
+    """Split a references cell into its tokens, leaving DOIs whole.
+
+    Returns an empty list for a non-string or empty cell, and never yields a
+    blank token.
+    """
+    if not isinstance(value, str):
+        return []
+    return [token for token in (t.strip() for t in _REF_SPLIT_RE.split(value)) if token]
+
 
 # Column rename map for OpenAlex CSV exports (flat column names).
 FROM_OA = {

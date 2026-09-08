@@ -78,23 +78,42 @@ _WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z'-]*")
 _SENTENCE_TERMINATOR_RE = re.compile(r'[.!?]')
 
 
-def clean_doi(doi):
-    valid_chars = set('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ./-_:')
+# Characters a DOI suffix may legitimately carry. Beyond the alphanumerics and
+# the usual punctuation, the set covers the old SICI-style DOIs — e.g.
+# ``10.1002/(SICI)1096-9845(199908)28:8<879::AID-EQE845>3.0.CO;2-1``, and the
+# ``...3.3.CO;2-#`` variants — which parentheses, angle brackets, ``;`` and ``#``
+# are part of, not junk appended after it.
+_DOI_VALID_CHARS = set(
+    '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    './-_:()<>;#+'
+)
 
+# Trailing punctuation that ends a sentence or separates two DOIs in one cell,
+# never the last character of a DOI.
+_DOI_TRAILING_JUNK = '.,;:'
+
+
+def clean_doi(doi):
+    """Keep the leading DOI of a raw cell, dropping whatever trails it.
+
+    Everything up to the first character no DOI can contain (a space, a comma,
+    a bracket — the start of ``[in Chinese]``, of a second DOI, of a note) is
+    kept; the DOI's own punctuation is not a stopping point.
+    """
     # if 'unknown' in doi.lower():
     #     return ""
 
     try:
         cleaned_doi = ''
         for char in doi:
-            if char in valid_chars:
+            if char in _DOI_VALID_CHARS:
                 cleaned_doi = cleaned_doi + char
             else:
                 break
     except TypeError:
-        cleaned_doi = doi
+        return doi
 
-    return cleaned_doi
+    return cleaned_doi.rstrip(_DOI_TRAILING_JUNK)
 
 
 def _signal_no_function_words(words_lower: list[str]) -> bool:

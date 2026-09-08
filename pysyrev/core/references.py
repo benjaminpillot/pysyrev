@@ -52,7 +52,7 @@ import pandas as pd
 from rapidfuzz import fuzz, process as rf_process
 from tqdm import tqdm
 
-from pysyrev.core.bib import DOI, ID, REFS
+from pysyrev.core.bib import DOI, ID, REFS, REF_SEP, split_references
 from pysyrev.core.merge_bibs import (
     _normalize_doi,
     _canonicalize_title,
@@ -229,16 +229,13 @@ def flag_shared_unresolved_references(dataset: pd.DataFrame) -> pd.DataFrame:
             "No 'unresolved_references' column — run resolve_references() first."
         )
 
-    sep = '; '
-    parsed = dataset['unresolved_references'].apply(
-        lambda x: x.split(sep) if isinstance(x, str) else []
-    )
+    parsed = dataset['unresolved_references'].apply(split_references)
 
     counts = Counter(ref for refs in parsed for ref in refs)
     shared = {r for r, n in counts.items() if n >= 2}
 
     dataset['shared_unresolved_references'] = parsed.apply(
-        lambda refs: sep.join(r for r in refs if r in shared) or np.nan
+        lambda refs: REF_SEP.join(r for r in refs if r in shared) or np.nan
     )
 
     return dataset
@@ -329,7 +326,7 @@ def resolve_references(
             unresolved_col.append(None)
             continue
 
-        refs = [r.strip() for r in str(raw).split(';') if r.strip()]
+        refs = split_references(str(raw))
         resolved   = []
         unresolved = []
 
@@ -557,9 +554,7 @@ def _scheme_ref_ids(df: pd.DataFrame, normalize: Callable[[object], Optional[str
     """Distinct canonical ids of one scheme appearing in the references column."""
     ids: Set[str] = set()
     for val in df[ref_col]:
-        if not isinstance(val, str):
-            continue
-        for tok in val.split(';'):
+        for tok in split_references(val):
             nid = normalize(tok)
             if nid is not None:
                 ids.add(nid)
@@ -576,11 +571,8 @@ def _has_bridgeable_dois(df: pd.DataFrame, ref_col: str = REFS) -> bool:
     with no coupling gain and is skipped.
     """
     for val in df[ref_col]:
-        if not isinstance(val, str):
-            continue
-        for tok in val.split(';'):
-            tok = tok.strip()
-            if not tok or _normalize_id(tok) is not None:
+        for tok in split_references(val):
+            if _normalize_id(tok) is not None:
                 continue
             if _extract_ref_doi(tok) or _BARE_DOI_RE.match(tok.lower()):
                 return True
@@ -601,11 +593,8 @@ def has_unkeyed_references(df: pd.DataFrame, ref_col: str = REFS) -> bool:
     if ref_col not in df.columns:
         return False
     for val in df[ref_col]:
-        if not isinstance(val, str):
-            continue
-        for tok in val.split(';'):
-            tok = tok.strip()
-            if tok and _normalize_id(tok) is None:
+        for tok in split_references(val):
+            if _normalize_id(tok) is None:
                 return True
     return False
 
@@ -620,8 +609,8 @@ def add_reference_keys(df: pd.DataFrame, table: Dict[str, Optional[str]],
         if not isinstance(val, str) or not val.strip():
             keyed.append(None)
             continue
-        keys = [_canonical_key(tok, table) for tok in val.split(';') if tok.strip()]
-        keyed.append('; '.join(keys) if keys else None)
+        keys = [_canonical_key(tok, table) for tok in split_references(val)]
+        keyed.append(REF_SEP.join(keys) if keys else None)
     df[out_col] = keyed
     return df
 
