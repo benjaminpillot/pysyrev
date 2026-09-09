@@ -313,6 +313,12 @@ class CleanConfig(ConfigField):
     # those records dominate the corpus' character count and the review bill.
     # The cut lands on a sentence boundary. 2500 keeps a full abstract.
     max_abstract_chars:    Union[None, int]       = None
+    # Drop a record left without an abstract — none delivered by any source, or
+    # one the filter above rejected. True is the right default for a
+    # search-built corpus: a record with no abstract cannot be screened. Set it
+    # to False for a closed corpus of known papers (a DOI list), where silently
+    # losing a record matters more than carrying one the reviewer cannot read.
+    drop_record_with_no_abstract: bool            = True
 
 
 @dataclass

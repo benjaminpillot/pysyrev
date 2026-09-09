@@ -342,6 +342,18 @@ consolidated CSV.
       by ``langdetect`` are flagged.  Disable when processing multilingual
       corpora or when abstracts are absent.
 
+   ``clean.drop_record_with_no_abstract``
+      :Type: ``bool``
+      :Default: ``true``
+
+      Drop the records left without an abstract — none delivered by any
+      source, or one rejected by the filter above.  Keep the default for a
+      search-built corpus: such a record cannot be screened.  Set it to
+      ``false`` for a closed corpus of known papers (a DOI list run through
+      ``open_alex.source: seed`` with both citation arms off), where losing a
+      record silently is worse than carrying one without an abstract; the
+      cleaning itself still runs, the records are simply kept.
+
 ``extract``
    :Type: mapping
    :Default: all defaults applied

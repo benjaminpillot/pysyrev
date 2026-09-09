@@ -132,6 +132,7 @@ bib:
   #   min_signals_to_reject: 2     # garbage signals needed to drop an abstract
   #   extra_garbage_phrases: []
   #   use_langdetect: false
+  #   drop_record_with_no_abstract: true   # false = keep those records (closed corpus)
     max_abstract_chars: 2500
 
 
