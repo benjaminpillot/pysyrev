@@ -9,6 +9,12 @@ pacing itself against, so they take their turn in the same shared quota.
 
 Results are cached by :mod:`pysyrev.core.topic_labels`, so the labeller runs
 once per partition rather than once per report.
+
+Labelling is enrichment, never a precondition: a label that cannot be obtained
+— provider down, quota exhausted, malformed answer — costs that one label, not
+the other labels and not the run. So :func:`_label_all` returns whatever it
+could name, marked :attr:`~_LabelSet.complete`, and the callers fall back to
+``Topic <id>`` for the rest.
 """
 
 import asyncio
@@ -50,6 +56,16 @@ _DEFAULT_LABELER_SYSTEM_PROMPT = (
 
 class _TopicLabel(BaseModel):
     label: str
+
+
+class _LabelSet(dict):
+    """``{item_id: label}`` that knows whether every item got a label.
+
+    An incomplete set is still worth using — the report names what it can — but
+    it must not be written to the on-disk cache: the cache exists to stop the
+    labeller re-running, and caching a half-run would freeze the gaps forever.
+    """
+    complete: bool = True
 
 
 def _parse_repr_list(value) -> list:
@@ -152,20 +168,31 @@ async def _label_all(items, config, *, tag: str, default_system_prompt: str,
     provider_client.limiter = limiter
 
     async def label_one(item_id, payload):
-        label = await _labeler_call(
-            tag, f"{unit} {item_id}", build_messages(payload, system_prompt),
-            provider_client, config.model_id, model_args, semaphore, limiter,
-            config.max_retries,
-        )
+        try:
+            label = await _labeler_call(
+                tag, f"{unit} {item_id}", build_messages(payload, system_prompt),
+                provider_client, config.model_id, model_args, semaphore, limiter,
+                config.max_retries,
+            )
+        except Exception as exc:
+            # One name that could not be obtained is not a reason to lose the
+            # other names — let alone the run that produced the clusters.
+            print(f"[{tag}] {unit} {item_id} left unlabelled: {exc}")
+            return item_id, None
         return item_id, label
 
     tasks = [label_one(item_id, payload) for item_id, payload in items]
-    labels = {}
+    labels = _LabelSet()
     async for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks),
                            desc=f"[{tag}] {desc}", unit=unit):
         item_id, label = await coro
-        labels[item_id] = label
+        if label:                       # an empty answer is a missing label
+            labels[item_id] = label
 
+    labels.complete = len(labels) == len(tasks)
+    if not labels.complete:
+        print(f"[{tag}] {len(tasks) - len(labels)}/{len(tasks)} {unit}(s) left "
+              f"unlabelled; they keep their numeric name.")
     return labels
 
 

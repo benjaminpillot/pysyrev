@@ -33,7 +33,8 @@ from pysyrev.core.report import (
     load_bertopic_results,
     load_topic_info,
 )
-from pysyrev.core.topic_labels import load_cached_labels, save_labels
+from pysyrev.core.topic_labels import (labels_are_cacheable,
+                                       load_cached_labels, save_labels)
 
 
 @dataclass
@@ -153,10 +154,23 @@ class TopicReport:
             if cached is not None:
                 topic_labels = cached
             else:
+                # Same rule as the community labels: the LLM name is optional
+                # enrichment. Any failure (provider down, quota, bad response)
+                # degrades to the topics' numeric names — it never costs the
+                # report.
                 print("Generating human-readable topic labels via LLM…")
-                topic_labels = label_topics(self.topic_info, self.labeler_config)
-                path = save_labels(self.run_dir, file_prefix, topic_labels)
-                print(f"Topic labels saved to: {path}")
+                try:
+                    topic_labels = label_topics(self.topic_info, self.labeler_config)
+                except Exception as e:
+                    print(f"[report] topic labels skipped (report still "
+                          f"generated): {e!r}")
+                    topic_labels = None
+                if labels_are_cacheable(topic_labels):
+                    path = save_labels(self.run_dir, file_prefix, topic_labels)
+                    print(f"Topic labels saved to: {path}")
+                elif topic_labels:
+                    print("[report] topic labels incomplete — used for this "
+                          "report but not cached.")
 
         report_data = build_report_data(
             self.run_dir,
