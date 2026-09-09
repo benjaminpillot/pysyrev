@@ -67,6 +67,11 @@ def rank_by_distance(results, distance_name, nb_documents, coherence_col):
 
 _META_COLS = ["id", "year", "cited_by", "document_type", "title", "doi"]
 
+# How many times a run may re-aim its min_topic_size grid at the desired band.
+# Each attempt costs another HDBSCAN sweep, and the estimate it is aimed with
+# converges fast — a second attempt only matters when the first overshot.
+_MAX_REAIM_ATTEMPTS = 2
+
 
 def derive_min_topic_size_range(n_docs, topic_range, n_steps=8):
     """Derive an HDBSCAN ``min_topic_size`` grid aimed at a desired topic band.
@@ -75,9 +80,13 @@ def derive_min_topic_size_range(n_docs, topic_range, n_steps=8):
     against the number of topics: bigger clusters -> fewer topics. A first-order
     estimate is ``min_cluster_size ~= n_docs / nb_topics``, so a desired band
     ``[t_min, t_max]`` maps to a ``min_topic_size`` range ``[n_docs / t_max,
-    n_docs / t_min]``. This only *aims* the grid; the exact band is enforced
-    afterwards by filtering results (see ``topic_modeling``'s ``topic_range``),
-    because outliers and UMAP structure make the mapping approximate.
+    n_docs / t_min]``.
+
+    That estimate is biased: it reads ``min_cluster_size`` as the average topic
+    size, where HDBSCAN treats it as a floor, and it counts outlier documents as
+    if they joined a topic. Both push the real topic count below the target, so
+    the grid can land entirely above the band. It is an opening guess;
+    :func:`reaim_min_topic_size_range` corrects it from measurements.
 
     Returns ``([lo, hi], step)`` with ``lo >= 2`` and ``step >= 1``, the grid
     spanning roughly *n_steps* values.
@@ -89,13 +98,100 @@ def derive_min_topic_size_range(n_docs, topic_range, n_steps=8):
     return [lo, hi], step
 
 
+def min_topic_sizes_of(results):
+    """The ``min_topic_size`` of each fitted model, read back from ``hdbscan``."""
+    return results["hdbscan"].str.split("_").str[0].astype(int)
+
+
+def _topic_counts_seen(results):
+    """The distinct topic counts a sweep produced, as plain ints for printing."""
+    return sorted(int(n) for n in results["nb_topics"].unique())
+
+
+def reaim_min_topic_size_range(results, topic_range, n_steps=8):
+    """A ``min_topic_size`` grid calibrated on the models already fitted.
+
+    Returns the list of ``min_topic_size`` values to sweep next, or None when the
+    results carry too little signal to re-aim from.
+
+    The topic count falls roughly as the inverse of ``min_cluster_size``, so
+    ``nb_topics * min_topic_size`` is approximately constant for a given corpus
+    and every fitted model measures it. Inverting that constant aims the next
+    grid at the band.
+
+    Each size contributes its *best* count, not its mean: ``min_samples`` and the
+    UMAP parameters vary alongside it and can only take the count down from what
+    a given size allows.
+    """
+    observed = pd.DataFrame({"size": min_topic_sizes_of(results),
+                             "nb_topics": results["nb_topics"]})
+    best = observed[observed["nb_topics"] > 0].groupby("size")["nb_topics"].max()
+    if best.empty:
+        return None
+    k = float(np.median(best.index.to_numpy() * best.to_numpy()))
+    if k <= 0:
+        return None
+
+    t_min, t_max = topic_range
+    lo = max(2, int(round(k / t_max)))
+    hi = max(lo, int(round(k / t_min)))
+    step = max(1, int(round((hi - lo) / max(1, n_steps - 1))))
+    return list(range(lo, hi + 1, step))
+
+
+def min_samples_of(results):
+    """The ``min_samples`` of each fitted model, read back from ``hdbscan``."""
+    return results["hdbscan"].str.split("_").str[1].astype(int)
+
+
+def report_unused_min_samples(best_results, fitted_results):
+    """Say when the selected models never reached into the min_samples grid.
+
+    ``min_samples`` cannot be derived the way ``min_topic_size`` can: its
+    first-order effect is on the outlier fraction, and what it does to the topic
+    count is indirect and corpus-dependent. So the grid is swept and the ranking
+    decides — which is exactly why a range set too wide can only be recognised
+    afterwards, once a third of the fits have gone to a corner of the search that
+    won nothing.
+
+    This reports rather than presumes. It measures against what was actually
+    fitted, not the configured range, since the degenerate pairs are never fitted
+    in the first place; and it stays quiet unless a clear part of the range went
+    unused, leaving the next run's range to the caller.
+    """
+    if best_results.empty:
+        return
+    fitted = sorted(set(min_samples_of(fitted_results)))
+    if len(fitted) < 3:
+        return
+    lo, hi = fitted[0], fitted[-1]
+    used = int(min_samples_of(best_results).max())
+    # The top third of what was swept: a winner sitting one step short of the
+    # ceiling is not a finding, a whole unused corner is.
+    if used >= hi - (hi - lo) / 3:
+        return
+    print(
+        f"[topic_modeling] None of the {len(best_results)} selected models used a "
+        f"min_samples above {used}, though the sweep went up to {hi}. Those fits "
+        f"won nothing here — consider min_sample_range [{lo}, {used}] next run."
+    )
+
+
+def has_in_band(results, topic_range):
+    """Whether any fitted model's topic count falls inside *topic_range*."""
+    if topic_range is None:
+        return True
+    lo, hi = topic_range
+    return bool(((results["nb_topics"] >= lo) & (results["nb_topics"] <= hi)).any())
+
+
 def filter_to_topic_band(results, topic_range):
     """Keep only rows of *results* whose ``nb_topics`` is within *topic_range*.
 
-    This is the guarantee behind ``desired_topics``: the derived grid merely aims
-    at the band, this filter enforces it. If nothing lands in-band (band
-    unreachable with the explored grid), warn and return *results* unchanged so
-    the run still produces output.
+    This is the guarantee behind ``desired_topics``: the grids merely aim at the
+    band, this filter enforces it. Reaching it here empty-handed means the band
+    survived both the derived grid and the re-aimed ones, so warn and return
+    *results* unchanged — the run still produces output.
     """
     if topic_range is None:
         return results
@@ -104,9 +200,10 @@ def filter_to_topic_band(results, topic_range):
     if in_band.empty:
         print(
             f"[topic_modeling] Warning: no model produced a topic count in "
-            f"[{lo}, {hi}] (got {sorted(results['nb_topics'].unique())}). "
-            f"Keeping the best-ranked models regardless — widen desired_topics "
-            f"or adjust the corpus/params."
+            f"[{lo}, {hi}] (got {_topic_counts_seen(results)}), even "
+            f"after re-aiming the min_topic_size grid. Keeping the best-ranked "
+            f"models regardless — widen desired_topics, or accept that a corpus "
+            f"this size does not split into that many topics."
         )
         return results
     return in_band
@@ -165,88 +262,129 @@ def topic_modeling(dataset,
         )
     umap_n_components = valid_n_components
 
-    min_topic_size_values = range(min_topic_size_range[0],
-                                  min_topic_size_range[1] + 1,
-                                  topic_size_step)
+    min_topic_size_values = list(range(min_topic_size_range[0],
+                                       min_topic_size_range[1] + 1,
+                                       topic_size_step))
 
-    min_samples_values = range(min_samples_range[0],
-                               min_samples_range[1] + 1,
-                               min_samples_step)
+    min_samples_values = list(range(min_samples_range[0],
+                                    min_samples_range[1] + 1,
+                                    min_samples_step))
 
-    # UMAP & HDBSCAN parameters
-    umap = []
-    hdbscan = []
+    # UMAP is the expensive step and depends on none of the HDBSCAN parameters,
+    # so each reduction is computed once and reused by every sweep — including
+    # the re-aimed ones, which is what makes re-aiming affordable.
+    reductions = {}
 
-    # Metrics
-    nb_topics = []
-    entropy = list()
-    coherence = list()
-    diversity = list()
-    nb_outliers = list()
-    topic_models = list()
+    def reduce_embeddings(n_neighbors, n_components):
+        key = (n_neighbors, n_components)
+        if key not in reductions:
+            reductions[key] = bertopic_model.umap_model(n_neighbors, n_components,
+                                                        embeddings)
+        return reductions[key]
 
-    if show_progress:
-        total_len = (len(umap_n_neighbors) * len(umap_n_components) *
-                     len(list(min_topic_size_values)) * len(list(min_samples_values)))
-        pg = tqdm(total=total_len, desc="Topic modeling in process...")
+    def grid_pairs(size_values):
+        """The ``(min_topic_size, min_samples)`` pairs worth fitting.
 
-    for n_neighbors in umap_n_neighbors:
-        for n_components in umap_n_components:
+        A ``min_samples`` above ``min_cluster_size`` is a degenerate corner of
+        HDBSCAN: the density threshold is stricter than the cluster it is meant
+        to keep, so most documents fall out as noise and the fit can only return
+        fewer topics than the same size with a smaller ``min_samples``. On a wide
+        min_sample_range those pairs are most of the grid and none of them can
+        move a run toward its desired band.
 
-            # UMAP
-            reduced_embeddings = bertopic_model.umap_model(n_neighbors, n_components, embeddings)
+        Dropping them must not drop the size itself. A size below the whole
+        min_samples grid would otherwise vanish from the sweep, and those are the
+        small sizes — exactly the ones a re-aim reaches for when it needs more
+        topics. Such a size is fitted once, at the least conservative
+        ``min_samples`` on offer.
+        """
+        smallest = min(min_samples_values)
+        pairs = []
+        for size in size_values:
+            usable = [ms for ms in min_samples_values if ms <= size]
+            pairs.extend((size, ms) for ms in (usable or [smallest]))
+        return pairs
 
-            for min_topic_size in min_topic_size_values:
+    def sweep(size_values, desc):
+        """Fit every (umap, min_topic_size, min_samples) combination of a grid."""
+        pairs = grid_pairs(size_values)
+        rows = []
+        pg = (tqdm(total=len(umap_n_neighbors) * len(umap_n_components) * len(pairs),
+                   desc=desc) if show_progress else None)
 
-                for min_samples in min_samples_values:
+        for n_neighbors in umap_n_neighbors:
+            for n_components in umap_n_components:
+                reduced_embeddings = reduce_embeddings(n_neighbors, n_components)
 
-                    # Store hyperparameters
-                    umap.append(f"{n_neighbors}_{n_components}")
-                    hdbscan.append(f"{min_topic_size}_{min_samples}")
-
-
-                    if show_progress:
+                for min_topic_size, min_samples in pairs:
+                    if pg is not None:
                         pg.update(1)
-                        
-                    bt_model = bertopic_model(min_topic_size,
-                                              min_samples)
 
-                    topics, probs, topic_sizes, topic_model, topic_words, metrics = berteley_fit(documents,
-                                                                                                 reduced_embeddings,
-                                                                                                 coherence_scorer=ranking_scorer,
-                                                                                                 **bt_model)
-                    # Model
-                    topic_models.append(topic_model)
-                    nb_topics.append(len(topic_sizes) - 1)
+                    bt_model = bertopic_model(min_topic_size, min_samples)
+                    topics, probs, topic_sizes, topic_model, topic_words, metrics = berteley_fit(
+                        documents,
+                        reduced_embeddings,
+                        coherence_scorer=ranking_scorer,
+                        **bt_model)
 
-                    # Compute metrics
-                    try:
-                        nb_outliers.append(topic_sizes.pop(-1))
-                    except KeyError:
-                        nb_outliers.append(np.nan)
-                    entropy.append(topic_entropy(topic_sizes.values()))
-                    coherence.append(metrics["Coherence"])
-                    diversity.append(metrics["Diversity"])
+                    # Outliers are keyed on -1 and are not a topic. Taking them
+                    # out first leaves the real topics to be counted, and a fit
+                    # that produced none is a plain zero rather than the NaN that
+                    # would poison every model's normalised distance.
+                    sizes = dict(topic_sizes)
+                    outliers = sizes.pop(-1, 0)
+
+                    rows.append({
+                        "hdbscan":      f"{min_topic_size}_{min_samples}",
+                        "umap":         f"{n_neighbors}_{n_components}",
+                        "nb_topics":    len(sizes),
+                        "entropy":      topic_entropy(sizes.values()),
+                        ranking_scorer: metrics["Coherence"],
+                        "diversity":    metrics["Diversity"],
+                        "nb_outliers":  outliers,
+                        "model":        topic_model,
+                    })
+
+        if pg is not None:
+            pg.close()
+        return pd.DataFrame(rows)
+
+    results = sweep(min_topic_size_values, "Topic modeling in process...")
+
+    # `desired_topics` promises a topic count, and the opening grid is derived
+    # from a rule of thumb that can place the whole grid on the wrong side of the
+    # band — every model out of band, and no step through that grid able to reach
+    # it. The models just fitted measure what the rule of thumb guessed, so
+    # re-aim from them and sweep again rather than reporting a miss.
+    swept = {tuple(min_topic_size_values)}
+    for attempt in range(1, _MAX_REAIM_ATTEMPTS + 1):
+        if has_in_band(results, topic_range):
+            break
+        size_values = reaim_min_topic_size_range(
+            results, topic_range, n_steps=len(min_topic_size_values))
+        if size_values is None or tuple(size_values) in swept:
+            break
+        swept.add(tuple(size_values))
+        print(
+            f"[topic_modeling] No model in the desired band {list(topic_range)} "
+            f"(got {_topic_counts_seen(results)}). Re-aiming min_topic_size at "
+            f"{size_values[0]}–{size_values[-1]} and sweeping again "
+            f"({attempt}/{_MAX_REAIM_ATTEMPTS})…"
+        )
+        results = pd.concat(
+            [results, sweep(size_values, f"Topic modeling (re-aimed grid {attempt})...")],
+            ignore_index=True)
 
     #---------
     # Rank models according to entropy, coherence, and nb of outliers
-    results = pd.DataFrame({
-        "hdbscan"                       : hdbscan,
-        "umap"                          : umap,
-        "nb_topics"                     : nb_topics,
-        "entropy"                       : entropy,
-        ranking_scorer                  : coherence,
-        "diversity"                     : diversity,
-        "nb_outliers"                   : nb_outliers,
-        "model"                         : topic_models
-    })
-
     # Keep only models whose topic count falls in the desired band (if set),
     # *then* rank: the ranking is relative to the models still in contention.
+    fitted_results = results
     results = filter_to_topic_band(results, topic_range)
     results = rank_by_distance(results, distance_name, nb_documents, ranking_scorer)
 
     best_results = results.iloc[:keep_n_results]
+    report_unused_min_samples(best_results, fitted_results)
 
     # Build directory
     tinfo_dir = os.path.join(export_to, "topic_info")
@@ -342,7 +480,6 @@ def topic_modeling(dataset,
     results.to_csv(os.path.join(metrics_dir, f"{distance_name}_results.csv"),
                    index=False)
 
-    if show_progress:
-        pg.close()
+    # The progress bar belongs to `sweep`, which opens and closes one per grid.
 
     return 0
