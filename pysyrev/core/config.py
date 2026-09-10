@@ -867,7 +867,9 @@ class ReviewSelectionConfig(ConfigField):
     """Tuning of the review branch of the reading list (reviews are added beside
     the `selection_by` ranking, then ranked and capped on their own)."""
     enabled:               bool = True
-    detect:                str  = "type"   # "type" (document_type) | "title" | "type_or_title"
+    # OpenAlex types reviews far more sparingly than WoS, so the type alone misses
+    # the reviews an OpenAlex-heavy corpus only declares in its title.
+    detect:                str  = "type_or_title"  # "type" | "title" | "type_or_title"
     max_reviews_per_topic: int  = 3        # kept per topic, best-first; no uncapped value
     relevance_mode:        str  = "blend"  # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
 

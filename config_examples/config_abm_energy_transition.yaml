@@ -535,7 +535,7 @@ topic_report:
        # Reviews are added beside the ranking above, then ranked and capped on their own:
        review:
          enabled: true
-         detect: type                  # type (document_type) | title | type_or_title
+         detect: type_or_title         # type (document_type) | title | type_or_title
          max_reviews_per_topic: 3      # kept per topic, best-first
          relevance_mode: cpy           # blend (cit/yr + raw citations) | cpy (cit/yr alone)
        export_annex: true

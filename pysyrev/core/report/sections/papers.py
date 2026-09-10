@@ -87,19 +87,36 @@ def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
 def _is_review(df, detect):
     """Boolean mask of the literature reviews in *df*, per the ``detect`` mode.
 
-    ``"type"`` tests ``document_type`` alone — the reliable signal, the parser
-    having normalised the WoS/PubMed doctypes onto ``Review``. The title modes
-    match a bare substring, so they also catch ``preview`` and ``peer-reviewed``.
-    """
-    def hit(col):
-        return df[col].fillna("").astype(str).str.lower().str.contains("review")
+    ``document_type`` is a controlled vocabulary, so it is matched component-wise
+    over its ``;``-separated parts — "Review", "Review; Early Access", OpenAlex's
+    lowercase "review" — rather than as a substring. The title test is a plain
+    substring, since a title has no vocabulary to lean on.
 
-    type_hit, title_hit = hit("document_type"), hit("title")
-    if detect == "type":
-        return type_hit
-    if detect == "title":
-        return title_hit
-    return type_hit | title_hit
+    Peer review defeats both tests and is filtered out of both. OpenAlex's
+    ``peer-review`` type is a referee report, not a literature review, and its
+    titles read "Reviewer #2 (Public Review): ..." or "Author response: ..."; that
+    type is excluded outright, whatever the mode. A title naming peer review is
+    dropped too, since those are papers *about* refereeing rather than reviews of
+    a literature — at the price of missing an actual review of peer-review practice.
+
+    Both modes earn their keep: OpenAlex types reviews far more sparingly than WoS,
+    so `"type"` alone misses the genuine reviews an OpenAlex-heavy corpus declares
+    only in its title.
+    """
+    dtype = df["document_type"].fillna("").astype(str).str.lower()
+    title = df["title"].fillna("").astype(str).str.lower()
+
+    parts     = [[p.strip() for p in s.split(";")] for s in dtype]
+    referee   = pd.Series([any(p in ("peer-review", "peer review") for p in ps)
+                           for ps in parts], index=df.index, dtype=bool)
+    type_hit  = pd.Series([any(p == "review" for p in ps) for ps in parts],
+                          index=df.index, dtype=bool)
+    title_hit = (title.str.contains("review")
+                 & ~title.str.contains("peer[- ]review", regex=True))
+
+    hit = title_hit if detect == "title" else (
+        type_hit if detect == "type" else type_hit | title_hit)
+    return hit & ~referee
 
 
 def _review_relevance(reviews, relevance_mode, current_year):
