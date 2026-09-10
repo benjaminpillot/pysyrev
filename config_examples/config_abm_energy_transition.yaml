@@ -532,6 +532,12 @@ topic_report:
          #   weights: [1, 1, 1]       # (centrality, representativeness, relevance); omit for equal
          #   drop_current_year: true  # drop the incomplete current year from the cit/yr denominator
          #   current_year:            # reference year; blank = latest year in the corpus
+       # Reviews are added beside the ranking above, then ranked and capped on their own:
+       review:
+         enabled: true
+         detect: type                  # type (document_type) | title | type_or_title
+         max_reviews_per_topic: 3      # kept per topic, best-first
+         relevance_mode: cpy           # blend (cit/yr + raw citations) | cpy (cit/yr alone)
        export_annex: true
        annex_format: csv
 

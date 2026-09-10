@@ -84,6 +84,47 @@ def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
     return detail
 
 
+def _is_review(df, detect):
+    """Boolean mask of the literature reviews in *df*, per the ``detect`` mode.
+
+    ``"type"`` tests ``document_type`` alone — the reliable signal, the parser
+    having normalised the WoS/PubMed doctypes onto ``Review``. The title modes
+    match a bare substring, so they also catch ``preview`` and ``peer-reviewed``.
+    """
+    def hit(col):
+        return df[col].fillna("").astype(str).str.lower().str.contains("review")
+
+    type_hit, title_hit = hit("document_type"), hit("title")
+    if detect == "type":
+        return type_hit
+    if detect == "title":
+        return title_hit
+    return type_hit | title_hit
+
+
+def _review_relevance(reviews, relevance_mode, current_year):
+    """Citation relevance of each review, as a percentile within *reviews* —
+    same vocabulary as the composite's relevance axis. Unlike the composite the
+    current year stays in the cit/yr denominator: relevance is this branch's only
+    axis, so it cannot be dropped for a current-year review.
+    """
+    from pysyrev.core.paper_ranking import pctl_within
+
+    raw = reviews["cited_by"].astype(float).fillna(0.0).to_numpy()
+    year = reviews["year"].astype(float).to_numpy()
+    elapsed = np.maximum(current_year - np.nan_to_num(year, nan=current_year) + 1, 1.0)
+    cpy = raw / elapsed
+
+    idx = list(range(len(reviews)))
+    p_cy = pctl_within(idx, cpy)
+    if relevance_mode == "cpy":
+        vals = [p_cy[i] for i in idx]
+    else:
+        p_rw = pctl_within(idx, raw)
+        vals = [(p_cy[i] + p_rw[i]) / 2 for i in idx]
+    return pd.Series(vals, index=reviews.index, dtype=float)
+
+
 def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                                    sel_cfg, export_to, section_n,
                                    coupling_result=None, cocitation_result=None):
@@ -135,6 +176,11 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     front_ids = ({i for i, d in _composite_detail.items() if d.get("relevance_dropped")}
                  if comp_split else set())
 
+    # Review branch: reference year for the citations/year denominator. The
+    # corpus's latest year, so the branch stands alone whatever `selection_by` is.
+    rev_cfg  = sel_cfg.review
+    rev_year = float(br_wo["year"].max()) if br_wo["year"].notna().any() else 0.0
+
     selected_parts = []
     for topic_id in sorted(br_wo["Topic"].unique()):
         topic_df = br_wo[br_wo["Topic"] == topic_id].copy()
@@ -142,12 +188,18 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         if front_ids:                       # historical list = non-front papers only
             filt = filt[~filt[id_col].isin(front_ids)]
 
-        # Reviews
-        is_review = (
-            filt["document_type"].str.lower().fillna("").str.contains("review")
-            | filt["title"].str.lower().fillna("").str.contains("review")
-        )
-        reviews = filt[is_review].copy()
+        # Reviews — an opt-out branch that runs beside (not through) the ranked
+        # selection, so it is ranked and capped on its own terms.
+        if rev_cfg.enabled:
+            reviews = filt[_is_review(filt, rev_cfg.detect)].copy()
+            if len(reviews):
+                rel = _review_relevance(reviews, rev_cfg.relevance_mode, rev_year)
+                reviews = (reviews.assign(_rel=rel)
+                                  .sort_values("_rel", ascending=False)
+                                  .head(rev_cfg.max_reviews_per_topic)
+                                  .drop(columns=["_rel"]))
+        else:
+            reviews = filt.iloc[0:0].copy()
         reviews["_selection"] = "Review"
 
         n_docs = max(1, round(sel_cfg.proportion_per_topic * len(topic_df)))

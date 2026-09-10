@@ -863,6 +863,34 @@ class CompositeConfig(ConfigField):
 
 
 @dataclass
+class ReviewSelectionConfig(ConfigField):
+    """Tuning of the review branch of the reading list (reviews are added beside
+    the `selection_by` ranking, then ranked and capped on their own)."""
+    enabled:               bool = True
+    detect:                str  = "type"   # "type" (document_type) | "title" | "type_or_title"
+    max_reviews_per_topic: int  = 3        # kept per topic, best-first; no uncapped value
+    relevance_mode:        str  = "blend"  # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.detect not in ("type", "title", "type_or_title"):
+            raise ValueError(
+                f"paper_selection.review.detect must be 'type', 'title' or "
+                f"'type_or_title', got {self.detect!r}"
+            )
+        if self.relevance_mode not in ("blend", "cpy"):
+            raise ValueError(
+                f"paper_selection.review.relevance_mode must be 'blend' or "
+                f"'cpy', got {self.relevance_mode!r}"
+            )
+        if self.max_reviews_per_topic < 1:
+            raise ValueError(
+                "paper_selection.review.max_reviews_per_topic must be >= 1; "
+                "use enabled: false to drop the review branch entirely"
+            )
+
+
+@dataclass
 class PaperSelectionConfig(ConfigField):
     min_year:             int   = 2000
     proportion_per_topic: float = 0.15
@@ -872,6 +900,8 @@ class PaperSelectionConfig(ConfigField):
     # under the `composite:` sub-block.
     selection_by:         str   = "citations"
     composite:            CompositeConfig = None
+    # Reviews are added independently of `selection_by`; tune them under `review:`.
+    review:               ReviewSelectionConfig = None
     export_annex:         bool  = True
     annex_format:         str   = "csv"   # "csv" | "txt"
 
@@ -881,6 +911,11 @@ class PaperSelectionConfig(ConfigField):
             self.composite = CompositeConfig(**self.composite)
         elif self.composite is None:
             self.composite = CompositeConfig()
+
+        if isinstance(self.review, dict):
+            self.review = ReviewSelectionConfig(**self.review)
+        elif self.review is None:
+            self.review = ReviewSelectionConfig()
 
 
 @dataclass
