@@ -870,8 +870,12 @@ class ReviewSelectionConfig(ConfigField):
     # OpenAlex types reviews far more sparingly than WoS, so the type alone misses
     # the reviews an OpenAlex-heavy corpus only declares in its title.
     detect:                str  = "type_or_title"  # "type" | "title" | "type_or_title"
-    max_reviews_per_topic: int  = 3        # kept per topic, best-first; no uncapped value
+    max_reviews_per_topic: int  = 3        # historical cohort, best-first; no uncapped value
     relevance_mode:        str  = "blend"  # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
+    # A review this recent has had no time to be cited, so it bypasses the
+    # relevance ranking and keeps a guaranteed slot instead.
+    recent_years:          int  = 1        # years back from the corpus's last year; 0 = no cohort
+    max_recent_reviews:    int  = 2        # that cohort's own cap, newest first
 
     def __post_init__(self):
         super().__post_init__()
@@ -889,6 +893,16 @@ class ReviewSelectionConfig(ConfigField):
             raise ValueError(
                 "paper_selection.review.max_reviews_per_topic must be >= 1; "
                 "use enabled: false to drop the review branch entirely"
+            )
+        if self.recent_years < 0:
+            raise ValueError(
+                "paper_selection.review.recent_years must be >= 0 "
+                "(0 = no guaranteed cohort for recent reviews)"
+            )
+        if self.max_recent_reviews < 1:
+            raise ValueError(
+                "paper_selection.review.max_recent_reviews must be >= 1; "
+                "use recent_years: 0 to drop the recent cohort entirely"
             )
 
 

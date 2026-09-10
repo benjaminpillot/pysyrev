@@ -142,6 +142,31 @@ def _review_relevance(reviews, relevance_mode, current_year):
     return pd.Series(vals, index=reviews.index, dtype=float)
 
 
+def _pick_reviews(reviews, cfg, current_year):
+    """A topic's reviews, as a recent cohort followed by a ranked historical one.
+
+    A review published within ``recent_years`` of the corpus's last year has had
+    no time to accrue citations, so ranking it on citation relevance would bury
+    it under any mediocre older review — and a review of the current year is
+    exactly the one worth reading. It bypasses that ranking and keeps a
+    guaranteed slot instead, capped on its own by ``max_recent_reviews`` and
+    ordered newest first. Only the rest goes through ``_review_relevance``.
+    """
+    is_recent = reviews["year"].fillna(-np.inf) > current_year - cfg.recent_years
+    recent = (reviews[is_recent]
+              .sort_values(["year", "cited_by"], ascending=False)
+              .head(cfg.max_recent_reviews))
+
+    hist = reviews[~is_recent]
+    if len(hist):
+        rel = _review_relevance(hist, cfg.relevance_mode, current_year)
+        hist = (hist.assign(_rel=rel)
+                    .sort_values("_rel", ascending=False)
+                    .head(cfg.max_reviews_per_topic)
+                    .drop(columns=["_rel"]))
+    return pd.concat([recent, hist])
+
+
 def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                                    sel_cfg, export_to, section_n,
                                    coupling_result=None, cocitation_result=None):
@@ -210,11 +235,7 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         if rev_cfg.enabled:
             reviews = filt[_is_review(filt, rev_cfg.detect)].copy()
             if len(reviews):
-                rel = _review_relevance(reviews, rev_cfg.relevance_mode, rev_year)
-                reviews = (reviews.assign(_rel=rel)
-                                  .sort_values("_rel", ascending=False)
-                                  .head(rev_cfg.max_reviews_per_topic)
-                                  .drop(columns=["_rel"]))
+                reviews = _pick_reviews(reviews, rev_cfg, rev_year)
         else:
             reviews = filt.iloc[0:0].copy()
         reviews["_selection"] = "Review"

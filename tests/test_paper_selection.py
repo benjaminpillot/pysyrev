@@ -2,7 +2,8 @@
 Tests for the reading-list machinery of pysyrev.core.report.sections.papers.
 
 Covers review detection against the real document-type vocabularies of the
-sources.
+sources, and the split between the guaranteed recent-review cohort and the
+ranked historical one.
 
 All tests are fast: synthetic DataFrames only, no model and no disk access.
 
@@ -13,7 +14,8 @@ Test naming convention:
 import numpy as np
 import pandas as pd
 
-from pysyrev.core.report.sections.papers import _is_review
+from pysyrev.core.config import ReviewSelectionConfig
+from pysyrev.core.report.sections.papers import _is_review, _pick_reviews
 
 
 # =============================================================================
@@ -89,3 +91,78 @@ class TestIsReview:
         df = _docs([("Article", "x"), ("Review", "y")])
         df.index = [10, 20]
         assert df[_is_review(df, "type")].index.tolist() == [20]
+
+
+# =============================================================================
+# _pick_reviews
+# =============================================================================
+
+def _reviews(specs):
+    """Frame of (year, cited_by) reviews, titled for readability."""
+    return pd.DataFrame([
+        dict(year=float(y), cited_by=float(c), title=f"{y}/{c}")
+        for y, c in specs
+    ])
+
+
+class TestPickReviews:
+
+    CFG = dict(max_reviews_per_topic=3, relevance_mode="blend",
+               recent_years=1, max_recent_reviews=2)
+
+    def _pick(self, specs, current_year=2026.0, **over):
+        cfg = ReviewSelectionConfig(**{**self.CFG, **over})
+        return _pick_reviews(_reviews(specs), cfg, current_year)["title"].tolist()
+
+    def test_uncited_current_year_review_is_kept(self):
+        # The whole point: relevance cannot rank a paper with no time to be
+        # cited, so a current-year review must not be ranked against old ones.
+        kept = self._pick([(2026, 0), (2012, 400), (2021, 60), (2005, 4)])
+        assert "2026/0" in kept
+
+    def test_recent_cohort_leads_the_result(self):
+        kept = self._pick([(2012, 400), (2026, 1), (2021, 60)])
+        assert kept[0] == "2026/1"
+
+    def test_recent_cohort_capped_newest_first(self):
+        kept = self._pick([(2026, 0), (2026, 5), (2026, 9), (2012, 400)],
+                          max_recent_reviews=2)
+        assert sum(1 for k in kept if k.startswith("2026")) == 2
+
+    def test_historical_cohort_capped(self):
+        kept = self._pick([(2012, 400), (2010, 300), (2008, 200), (2005, 4)],
+                          max_reviews_per_topic=2, recent_years=0)
+        assert len(kept) == 2
+
+    def test_historical_cohort_ranked_by_relevance(self):
+        kept = self._pick([(2005, 4), (2012, 400), (2003, 0)],
+                          max_reviews_per_topic=2, recent_years=0)
+        assert kept[0] == "2012/400"
+
+    def test_dead_old_review_dropped_before_a_cited_one(self):
+        kept = self._pick([(2003, 0), (2012, 400), (2021, 60)],
+                          max_reviews_per_topic=2, recent_years=0)
+        assert "2003/0" not in kept
+
+    def test_recent_years_zero_disables_the_cohort(self):
+        # Everything is then ranked, so an uncited current-year review loses.
+        kept = self._pick([(2026, 0), (2012, 400), (2021, 60), (2005, 4)],
+                          recent_years=0, max_reviews_per_topic=2)
+        assert kept == ["2012/400", "2021/60"]
+
+    def test_recent_years_widens_the_window(self):
+        kept = self._pick([(2025, 0), (2012, 400)], recent_years=2)
+        assert kept[0] == "2025/0"
+
+    # Four reviews, arranged so the two modes disagree on the winner: 2021/60 has
+    # the best citations-per-year, 2005/100 the best raw count. Fewer than four
+    # and the percentiles tie, leaving the input order to decide.
+    SPLIT = [(2021, 60), (2005, 100), (2005, 90), (2015, 20)]
+
+    def test_cpy_ranks_on_the_per_year_rate_alone(self):
+        assert self._pick(self.SPLIT, recent_years=0, max_reviews_per_topic=1,
+                          relevance_mode="cpy") == ["2021/60"]
+
+    def test_blend_keeps_raw_citations_in_play(self):
+        assert self._pick(self.SPLIT, recent_years=0, max_reviews_per_topic=1,
+                          relevance_mode="blend") == ["2005/100"]

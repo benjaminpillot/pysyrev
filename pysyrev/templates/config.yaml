@@ -515,8 +515,12 @@ topic_model:
 #   #     review:
 #   #       enabled: true
 #   #       detect: type_or_title     # type (document_type) | title | type_or_title
-#   #       max_reviews_per_topic: 3  # kept per topic, best-first; set high to keep them all
+#   #       max_reviews_per_topic: 3  # historical cohort, best-first; set high to keep them all
 #   #       relevance_mode: blend     # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+#   #       # A review too recent to have been cited bypasses the ranking above and
+#   #       # keeps a guaranteed slot, so the current year is never buried:
+#   #       recent_years: 1           # years back from the corpus's last year; 0 = no cohort
+#   #       max_recent_reviews: 2     # that cohort's own cap, newest first
 #   #     export_annex: true
 #   #     annex_format: csv         # csv | txt
 

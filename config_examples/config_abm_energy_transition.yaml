@@ -536,8 +536,10 @@ topic_report:
        review:
          enabled: true
          detect: type_or_title         # type (document_type) | title | type_or_title
-         max_reviews_per_topic: 3      # kept per topic, best-first
+         max_reviews_per_topic: 3      # historical cohort, best-first
          relevance_mode: cpy           # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+         recent_years: 1               # reviews this recent bypass the ranking (0 = no cohort)
+         max_recent_reviews: 2         # that cohort's own cap, newest first
        export_annex: true
        annex_format: csv
 
