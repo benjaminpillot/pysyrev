@@ -521,7 +521,14 @@ topic_report:
        dendrogram: false
      paper_selection:
        min_year: 2020
-       proportion_per_topic: 0.1
+       # Global reading budget, shared over the topics by eligible pool size; reviews
+       # spend it too, so it is the number of papers actually read. Uncomment to use
+       # it instead of proportion_per_topic below.
+       budget: 50
+       allocation: sqrt        # sqrt = big topic gets more, gap compressed | linear
+       min_per_topic: 2        # floor, honoured even past budget
+       max_per_topic:          # ceiling; blank = the topic's own pool
+#       proportion_per_topic: 0.1   # ignored once budget is set
        selection_by: composite          # citations | random | coupling | co_citation | composite
        # composite = three-axis indicator (coupling centrality + citation
        # relevance + thematic representativeness), ranked per topic. Tune it here:

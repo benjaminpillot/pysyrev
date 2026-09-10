@@ -6,6 +6,7 @@ that asks all three questions at once — is this paper central to its
 sub-literature, typical of its topic, and actually cited?
 """
 
+import math
 import os
 
 import numpy as np
@@ -167,6 +168,63 @@ def _pick_reviews(reviews, cfg, current_year):
     return pd.concat([recent, hist])
 
 
+def _allocate_reading_budget(sizes, budget, min_per_topic, max_per_topic=None,
+                             mode="sqrt"):
+    """Spread a global reading budget over the topics, one integer quota each.
+
+    *sizes* is each topic's eligible pool — what `min_year` and the research-front
+    split actually leave to pick from, not the topic's whole corpus. A bigger topic
+    always earns a bigger quota; ``mode`` sets how steeply. ``"linear"`` makes the
+    quota strictly proportional to the pool, so a topic thirty times larger takes
+    thirty times the list; ``"sqrt"`` weights by the square root, keeping the order
+    but compressing the gap, so a small topic stays legible on its own merit rather
+    than only through the floor.
+
+    Two constraints bracket the share. No topic exceeds its own pool, nor
+    *max_per_topic* when set. Every topic keeps *min_per_topic* (capped by its pool)
+    even where that pushes the total past *budget* — a topic absent from the reading
+    list is worse than a list slightly over budget — so *budget* is a target, and the
+    floors are the hard part. Topics hitting either bound are settled first and their
+    share redistributed among the rest, which is repeated until nothing else clamps;
+    the remaining fractional seats go by largest remainder.
+    """
+    n = len(sizes)
+    caps   = [min(s, max_per_topic) if max_per_topic else s for s in sizes]
+    floors = [min(min_per_topic, c) for c in caps]
+    target = min(budget, sum(caps))
+    weight = (lambda s: math.sqrt(s)) if mode == "sqrt" else (lambda s: float(s))
+
+    fixed: dict = {}
+    while True:
+        active = [i for i in range(n) if i not in fixed]
+        if not active:
+            break
+        left = target - sum(fixed.values())
+        w    = [weight(sizes[i]) for i in active]
+        if left <= 0 or sum(w) <= 0:        # floors already spend the budget
+            fixed.update({i: floors[i] for i in active})
+            break
+        raw = {i: left * wi / sum(w) for i, wi in zip(active, w)}
+
+        over  = [i for i in active if raw[i] > caps[i]]
+        under = [i for i in active if raw[i] < floors[i]]
+        if over:                            # settle at the ceiling, share the rest
+            fixed.update({i: caps[i] for i in over})
+            continue
+        if under:                           # settle at the floor, share the rest
+            fixed.update({i: floors[i] for i in under})
+            continue
+
+        base = {i: int(raw[i]) for i in active}
+        for i in sorted(active, key=lambda i: raw[i] - base[i],
+                        reverse=True)[:left - sum(base.values())]:
+            base[i] += 1
+        fixed.update(base)
+        break
+
+    return [fixed[i] for i in range(n)]
+
+
 def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                                    sel_cfg, export_to, section_n,
                                    coupling_result=None, cocitation_result=None):
@@ -223,13 +281,29 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     rev_cfg  = sel_cfg.review
     rev_year = float(br_wo["year"].max()) if br_wo["year"].notna().any() else 0.0
 
-    selected_parts = []
+    # Each topic's eligible pool, settled before the loop because the global budget
+    # is shared out against those pools — what is actually left to pick from, not
+    # the topic's whole corpus.
+    pools = {}
     for topic_id in sorted(br_wo["Topic"].unique()):
-        topic_df = br_wo[br_wo["Topic"] == topic_id].copy()
-        filt     = topic_df[topic_df["year"] >= sel_cfg.min_year]
+        pool = br_wo[(br_wo["Topic"] == topic_id) & (br_wo["year"] >= sel_cfg.min_year)]
         if front_ids:                       # historical list = non-front papers only
-            filt = filt[~filt[id_col].isin(front_ids)]
+            pool = pool[~pool[id_col].isin(front_ids)]
+        pools[topic_id] = pool.copy()
 
+    # `budget` spreads a global reading total over the topics by pool size; without
+    # it the legacy `proportion_per_topic` applies, a share of the topic's own corpus.
+    if sel_cfg.budget:
+        quotas = dict(zip(pools, _allocate_reading_budget(
+            [len(p) for p in pools.values()], sel_cfg.budget,
+            sel_cfg.min_per_topic, sel_cfg.max_per_topic, sel_cfg.allocation)))
+    else:
+        quotas = {t: max(1, round(sel_cfg.proportion_per_topic
+                                  * int((br_wo["Topic"] == t).sum())))
+                  for t in pools}
+
+    selected_parts = []
+    for topic_id, filt in pools.items():
         # Reviews — an opt-out branch that runs beside (not through) the ranked
         # selection, so it is ranked and capped on its own terms.
         if rev_cfg.enabled:
@@ -240,23 +314,34 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
             reviews = filt.iloc[0:0].copy()
         reviews["_selection"] = "Review"
 
-        n_docs = max(1, round(sel_cfg.proportion_per_topic * len(topic_df)))
+        # Under a global budget the reviews spend the topic's quota, so the quota is
+        # the number of papers actually read. They are trimmed to it first (the recent
+        # cohort leads, so the guarantee survives the trim), then the ranked branch
+        # fills what is left out of the papers they did not already take — drawing
+        # from the whole pool would let the dedup below merge a review back into the
+        # ranked slots and leave the topic short of its quota.
+        n_docs = quotas[topic_id]
+        pool   = filt
+        if sel_cfg.budget:
+            reviews = reviews.head(n_docs)
+            pool    = filt.drop(index=reviews.index)
+            n_docs  = max(0, n_docs - len(reviews))
         if sel_cfg.selection_by == "random":
-            selected = filt.sample(n=min(n_docs, len(filt)), random_state=42).copy()
+            selected = pool.sample(n=min(n_docs, len(pool)), random_state=42).copy()
             selected["_selection"] = "Random"
             selection_label = "Random"
         elif sel_cfg.selection_by in ("coupling", "co_citation", "composite") and _degree_map:
-            id_col = next((c for c in ["id", "ID"] if c in filt.columns), None)
+            id_col = next((c for c in ["id", "ID"] if c in pool.columns), None)
             if id_col:
-                tmp = filt.copy()
+                tmp = pool.copy()
                 tmp["_degree"] = tmp[id_col].map(_degree_map).fillna(0)
                 selected = tmp.sort_values("_degree", ascending=False).head(n_docs).copy()
                 selected = selected.drop(columns=["_degree"])
             else:
-                selected = filt.sort_values("cited_by", ascending=False).head(n_docs).copy()
+                selected = pool.sort_values("cited_by", ascending=False).head(n_docs).copy()
             selected["_selection"] = selection_label
         else:  # "citations" (default, or fallback when graph is unavailable)
-            selected = filt.sort_values("cited_by", ascending=False).head(n_docs).copy()
+            selected = pool.sort_values("cited_by", ascending=False).head(n_docs).copy()
             selected["_selection"] = "Most cited"
             selection_label = "Most cited"
 

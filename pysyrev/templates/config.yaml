@@ -500,7 +500,16 @@ topic_model:
 #   #     dendrogram: true
 #   #   paper_selection:
 #   #     min_year: 2020
-#   #     proportion_per_topic: 0.15
+#   #     # A global reading budget, shared out over the topics by eligible pool size
+#   #     # (what min_year and the research-front split leave to pick from, not the
+#   #     # topic's whole corpus). Reviews spend it too, so it is the number of papers
+#   #     # you actually read. Leave budget unset to fall back to proportion_per_topic.
+#   #     budget: 40
+#   #     allocation: sqrt        # sqrt = a big topic gets more, but the gap is compressed
+#   #                             # linear = strictly proportional to the pool
+#   #     min_per_topic: 2        # floor, honoured even when it pushes the total past budget
+#   #     max_per_topic:          # ceiling; blank = the topic's own pool
+#   #     proportion_per_topic: 0.15   # used only when budget is unset
 #   #     selection_by: citations          # citations | random | coupling | co_citation | composite
 #   #     # composite = three-axis indicator (coupling centrality + citation
 #   #     # relevance + thematic representativeness), ranked per topic. Tune it here:

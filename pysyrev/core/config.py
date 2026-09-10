@@ -909,6 +909,15 @@ class ReviewSelectionConfig(ConfigField):
 @dataclass
 class PaperSelectionConfig(ConfigField):
     min_year:             int   = 2000
+    # Global reading budget, shared out over the topics by eligible pool size —
+    # the papers left after `min_year` and the research-front split, not the
+    # topic's whole corpus. Reviews spend it too, so it is the number of papers
+    # actually read. Unset = the legacy per-topic proportion below.
+    budget:               Union[None, int] = None
+    allocation:           str   = "sqrt"   # "sqrt" (compressed) | "linear" (strict)
+    min_per_topic:        int   = 2        # floor, honoured even past `budget`
+    max_per_topic:        Union[None, int] = None   # ceiling; unset = the pool
+    # Used only when `budget` is unset: share of the topic's own corpus.
     proportion_per_topic: float = 0.15
     # "citations" | "random" | "coupling" | "co_citation" | "composite"
     # "composite" ranks papers per topic by the three-axis indicator (coupling
@@ -932,6 +941,20 @@ class PaperSelectionConfig(ConfigField):
             self.review = ReviewSelectionConfig(**self.review)
         elif self.review is None:
             self.review = ReviewSelectionConfig()
+
+        if self.allocation not in ("sqrt", "linear"):
+            raise ValueError(
+                f"paper_selection.allocation must be 'sqrt' or 'linear', "
+                f"got {self.allocation!r}"
+            )
+        if self.budget is not None and self.budget < 1:
+            raise ValueError("paper_selection.budget must be >= 1 (or unset)")
+        if self.min_per_topic < 0:
+            raise ValueError("paper_selection.min_per_topic must be >= 0")
+        if self.max_per_topic is not None and self.max_per_topic < self.min_per_topic:
+            raise ValueError(
+                "paper_selection.max_per_topic must be >= min_per_topic"
+            )
 
 
 @dataclass
