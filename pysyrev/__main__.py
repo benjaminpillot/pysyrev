@@ -19,6 +19,9 @@ Usage
   # Price the review stage before paying for it (no model call)
   pysyrev estimate config.yaml [--calibrate reviewed.csv] [--sweep]
 
+  # List the mandatory sections/keys, and check a config against them
+  pysyrev check [config.yaml] [--stage bib]
+
 The ``download`` subcommand tries to retrieve each paper in cascade order:
 Unpaywall → OpenAlex → Elsevier TDM.  Passing ``--config`` injects API keys
 and fine-grained options; without it, only the OpenAlex step runs (no key
@@ -232,6 +235,9 @@ def _run_estimate(argv):
                                          calibrate_from_run)
 
     config = Config.load(args.config)
+    if 'review' in config.errors:
+        print(f"The `review:` section cannot be read — {config.errors['review']}")
+        sys.exit(1)
     if config.review is None:
         print("No `review:` section in the config — nothing to estimate.")
         return
@@ -265,6 +271,76 @@ def _run_estimate(argv):
 
 
 # =============================================================================
+# Check sub-command
+# =============================================================================
+
+def _render_requirements() -> str:
+    """The mandatory sections and keys of a pipeline config."""
+    from pysyrev.core.config import (SECTION_CLASSES, STAGE_SECTIONS,
+                                     conditional_keys, mandatory_keys)
+
+    lines = ["Sections — every one is optional; a stage only needs its own."]
+    for name, cls in SECTION_CLASSES.items():
+        keys = mandatory_keys(cls, name)
+        lines.append(f"  {name + ':':<15} mandatory keys: "
+                     f"{', '.join(keys) if keys else 'none'}")
+        for note in conditional_keys(cls, name):
+            lines.append(f"  {'':<15} conditional:    {note}")
+
+    lines += ["", "Stages — `--stage <name>` only reads the sections below."]
+    for stage, spec in STAGE_SECTIONS.items():
+        uses = f"  (uses {', '.join(spec['uses'])} when valid)" if spec['uses'] else ""
+        lines.append(f"  {stage:<15} needs {', '.join(spec['needs'])}{uses}")
+    return "\n".join(lines)
+
+
+def _run_check(argv):
+    parser = argparse.ArgumentParser(
+        prog='pysyrev check',
+        description=(
+            'Report which config sections and keys are mandatory, and — when a\n'
+            'config file is given — which of its stages are ready to run.\n'
+            'Nothing is executed and no API is called.'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        'config', nargs='?', default=None,
+        help='Pipeline config to check. Omit to only list what is mandatory.',
+    )
+    parser.add_argument(
+        '--stage', nargs='+', choices=ALL_STAGES, metavar='STAGE', default=None,
+        help='Only check these stages (default: every stage the config declares).',
+    )
+    args = parser.parse_args(argv)
+
+    print(_render_requirements())
+    if args.config is None:
+        return
+
+    from pysyrev.core.config import Config
+
+    print(f"\nChecking {args.config}")
+    config = Config.load(args.config)
+    stages = args.stage or [s for s in ALL_STAGES if config.stage_is_declared(s)]
+    if not stages:
+        print("  no stage is declared — the config has no runnable section.")
+        return
+
+    ready = True
+    for stage in stages:
+        try:
+            config.require_stages([stage])
+            print(f"  {stage:<15} ok")
+        except ValueError as exc:
+            ready = False
+            print(f"  {stage:<15} NOT RUNNABLE — {exc}")
+
+    if not ready:
+        sys.exit(1)
+
+
+# =============================================================================
 # Entry point
 # =============================================================================
 
@@ -275,6 +351,8 @@ def main():
         _run_download(sys.argv[2:])
     elif len(sys.argv) > 1 and sys.argv[1] == 'estimate':
         _run_estimate(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == 'check':
+        _run_check(sys.argv[2:])
     else:
         _run_pipeline(sys.argv[1:])
 

@@ -109,6 +109,11 @@ pysyrev download candidates.csv output_folder/ --config download_config.yaml
 pysyrev estimate config.yaml
 pysyrev estimate config.yaml --sweep            # what other items_per_call would cost
 pysyrev estimate config.yaml --calibrate previous_run/reviewed_total.csv
+
+# List the mandatory sections/keys, and check which stages a config can run
+pysyrev check
+pysyrev check config.yaml
+pysyrev check config.yaml --stage bib
 ```
 
 Valid stage names: `bib` | `review` | `topic-model` | `topic-report`.
@@ -162,6 +167,19 @@ pysyrev report_only.yaml
 ## Configuration
 
 A single YAML file controls all stages. Copy `pysyrev/templates/config.yaml` and fill in the sections you need — or start from one of the fuller, annotated files in `config_examples/`. Sections not present in the file are simply skipped.
+
+### Mandatory sections and keys
+
+Each stage reads its own section, and only its own: an incomplete `topic_model:` cannot stop `--stage bib`. Loading reports such a section and keeps going; the error is raised when a stage that needs it runs. Run `pysyrev check` for the authoritative, always-current list, and `pysyrev check config.yaml` to see which stages your file can run.
+
+| Stage | Needs | Mandatory keys | Also reads when valid |
+|---|---|---|---|
+| `bib` | `bib:` | at least one source among `wos:` / `open_alex:` / `scopus:` / `pubmed:` | — |
+| `review` | `review:` | `export.export_dir`, `text_inputs`, `inclusion_criteria`, `exclusion_criteria`, `reviewers[]` (`name`, `model_id`, `provider`, `backstory`), `workflow` | `topic_model:` |
+| `topic-model` | `topic_model:` | `export.export_dir` | `llm:`, `topic_report:` |
+| `topic-report` | `topic_report:` | none | `topic_model:`, `llm:` |
+
+The `llm:` section (topic labelling) is optional everywhere, but needs `provider` and `model_id` once declared.
 
 Key auto-detection rules (when fields are left blank):
 

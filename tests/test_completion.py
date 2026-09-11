@@ -5,7 +5,8 @@ import pytest
 
 from pysyrev.bibdata import BibDataset
 from pysyrev.core.bib import DEFAULT_FIELDS
-from pysyrev.core.config import BibConfig, AbstractCompletionConfig
+from pysyrev.core.config import (BibConfig, AbstractCompletionConfig,
+                                 ConfigError)
 
 
 def _valid_df():
@@ -48,8 +49,8 @@ class TestBibConfigParsing:
 
     def test_openalex_no_longer_accepts_wos_completion(self):
         # The completion sub-block moved up to bib.abstract_completion; declaring
-        # it under the source is now an unknown field.
-        with pytest.raises(TypeError):
+        # it under the source is now an unknown key, named by its path.
+        with pytest.raises(ConfigError, match="open_alex.wos_completion"):
             BibConfig(open_alex={"source": "file", "file": "/x.csv",
                                  "wos_completion": {"api_key": "k"}})
 
