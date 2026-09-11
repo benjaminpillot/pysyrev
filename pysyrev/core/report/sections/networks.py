@@ -183,7 +183,7 @@ def _label_communities(run_dir, result, config, repr_docs, kind):
     if not terms:
         return None
     from pysyrev.core.topic_labels import (
-        load_cached_cluster_labels, save_cluster_labels)
+        labels_are_cacheable, load_cached_cluster_labels, save_cluster_labels)
 
     cached = load_cached_cluster_labels(run_dir, terms)
     if cached is not None:
@@ -196,9 +196,13 @@ def _label_communities(run_dir, result, config, repr_docs, kind):
         from pysyrev.core.llm import label_clusters
         print(f"Generating human-readable {kind}-community labels via LLM…")
         labels = label_clusters(terms, config, repr_docs=repr_docs)
-        path = save_cluster_labels(run_dir, terms, labels)
-        print(f"{kind.capitalize()}-community labels saved to: {path}")
-        return labels
+        if labels_are_cacheable(labels):
+            path = save_cluster_labels(run_dir, terms, labels)
+            print(f"{kind.capitalize()}-community labels saved to: {path}")
+        elif labels:
+            print(f"[report] {kind}-community labels incomplete — used for "
+                  f"this report but not cached.")
+        return labels or None
     except Exception as e:
         print(f"[report] community labels skipped (network still rendered): {e!r}")
         return None

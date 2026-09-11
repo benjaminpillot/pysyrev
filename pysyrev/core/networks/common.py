@@ -27,17 +27,14 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from pysyrev.core.bib import ID, REFS
-
-_SEP = "; "
+from pysyrev.core.bib import ID, REFS, split_references
 
 
 # ---------------------------------------------------------------------------
 # Reference sets
 # ---------------------------------------------------------------------------
 
-def reference_sets(df, ref_col: str = REFS,
-                   sep: str = _SEP) -> Tuple[List, List[set]]:
+def reference_sets(df, ref_col: str = REFS) -> Tuple[List, List[set]]:
     """Return ``(node_ids, refsets)`` from the raw references column.
 
     Each reference token is used verbatim as an identity key — exact overlap
@@ -50,17 +47,12 @@ def reference_sets(df, ref_col: str = REFS,
     df : pd.DataFrame
         Bib DataFrame with an ``id`` column and *ref_col*.
     ref_col : str
-        Column holding ``sep``-joined reference identifiers.
-    sep : str
-        Separator between references within a cell.
+        Column holding ``REF_SEP``-joined reference identifiers.
     """
     node_ids = list(df[ID])
     refsets: List[set] = []
     for val in df[ref_col]:
-        if isinstance(val, str):
-            refsets.append({r.strip() for r in val.split(sep) if r.strip()})
-        else:
-            refsets.append(set())
+        refsets.append(set(split_references(val)))
     return node_ids, refsets
 
 

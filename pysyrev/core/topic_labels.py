@@ -59,6 +59,17 @@ def terms_fingerprint(terms: dict) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
+def labels_are_cacheable(labels) -> bool:
+    """Whether a freshly generated label set should be written to the cache.
+
+    Only a complete one is. The cache's job is to stop the labeller running
+    twice, so a partial set written there would freeze its gaps for good;
+    leaving it uncached costs one more labelling run and lets the next one
+    retry the names it could not get.
+    """
+    return bool(labels) and getattr(labels, "complete", True)
+
+
 def load_cached_labels(run_dir: str, file_prefix: str) -> Optional[dict]:
     return _load(run_dir, "topic_labels", file_prefix)
 

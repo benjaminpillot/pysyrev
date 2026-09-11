@@ -199,13 +199,13 @@ review: # LLM-based review
                                 # of losing 500 documents on a crash instead of
                                 # 250. Same token cost either way. The run warns
                                 # if this drops back below the floor.
-  api_pause: 30.0               # seconds between chunks (rate-limit guard)
+  api_pause: 20.0               # seconds between chunks (rate-limit guard)
   max_retries: 2                # on API error; overridable per reviewer.
                                 # Applies to single-article calls; a failed
                                 # multi-article call is attempted once and then
                                 # split, so a large batch is never re-billed in
                                 # full for a failure the retry cannot fix.
-  max_concurrent_requests: 5    # keep 5-10 for Anthropic, up to 30 for OpenAI
+  max_concurrent_requests: 10    # keep 5-10 for Anthropic, up to 30 for OpenAI
   items_per_call: 10             # articles per API call (backstory sent once).
                                  # Measured optimum: 50 saves a further 2 %,
                                  # 1 would cost 108 % more.
@@ -245,7 +245,6 @@ review: # LLM-based review
                                  # column — the canonical name is
                                  # author_keywords, and the mismatch meant the
                                  # keywords were silently never sent.
-#  input_description : article title/abstract/keywords
   inclusion_criteria : The scope of the study MUST include the use 
     or development of agent-based models 
     or agent-based simulations FOR addressing 
@@ -258,9 +257,9 @@ review: # LLM-based review
     3. The study belongs to another very distant
     scientific field, such as geology, zoology,
     biology, medicine, biomedical studies, etc.
-  sample_size : 50    # Leave blank if the whole dataset must be processed. Otherwise,
+  sample_size :     # Leave blank if the whole dataset must be processed. Otherwise,
                     # size of the corresponding random sample to withdraw from the dataset
-  sample_seed : 42    # Seed for that draw. Blank = a new sample every run; an integer
+  sample_seed :     # Seed for that draw. Blank = a new sample every run; an integer
                     # keeps the same 50 articles, so two test runs differ by the config
                     # change and not by the draw. `pysyrev estimate` uses it too.
   decision_rule : majority   # majority, mean
@@ -290,7 +289,7 @@ review: # LLM-based review
                          # Was 0.9: on a 1-5 classification that mostly buys
                          # malformed batch responses (which are re-billed before
                          # the split) and makes the review irreproducible.
-      reasoning_effort :
+      reasoning_effort : low
       max_retries :                # Leave blank to use the section-level value above.
       max_concurrent_requests :    # Leave blank to use the section-level value above.
       requests_per_minute :        # Leave blank to use the section-level value above.
@@ -320,7 +319,7 @@ review: # LLM-based review
       provider : albert
       max_tokens : 500
       temperature : 0.2
-      reasoning_effort :
+      reasoning_effort : low
       backstory: Reviewer#2 is a seasoned researcher with a PhD in computer
         science, specializing in agent-based modeling (ABM) and
         agent-based simulation techniques. Reviewer#2 helps in
@@ -412,7 +411,7 @@ topic_model:
   # is auto-derived from the corpus size to aim at it, and only models with a
   # topic count in the band are kept. For ~200 docs, [5, 15] targets
   # min_topic_size ~[13, 40].
-  desired_topics : [5, 15]
+  desired_topics : [10, 20]
 
 # ---- HDBSCAN parameters -------------------------
   hdbscan:
@@ -521,7 +520,14 @@ topic_report:
        dendrogram: false
      paper_selection:
        min_year: 2020
-       proportion_per_topic: 0.1
+       # Global reading budget, shared over the topics by eligible pool size; reviews
+       # spend it too, so it is the number of papers actually read. Uncomment to use
+       # it instead of proportion_per_topic below.
+       budget: 50
+       allocation: sqrt        # sqrt = big topic gets more, gap compressed | linear
+       min_per_topic: 2        # floor, honoured even past budget
+       max_per_topic:          # ceiling; blank = the topic's own pool
+#       proportion_per_topic: 0.1   # ignored once budget is set
        selection_by: composite          # citations | random | coupling | co_citation | composite
        # composite = three-axis indicator (coupling centrality + citation
        # relevance + thematic representativeness), ranked per topic. Tune it here:
@@ -532,6 +538,14 @@ topic_report:
          #   weights: [1, 1, 1]       # (centrality, representativeness, relevance); omit for equal
          #   drop_current_year: true  # drop the incomplete current year from the cit/yr denominator
          #   current_year:            # reference year; blank = latest year in the corpus
+       # Reviews are added beside the ranking above, then ranked and capped on their own:
+       review:
+         enabled: true
+         detect: type_or_title         # type (document_type) | title | type_or_title
+         max_reviews_per_topic: 3      # historical cohort, best-first
+         relevance_mode: cpy           # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+         recent_years: 1               # reviews this recent bypass the ranking (0 = no cohort)
+         max_recent_reviews: 2         # that cohort's own cap, newest first
        export_annex: true
        annex_format: csv
 
@@ -543,9 +557,9 @@ topic_report:
 # Remove or comment out this block to skip LLM labelling.
 #
 llm:
-   provider:   anthropic
-   model_id:   claude-haiku-4-5-20251001
+   provider:   albert
+   model_id:  openai/gpt-oss-120b
    host:
-   max_tokens: 200
+   max_tokens: 1000
    temperature: 0.3
    n_repr_docs_for_labeling: 10

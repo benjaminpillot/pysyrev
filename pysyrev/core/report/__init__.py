@@ -21,7 +21,7 @@ Layout
 
 from pysyrev.core.report.engine import (  # noqa: F401
     PDFReportEngine, PlotlyAssetManager, ReportLayout, ReportTheme,
-    build_resized_image, build_styles, build_table, safe_str)
+    build_resized_image, build_styles, build_table, pdf_text, safe_str)
 from pysyrev.core.report.data import (  # noqa: F401
     build_file_prefix, build_report_data, find_best_results_csv,
     load_bertopic_results, load_topic_info)

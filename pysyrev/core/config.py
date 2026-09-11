@@ -313,6 +313,12 @@ class CleanConfig(ConfigField):
     # those records dominate the corpus' character count and the review bill.
     # The cut lands on a sentence boundary. 2500 keeps a full abstract.
     max_abstract_chars:    Union[None, int]       = None
+    # Drop a record left without an abstract — none delivered by any source, or
+    # one the filter above rejected. True is the right default for a
+    # search-built corpus: a record with no abstract cannot be screened. Set it
+    # to False for a closed corpus of known papers (a DOI list), where silently
+    # losing a record matters more than carrying one the reviewer cannot read.
+    drop_record_with_no_abstract: bool            = True
 
 
 @dataclass
@@ -857,8 +863,61 @@ class CompositeConfig(ConfigField):
 
 
 @dataclass
+class ReviewSelectionConfig(ConfigField):
+    """Tuning of the review branch of the reading list (reviews are added beside
+    the `selection_by` ranking, then ranked and capped on their own)."""
+    enabled:               bool = True
+    # OpenAlex types reviews far more sparingly than WoS, so the type alone misses
+    # the reviews an OpenAlex-heavy corpus only declares in its title.
+    detect:                str  = "type_or_title"  # "type" | "title" | "type_or_title"
+    max_reviews_per_topic: int  = 3        # historical cohort, best-first; no uncapped value
+    relevance_mode:        str  = "blend"  # "blend" (cit/yr + raw citations) | "cpy" (cit/yr alone)
+    # A review this recent has had no time to be cited, so it bypasses the
+    # relevance ranking and keeps a guaranteed slot instead.
+    recent_years:          int  = 1        # years back from the corpus's last year; 0 = no cohort
+    max_recent_reviews:    int  = 2        # that cohort's own cap, newest first
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.detect not in ("type", "title", "type_or_title"):
+            raise ValueError(
+                f"paper_selection.review.detect must be 'type', 'title' or "
+                f"'type_or_title', got {self.detect!r}"
+            )
+        if self.relevance_mode not in ("blend", "cpy"):
+            raise ValueError(
+                f"paper_selection.review.relevance_mode must be 'blend' or "
+                f"'cpy', got {self.relevance_mode!r}"
+            )
+        if self.max_reviews_per_topic < 1:
+            raise ValueError(
+                "paper_selection.review.max_reviews_per_topic must be >= 1; "
+                "use enabled: false to drop the review branch entirely"
+            )
+        if self.recent_years < 0:
+            raise ValueError(
+                "paper_selection.review.recent_years must be >= 0 "
+                "(0 = no guaranteed cohort for recent reviews)"
+            )
+        if self.max_recent_reviews < 1:
+            raise ValueError(
+                "paper_selection.review.max_recent_reviews must be >= 1; "
+                "use recent_years: 0 to drop the recent cohort entirely"
+            )
+
+
+@dataclass
 class PaperSelectionConfig(ConfigField):
     min_year:             int   = 2000
+    # Global reading budget, shared out over the topics by eligible pool size —
+    # the papers left after `min_year` and the research-front split, not the
+    # topic's whole corpus. Reviews spend it too, so it is the number of papers
+    # actually read. Unset = the legacy per-topic proportion below.
+    budget:               Union[None, int] = None
+    allocation:           str   = "sqrt"   # "sqrt" (compressed) | "linear" (strict)
+    min_per_topic:        int   = 2        # floor, honoured even past `budget`
+    max_per_topic:        Union[None, int] = None   # ceiling; unset = the pool
+    # Used only when `budget` is unset: share of the topic's own corpus.
     proportion_per_topic: float = 0.15
     # "citations" | "random" | "coupling" | "co_citation" | "composite"
     # "composite" ranks papers per topic by the three-axis indicator (coupling
@@ -866,6 +925,8 @@ class PaperSelectionConfig(ConfigField):
     # under the `composite:` sub-block.
     selection_by:         str   = "citations"
     composite:            CompositeConfig = None
+    # Reviews are added independently of `selection_by`; tune them under `review:`.
+    review:               ReviewSelectionConfig = None
     export_annex:         bool  = True
     annex_format:         str   = "csv"   # "csv" | "txt"
 
@@ -875,6 +936,25 @@ class PaperSelectionConfig(ConfigField):
             self.composite = CompositeConfig(**self.composite)
         elif self.composite is None:
             self.composite = CompositeConfig()
+
+        if isinstance(self.review, dict):
+            self.review = ReviewSelectionConfig(**self.review)
+        elif self.review is None:
+            self.review = ReviewSelectionConfig()
+
+        if self.allocation not in ("sqrt", "linear"):
+            raise ValueError(
+                f"paper_selection.allocation must be 'sqrt' or 'linear', "
+                f"got {self.allocation!r}"
+            )
+        if self.budget is not None and self.budget < 1:
+            raise ValueError("paper_selection.budget must be >= 1 (or unset)")
+        if self.min_per_topic < 0:
+            raise ValueError("paper_selection.min_per_topic must be >= 0")
+        if self.max_per_topic is not None and self.max_per_topic < self.min_per_topic:
+            raise ValueError(
+                "paper_selection.max_per_topic must be >= min_per_topic"
+            )
 
 
 @dataclass

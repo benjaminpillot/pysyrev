@@ -6,6 +6,7 @@ that asks all three questions at once — is this paper central to its
 sub-literature, typical of its topic, and actually cited?
 """
 
+import math
 import os
 
 import numpy as np
@@ -84,6 +85,146 @@ def _composite_scores(coupling_result, bertopic_results, *, aggregate="mean",
     return detail
 
 
+def _is_review(df, detect):
+    """Boolean mask of the literature reviews in *df*, per the ``detect`` mode.
+
+    ``document_type`` is a controlled vocabulary, so it is matched component-wise
+    over its ``;``-separated parts — "Review", "Review; Early Access", OpenAlex's
+    lowercase "review" — rather than as a substring. The title test is a plain
+    substring, since a title has no vocabulary to lean on.
+
+    Peer review defeats both tests and is filtered out of both. OpenAlex's
+    ``peer-review`` type is a referee report, not a literature review, and its
+    titles read "Reviewer #2 (Public Review): ..." or "Author response: ..."; that
+    type is excluded outright, whatever the mode. A title naming peer review is
+    dropped too, since those are papers *about* refereeing rather than reviews of
+    a literature — at the price of missing an actual review of peer-review practice.
+
+    Both modes earn their keep: OpenAlex types reviews far more sparingly than WoS,
+    so `"type"` alone misses the genuine reviews an OpenAlex-heavy corpus declares
+    only in its title.
+    """
+    dtype = df["document_type"].fillna("").astype(str).str.lower()
+    title = df["title"].fillna("").astype(str).str.lower()
+
+    parts     = [[p.strip() for p in s.split(";")] for s in dtype]
+    referee   = pd.Series([any(p in ("peer-review", "peer review") for p in ps)
+                           for ps in parts], index=df.index, dtype=bool)
+    type_hit  = pd.Series([any(p == "review" for p in ps) for ps in parts],
+                          index=df.index, dtype=bool)
+    title_hit = (title.str.contains("review")
+                 & ~title.str.contains("peer[- ]review", regex=True))
+
+    hit = title_hit if detect == "title" else (
+        type_hit if detect == "type" else type_hit | title_hit)
+    return hit & ~referee
+
+
+def _review_relevance(reviews, relevance_mode, current_year):
+    """Citation relevance of each review, as a percentile within *reviews* —
+    same vocabulary as the composite's relevance axis. Unlike the composite the
+    current year stays in the cit/yr denominator: relevance is this branch's only
+    axis, so it cannot be dropped for a current-year review.
+    """
+    from pysyrev.core.paper_ranking import pctl_within
+
+    raw = reviews["cited_by"].astype(float).fillna(0.0).to_numpy()
+    year = reviews["year"].astype(float).to_numpy()
+    elapsed = np.maximum(current_year - np.nan_to_num(year, nan=current_year) + 1, 1.0)
+    cpy = raw / elapsed
+
+    idx = list(range(len(reviews)))
+    p_cy = pctl_within(idx, cpy)
+    if relevance_mode == "cpy":
+        vals = [p_cy[i] for i in idx]
+    else:
+        p_rw = pctl_within(idx, raw)
+        vals = [(p_cy[i] + p_rw[i]) / 2 for i in idx]
+    return pd.Series(vals, index=reviews.index, dtype=float)
+
+
+def _pick_reviews(reviews, cfg, current_year):
+    """A topic's reviews, as a recent cohort followed by a ranked historical one.
+
+    A review published within ``recent_years`` of the corpus's last year has had
+    no time to accrue citations, so ranking it on citation relevance would bury
+    it under any mediocre older review — and a review of the current year is
+    exactly the one worth reading. It bypasses that ranking and keeps a
+    guaranteed slot instead, capped on its own by ``max_recent_reviews`` and
+    ordered newest first. Only the rest goes through ``_review_relevance``.
+    """
+    is_recent = reviews["year"].fillna(-np.inf) > current_year - cfg.recent_years
+    recent = (reviews[is_recent]
+              .sort_values(["year", "cited_by"], ascending=False)
+              .head(cfg.max_recent_reviews))
+
+    hist = reviews[~is_recent]
+    if len(hist):
+        rel = _review_relevance(hist, cfg.relevance_mode, current_year)
+        hist = (hist.assign(_rel=rel)
+                    .sort_values("_rel", ascending=False)
+                    .head(cfg.max_reviews_per_topic)
+                    .drop(columns=["_rel"]))
+    return pd.concat([recent, hist])
+
+
+def _allocate_reading_budget(sizes, budget, min_per_topic, max_per_topic=None,
+                             mode="sqrt"):
+    """Spread a global reading budget over the topics, one integer quota each.
+
+    *sizes* is each topic's eligible pool — what `min_year` and the research-front
+    split actually leave to pick from, not the topic's whole corpus. A bigger topic
+    always earns a bigger quota; ``mode`` sets how steeply. ``"linear"`` makes the
+    quota strictly proportional to the pool, so a topic thirty times larger takes
+    thirty times the list; ``"sqrt"`` weights by the square root, keeping the order
+    but compressing the gap, so a small topic stays legible on its own merit rather
+    than only through the floor.
+
+    Two constraints bracket the share. No topic exceeds its own pool, nor
+    *max_per_topic* when set. Every topic keeps *min_per_topic* (capped by its pool)
+    even where that pushes the total past *budget* — a topic absent from the reading
+    list is worse than a list slightly over budget — so *budget* is a target, and the
+    floors are the hard part. Topics hitting either bound are settled first and their
+    share redistributed among the rest, which is repeated until nothing else clamps;
+    the remaining fractional seats go by largest remainder.
+    """
+    n = len(sizes)
+    caps   = [min(s, max_per_topic) if max_per_topic else s for s in sizes]
+    floors = [min(min_per_topic, c) for c in caps]
+    target = min(budget, sum(caps))
+    weight = (lambda s: math.sqrt(s)) if mode == "sqrt" else (lambda s: float(s))
+
+    fixed: dict = {}
+    while True:
+        active = [i for i in range(n) if i not in fixed]
+        if not active:
+            break
+        left = target - sum(fixed.values())
+        w    = [weight(sizes[i]) for i in active]
+        if left <= 0 or sum(w) <= 0:        # floors already spend the budget
+            fixed.update({i: floors[i] for i in active})
+            break
+        raw = {i: left * wi / sum(w) for i, wi in zip(active, w)}
+
+        over  = [i for i in active if raw[i] > caps[i]]
+        under = [i for i in active if raw[i] < floors[i]]
+        if over:                            # settle at the ceiling, share the rest
+            fixed.update({i: caps[i] for i in over})
+            continue
+        if under:                           # settle at the floor, share the rest
+            fixed.update({i: floors[i] for i in under})
+            continue
+
+        base = {i: int(raw[i]) for i in active}
+        for i in sorted(active, key=lambda i: raw[i] - base[i],
+                        reverse=True)[:left - sum(base.values())]:
+            base[i] += 1
+        fixed.update(base)
+        break
+
+    return [fixed[i] for i in range(n)]
+
+
 def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                                    sel_cfg, export_to, section_n,
                                    coupling_result=None, cocitation_result=None):
@@ -135,38 +276,72 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
     front_ids = ({i for i, d in _composite_detail.items() if d.get("relevance_dropped")}
                  if comp_split else set())
 
-    selected_parts = []
-    for topic_id in sorted(br_wo["Topic"].unique()):
-        topic_df = br_wo[br_wo["Topic"] == topic_id].copy()
-        filt     = topic_df[topic_df["year"] >= sel_cfg.min_year]
-        if front_ids:                       # historical list = non-front papers only
-            filt = filt[~filt[id_col].isin(front_ids)]
+    # Review branch: reference year for the citations/year denominator. The
+    # corpus's latest year, so the branch stands alone whatever `selection_by` is.
+    rev_cfg  = sel_cfg.review
+    rev_year = float(br_wo["year"].max()) if br_wo["year"].notna().any() else 0.0
 
-        # Reviews
-        is_review = (
-            filt["document_type"].str.lower().fillna("").str.contains("review")
-            | filt["title"].str.lower().fillna("").str.contains("review")
-        )
-        reviews = filt[is_review].copy()
+    # Each topic's eligible pool, settled before the loop because the global budget
+    # is shared out against those pools — what is actually left to pick from, not
+    # the topic's whole corpus.
+    pools = {}
+    for topic_id in sorted(br_wo["Topic"].unique()):
+        pool = br_wo[(br_wo["Topic"] == topic_id) & (br_wo["year"] >= sel_cfg.min_year)]
+        if front_ids:                       # historical list = non-front papers only
+            pool = pool[~pool[id_col].isin(front_ids)]
+        pools[topic_id] = pool.copy()
+
+    # `budget` spreads a global reading total over the topics by pool size; without
+    # it the legacy `proportion_per_topic` applies, a share of the topic's own corpus.
+    if sel_cfg.budget:
+        quotas = dict(zip(pools, _allocate_reading_budget(
+            [len(p) for p in pools.values()], sel_cfg.budget,
+            sel_cfg.min_per_topic, sel_cfg.max_per_topic, sel_cfg.allocation)))
+    else:
+        quotas = {t: max(1, round(sel_cfg.proportion_per_topic
+                                  * int((br_wo["Topic"] == t).sum())))
+                  for t in pools}
+
+    selected_parts = []
+    for topic_id, filt in pools.items():
+        # Reviews — an opt-out branch that runs beside (not through) the ranked
+        # selection, so it is ranked and capped on its own terms.
+        if rev_cfg.enabled:
+            reviews = filt[_is_review(filt, rev_cfg.detect)].copy()
+            if len(reviews):
+                reviews = _pick_reviews(reviews, rev_cfg, rev_year)
+        else:
+            reviews = filt.iloc[0:0].copy()
         reviews["_selection"] = "Review"
 
-        n_docs = max(1, round(sel_cfg.proportion_per_topic * len(topic_df)))
+        # Under a global budget the reviews spend the topic's quota, so the quota is
+        # the number of papers actually read. They are trimmed to it first (the recent
+        # cohort leads, so the guarantee survives the trim), then the ranked branch
+        # fills what is left out of the papers they did not already take — drawing
+        # from the whole pool would let the dedup below merge a review back into the
+        # ranked slots and leave the topic short of its quota.
+        n_docs = quotas[topic_id]
+        pool   = filt
+        if sel_cfg.budget:
+            reviews = reviews.head(n_docs)
+            pool    = filt.drop(index=reviews.index)
+            n_docs  = max(0, n_docs - len(reviews))
         if sel_cfg.selection_by == "random":
-            selected = filt.sample(n=min(n_docs, len(filt)), random_state=42).copy()
+            selected = pool.sample(n=min(n_docs, len(pool)), random_state=42).copy()
             selected["_selection"] = "Random"
             selection_label = "Random"
         elif sel_cfg.selection_by in ("coupling", "co_citation", "composite") and _degree_map:
-            id_col = next((c for c in ["id", "ID"] if c in filt.columns), None)
+            id_col = next((c for c in ["id", "ID"] if c in pool.columns), None)
             if id_col:
-                tmp = filt.copy()
+                tmp = pool.copy()
                 tmp["_degree"] = tmp[id_col].map(_degree_map).fillna(0)
                 selected = tmp.sort_values("_degree", ascending=False).head(n_docs).copy()
                 selected = selected.drop(columns=["_degree"])
             else:
-                selected = filt.sort_values("cited_by", ascending=False).head(n_docs).copy()
+                selected = pool.sort_values("cited_by", ascending=False).head(n_docs).copy()
             selected["_selection"] = selection_label
         else:  # "citations" (default, or fallback when graph is unavailable)
-            selected = filt.sort_values("cited_by", ascending=False).head(n_docs).copy()
+            selected = pool.sort_values("cited_by", ascending=False).head(n_docs).copy()
             selected["_selection"] = "Most cited"
             selection_label = "Most cited"
 

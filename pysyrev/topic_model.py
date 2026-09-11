@@ -25,7 +25,8 @@ from umap import UMAP
 from pysyrev.core.config import Config, TopicModelConfig
 from pysyrev.core.topic import (clean_dataset, topic_modeling,
                                 derive_min_topic_size_range)
-from pysyrev.core.topic_labels import load_cached_labels, save_labels
+from pysyrev.core.topic_labels import (labels_are_cacheable,
+                                       load_cached_labels, save_labels)
 
 
 # =============================================================================
@@ -223,28 +224,42 @@ class TopicModel:
         return run_dir
 
     def _label_selected_model(self) -> None:
-        """Generate and cache LLM labels for the model at best_model_index."""
+        """Generate and cache LLM labels for the model at best_model_index.
+
+        Never raises. The labels are a convenience laid over a model that is
+        already trained and written to disk, so an unreachable labeller must not
+        throw that away — nor stop the report stage behind it, which falls back
+        to the topics' numeric names.
+        """
         from pysyrev.core.llm import label_topics
         from pysyrev.core.report import find_best_results_csv, build_file_prefix
 
-        csv_path, distance_name = find_best_results_csv(self._run_dir)
-        best_results = pd.read_csv(csv_path)
-        if self.best_model_index >= len(best_results):
-            print(f"[TopicModel] best_model_index={self.best_model_index} out of range — skipping label generation")
-            return
-        row = best_results.iloc[self.best_model_index]
-        file_prefix = build_file_prefix(row["hdbscan"], row["umap"], distance_name)
+        try:
+            csv_path, distance_name = find_best_results_csv(self._run_dir)
+            best_results = pd.read_csv(csv_path)
+            if self.best_model_index >= len(best_results):
+                print(f"[TopicModel] best_model_index={self.best_model_index} out of range — skipping label generation")
+                return
+            row = best_results.iloc[self.best_model_index]
+            file_prefix = build_file_prefix(row["hdbscan"], row["umap"], distance_name)
 
-        if load_cached_labels(self._run_dir, file_prefix) is not None:
-            print(f"[TopicModel] Labels already cached for model {self.best_model_index} — skipping")
-            return
+            if load_cached_labels(self._run_dir, file_prefix) is not None:
+                print(f"[TopicModel] Labels already cached for model {self.best_model_index} — skipping")
+                return
 
-        tinfo_path = os.path.join(self._run_dir, "topic_info", f"{file_prefix}.csv")
-        topic_info = pd.read_csv(tinfo_path)
-        print(f"[TopicModel] Generating topic labels for model {self.best_model_index}…")
-        labels = label_topics(topic_info, self.labeler_config)
-        path = save_labels(self._run_dir, file_prefix, labels)
-        print(f"[TopicModel] Topic labels saved to: {path}")
+            tinfo_path = os.path.join(self._run_dir, "topic_info", f"{file_prefix}.csv")
+            topic_info = pd.read_csv(tinfo_path)
+            print(f"[TopicModel] Generating topic labels for model {self.best_model_index}…")
+            labels = label_topics(topic_info, self.labeler_config)
+            if not labels_are_cacheable(labels):
+                print("[TopicModel] Topic labels incomplete — not cached, the "
+                      "report will try again.")
+                return
+            path = save_labels(self._run_dir, file_prefix, labels)
+            print(f"[TopicModel] Topic labels saved to: {path}")
+        except Exception as exc:
+            print(f"[TopicModel] Topic labelling skipped, the run is otherwise "
+                  f"complete: {exc!r}")
 
     def run(self, dataset: pd.DataFrame = None, show_progress=True):
         """Run the topic modelling pipeline.

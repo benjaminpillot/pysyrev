@@ -90,6 +90,23 @@ def _build_overview_section(run_dir, best_model_index, best_results, section_n):
     }
 
 
+def _optional_section(name, build, *args, **kwargs):
+    """Build one optional section, or warn and leave it out.
+
+    Every section but the topic table and the technical appendix is an addition
+    to the report, and each depends on things the corpus may not carry or the
+    environment may not provide — a year column, a plotting backend, a network
+    that came out empty. Losing one of them is a hole in the report; letting it
+    raise loses the report, and with it a pipeline run that has already done all
+    of its expensive work.
+    """
+    try:
+        return build(*args, **kwargs)
+    except Exception as e:
+        print(f"[report] {name} section skipped: {e!r}")
+        return None
+
+
 def build_report_data(run_dir: str,
                       best_model_index: int,
                       best_results: pd.DataFrame,
@@ -189,7 +206,8 @@ def build_report_data(run_dir: str,
     # 2. Bibliographic networks (coupling + co-citation) — rendered whenever the
     # reviewed dataset yielded a coupling network (i.e. it carried references).
     if _coupling_result is not None:
-        section = _build_networks_section(
+        section = _optional_section(
+            "networks", _build_networks_section,
             _networks_df, _coupling_result, _cocitation_result,
             bertopic_results, topic_labels, sec.bib_network, export_to, n,
             cluster_labels=_cluster_labels,
@@ -199,13 +217,16 @@ def build_report_data(run_dir: str,
             n += 1
 
     # 3. Temporal dynamics
-    section = _build_temporal_section(bertopic_results, nb_topics, sec.temporal, n)
+    section = _optional_section(
+        "temporal", _build_temporal_section,
+        bertopic_results, nb_topics, sec.temporal, n)
     if section is not None:
         report_data["sections"].append(section)
         n += 1
 
     # 4. Topic characteristics
-    section = _build_topic_characteristics_section(
+    section = _optional_section(
+        "topic characteristics", _build_topic_characteristics_section,
         bertopic_results, topic_labels, sec.topic_characteristics, n
     )
     if section is not None:
@@ -213,7 +234,8 @@ def build_report_data(run_dir: str,
         n += 1
 
     # 5. Topic similarity
-    section = _build_topic_similarity_section(
+    section = _optional_section(
+        "topic similarity", _build_topic_similarity_section,
         bertopic_results, topic_labels, sec.topic_similarity, n
     )
     if section is not None:
@@ -221,7 +243,8 @@ def build_report_data(run_dir: str,
         n += 1
 
     # 6. Paper selection
-    section = _build_paper_selection_section(
+    section = _optional_section(
+        "paper selection", _build_paper_selection_section,
         bertopic_results, topic_info, topic_labels, sec.paper_selection, export_to, n,
         coupling_result=_coupling_result,
         cocitation_result=_cocitation_result,

@@ -342,6 +342,18 @@ consolidated CSV.
       by ``langdetect`` are flagged.  Disable when processing multilingual
       corpora or when abstracts are absent.
 
+   ``clean.drop_record_with_no_abstract``
+      :Type: ``bool``
+      :Default: ``true``
+
+      Drop the records left without an abstract — none delivered by any
+      source, or one rejected by the filter above.  Keep the default for a
+      search-built corpus: such a record cannot be screened.  Set it to
+      ``false`` for a closed corpus of known papers (a DOI list run through
+      ``open_alex.source: seed`` with both citation arms off), where losing a
+      record silently is worse than carrying one without an abstract; the
+      cleaning itself still runs, the records are simply kept.
+
 ``extract``
    :Type: mapping
    :Default: all defaults applied
@@ -894,29 +906,53 @@ configurations to ``best_results.csv``.
       Slower, higher-quality metric applied only to the top-ranked
       configurations to compute a purity score.
 
+``topic_model.desired_topics``
+   :Type: list of two ``int``
+   :Default: ``[5, 15]``
+
+   ``[min, max]`` band for the number of topics, and the only knob for topic
+   granularity.  It drives the search in two ways: the HDBSCAN
+   ``min_cluster_size`` grid is derived from the corpus size to aim at the
+   band, and only models whose topic count lands inside it are kept.
+
+   The derivation (``min_cluster_size ~= n_docs / nb_topics``) is a coarse
+   opening guess: ``min_cluster_size`` is a floor rather than an average topic
+   size, and outlier documents join no topic at all, so the real topic count
+   comes out below the target and the grid can land entirely above the band.
+   When that happens the run re-aims the grid from the topic counts it just
+   measured and sweeps again — at most twice, reusing the UMAP reductions, so
+   the extra cost is HDBSCAN fits only.  A band that survives even the re-aimed
+   grids is reported as a warning and the best-ranked models are kept anyway,
+   so a run always produces output.
+
+   ``min_cluster_size`` itself is therefore internal.  Setting
+   ``hdbscan.min_topic_size_range`` or ``hdbscan.topic_size_step`` in the YAML
+   raises a ``TypeError``; use this band instead.
+
 ``topic_model.hdbscan``
    :Type: mapping
    :Default: minimal grid (single point ``[2, 2]``)
 
-   HDBSCAN grid-search parameters.
-
-   ``hdbscan.min_topic_size_range``
-      :Type: list of two ``int``
-      :Default: ``[2, 2]``
-
-      ``[min, max]`` bounds for the ``min_cluster_size`` grid.
+   HDBSCAN grid-search parameters.  Topic granularity lives in
+   ``desired_topics`` above; what is left here is ``min_samples`` and the
+   HDBSCAN internals.
 
    ``hdbscan.min_sample_range``
       :Type: list of two ``int``
       :Default: ``[2, 2]``
 
-      ``[min, max]`` bounds for the ``min_samples`` grid.
+      ``[min, max]`` bounds for the ``min_samples`` grid.  ``min_samples``
+      tunes how conservative the clustering is: its first-order effect is on
+      the outlier fraction and cluster stability, not on the topic count (that
+      effect is indirect and corpus-dependent), so it is swept and the
+      coherence ranking picks the winner.
 
-   ``hdbscan.topic_size_step``
-      :Type: ``int``
-      :Default: ``1``
-
-      Step size for the ``min_cluster_size`` axis of the grid.
+      Values above the current ``min_cluster_size`` are skipped: there the
+      density threshold is stricter than the cluster it should keep, so the fit
+      can only lose topics.  A ``min_cluster_size`` below the whole grid is
+      still fitted once, at the smallest ``min_samples`` on offer.  A run that
+      never selects a model from the upper part of this range says so at the
+      end, so the range can be narrowed on the next run.
 
    ``hdbscan.min_sample_step``
       :Type: ``int``

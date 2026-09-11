@@ -74,8 +74,9 @@ class BibDataset:
                        extra_garbage_phrases: Iterable[str] = (),
                        use_langdetect: bool = False,
                        max_abstract_chars: int = None,
+                       drop_record_with_no_abstract: bool = True,
                        ):
-        """ Clean DOI and abstract columns, drop no-abstract rows
+        """ Clean DOI and abstract columns, drop the records left with no abstract
 
         Parameters
         ----------
@@ -86,6 +87,12 @@ class BibDataset:
             Cap on the abstract length, in characters. None keeps abstracts
             whole. Applied after the plausibility filter, so truncation never
             changes whether a record is kept.
+        drop_record_with_no_abstract
+            Drop the records whose abstract is missing — never delivered, or
+            rejected by the plausibility filter above. False keeps them, with an
+            empty ``abstract``: use it for a closed corpus (a DOI list built to
+            hold exactly those papers), where a silently missing record is worse
+            than an unscreenable one. The cleaning itself still runs either way.
 
         Returns
         -------
@@ -109,10 +116,11 @@ class BibDataset:
                 print(f"abstract truncation: {over} abstract(s) over "
                       f"{max_abstract_chars} chars, {dropped / 1e6:.1f}M characters removed")
 
-        # Does it have abstract ? DROP no-abstract rows
-        self._bib_dataset.drop(self._bib_dataset.index[pd.isna(self._bib_dataset.abstract)],
-                               axis=0,
-                               inplace=True)
+        # Does it have abstract ? DROP the records that have none
+        if drop_record_with_no_abstract:
+            self._bib_dataset.drop(self._bib_dataset.index[pd.isna(self._bib_dataset.abstract)],
+                                   axis=0,
+                                   inplace=True)
 
         # Reset index and drop index col
         self._bib_dataset.reset_index(inplace=True,
@@ -453,6 +461,7 @@ class BibDataset:
             extra_garbage_phrases = cfg_clean.extra_garbage_phrases or (),
             use_langdetect        = cfg_clean.use_langdetect,
             max_abstract_chars    = cfg_clean.max_abstract_chars,
+            drop_record_with_no_abstract = cfg_clean.drop_record_with_no_abstract,
         )
 
         # Canonical reference keys: remap every reference onto a shared DOI space
