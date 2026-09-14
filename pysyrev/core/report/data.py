@@ -138,7 +138,8 @@ def build_report_data(run_dir: str,
 
     # 1. Topics
     report_data["sections"].append(
-        _build_topics_section(topic_info, sec, topic_labels, nb_topics, n)
+        _build_topics_section(topic_info, sec, topic_labels, nb_topics, n,
+                              bertopic_results=bertopic_results)
     )
     n += 1
 
@@ -219,7 +220,8 @@ def build_report_data(run_dir: str,
     # 3. Temporal dynamics
     section = _optional_section(
         "temporal", _build_temporal_section,
-        bertopic_results, nb_topics, sec.temporal, n)
+        bertopic_results, nb_topics, sec.temporal, n,
+        topic_labels=topic_labels)
     if section is not None:
         report_data["sections"].append(section)
         n += 1

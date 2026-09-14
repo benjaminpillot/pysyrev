@@ -8,39 +8,80 @@ between them.
 
 import numpy as np
 
-from pysyrev.core.report.sections.common import (_safe_parse, _topic_cols,
+from pysyrev.core.report.sections.common import (_docs_per_topic_per_year,
+                                                 _median_docs_per_year,
+                                                 _median_year_per_topic,
+                                                 _safe_parse, _topic_cols,
                                                  _topic_label, _wo_outliers)
 
 
-def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics, section_n):
+def _format_median(value) -> str:
+    """A median annual count, written without a pointless trailing '.0'."""
+    if value is None:
+        return "-"
+    return f"{value:.0f}" if float(value).is_integer() else f"{value:.1f}"
+
+
+def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics,
+                          section_n, bertopic_results=None):
     """Section 1 — human-readable topic overview."""
     use_labels = topic_labels is not None
     nr_repr = sections_cfg.topics.n_repr_docs_per_topic
 
+    # Where each topic sits in time, and how steadily it publishes — neither of
+    # which the size column can tell: an old topic and a recent one can hold
+    # exactly the same number of documents. Both columns are absent when the
+    # corpus carries no year.
+    medians = median_years = None
+    if bertopic_results is not None:
+        counts = _docs_per_topic_per_year(bertopic_results)
+        if counts is not None and not counts.empty:
+            medians      = _median_docs_per_year(counts)
+            median_years = _median_year_per_topic(counts)
+
     # Summary table
     headers = ["ID", "LLM label" if use_labels else "Name", "# Docs", "Top words"]
+    col_widths = [1.0, 5.0, 1.5, 9.5]  # ID | Label/Name | #Docs | Top words — 17 cm
+    if medians is not None:
+        headers[3:3] = ["Docs/yr", "Med. year"]
+        # + median annual output + median year — 17 cm
+        col_widths = [1.0, 4.0, 1.5, 1.65, 1.95, 6.9]
+
     summary_rows = []
     for _, t in topic_info.iterrows():
         topic_id = int(t.get("Topic", -1))
         if topic_id == -1:
             continue
         name = _topic_label(topic_id, topic_labels)
-        summary_rows.append([
+        row = [
             str(topic_id),
             name,
             str(int(t.get("Count", 0))),
             str(t.get("Representation", "-")),
-        ])
+        ]
+        if medians is not None:
+            median_year = median_years.get(topic_id)
+            row[3:3] = [_format_median(medians.get(topic_id)),
+                        str(median_year) if median_year is not None else "-"]
+        summary_rows.append(row)
 
-    blocks = [
-        {
-            "type":       "table",
-            "title":      f"{nb_topics} topics identified",
-            "headers":    headers,
-            "rows":       summary_rows,
-            "col_widths": [1.0, 5.0, 1.5, 9.5],  # ID | Label/Name | #Docs | Top words — 17 cm
-        }
-    ]
+    summary_table = {
+        "type":       "table",
+        "title":      f"{nb_topics} topics identified",
+        "headers":    headers,
+        "rows":       summary_rows,
+        "col_widths": col_widths,
+    }
+    if medians is not None:
+        summary_table["caption"] = (
+            "Docs/yr: median number of documents the topic publishes in a year, "
+            "counted from its first publication year to the last year of the "
+            "corpus (a silent year counts as zero) — read beside # Docs, it "
+            "separates a steady topic from one whose whole output landed in a "
+            "couple of years. Med. year: the year by which the topic had "
+            "published half of its documents, i.e. where it sits in time."
+        )
+    blocks = [summary_table]
 
     # Per-topic detail subsections with representative docs
     repr_meta = ["title", "year", "cited_by", "document_type", "doi"]

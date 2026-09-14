@@ -511,7 +511,8 @@ topic_report:
        connectivity:            # mean coupling between groups (both topic AND community panels are rendered)
          scale: 1000            # rescales the tiny coupling values for readability
 #     temporal:
-#       variants: [absolute, normalized, weighted]
+#       variants: [trajectory, absolute, normalized, weighted]
+#       smoothing_window: 3   # years of the centred rolling mean beside the per-year curves (1 = raw only)
 #     topic_characteristics:
 #       n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
 #       n_top_cited_global: 50     # N most-cited papers globally used for topic distribution

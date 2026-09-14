@@ -868,9 +868,22 @@ class BibNetworkSectionConfig(ConfigField):
 
 @dataclass
 class TemporalSectionConfig(ConfigField):
+    # "trajectory" draws the per-year curves (counts and share of the year);
+    # the other three are cumulative.
     variants: List[str] = field(default_factory=lambda: [
-        "absolute", "normalized", "weighted"
+        "trajectory", "absolute", "normalized", "weighted"
     ])
+    # Width, in years, of the centred rolling mean added beside the raw
+    # trajectory curves. 1 = no smoothing (raw counts only).
+    smoothing_window: int = 3
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.smoothing_window < 1:
+            raise ValueError(
+                f"temporal.smoothing_window must be >= 1 (1 = no smoothing), "
+                f"got {self.smoothing_window}"
+            )
 
 
 @dataclass

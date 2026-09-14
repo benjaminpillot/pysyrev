@@ -1303,11 +1303,22 @@ not here.
 
       ``temporal.variants``
          :Type: list of ``str``
-         :Default: ``[absolute, normalized, weighted]``
-         :Values: any subset of ``absolute``, ``cumulative``, ``normalized``, ``weighted``
+         :Default: ``[trajectory, absolute, normalized, weighted]``
+         :Values: any subset of ``trajectory``, ``absolute``, ``normalized``, ``weighted``
 
          Publication-trend chart variants included in the temporal
-         analysis section.
+         analysis section.  ``trajectory`` draws the per-year curves — annual
+         document count per topic, its rolling mean, and each topic's share of
+         the year — which is where an acceleration or a slowdown is visible;
+         the other three are cumulative and only ever rise.
+
+      ``temporal.smoothing_window``
+         :Type: ``int``
+         :Default: ``3``
+
+         Width, in years, of the centred rolling mean drawn beside the raw
+         ``trajectory`` curves.  ``1`` disables the smoothing and keeps the raw
+         counts alone.
 
    ``sections.topic_characteristics``
 

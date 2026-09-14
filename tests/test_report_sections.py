@@ -63,13 +63,15 @@ def _subsections(section):
 
 class TestBuildTopicsSection:
 
-    def _run(self, topic_info, sections_cfg=None, topic_labels=None, nb_topics=3, n=1):
+    def _run(self, topic_info, sections_cfg=None, topic_labels=None, nb_topics=3,
+             n=1, bertopic_results=None):
         cfg = sections_cfg or TopicsSectionConfig(n_repr_docs_per_topic=3)
 
         class _FakeSections:
             topics = cfg
 
-        return _build_topics_section(topic_info, _FakeSections(), topic_labels, nb_topics, n)
+        return _build_topics_section(topic_info, _FakeSections(), topic_labels,
+                                     nb_topics, n, bertopic_results=bertopic_results)
 
     def test_returns_section_dict(self, tiny_topic_info):
         sec = self._run(tiny_topic_info)
@@ -131,6 +133,61 @@ class TestBuildTopicsSection:
         sec = self._run(tiny_topic_info, topic_labels=None)
         table = sec["blocks"][0]
         assert "Name" in table["headers"]
+
+    def test_no_median_column_without_bertopic_results(self, tiny_topic_info):
+        table = self._run(tiny_topic_info)["blocks"][0]
+        assert "Docs/yr" not in table["headers"]
+        assert all(len(row) == len(table["headers"]) for row in table["rows"])
+
+    def test_median_column_added_with_bertopic_results(self, tiny_topic_info,
+                                                       tiny_bertopic_results):
+        table = self._run(tiny_topic_info,
+                          bertopic_results=tiny_bertopic_results)["blocks"][0]
+        assert table["headers"] == ["ID", "Name", "# Docs", "Docs/yr",
+                                    "Med. year", "Top words"]
+        assert len(table["col_widths"]) == len(table["headers"])
+        assert all(len(row) == len(table["headers"]) for row in table["rows"])
+        assert table["caption"]
+
+    def test_median_columns_dropped_without_year(self, tiny_topic_info,
+                                                 tiny_bertopic_results):
+        br = tiny_bertopic_results.drop(columns=["year"])
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        assert "Docs/yr" not in table["headers"]
+        assert "Med. year" not in table["headers"]
+
+    def test_median_is_the_median_of_the_topic_own_years(self, tiny_topic_info):
+        # Topic 0: 3 docs in 2020, 1 in 2021, none in 2022 → median over
+        # 2020-2022 is 1. Topic 1 starts in 2022, so its two silent years
+        # before that must not count: median over 2022 alone is 4.
+        br = pd.DataFrame({
+            "Topic": [0] * 4 + [1] * 4 + [-1],
+            "year":  [2020, 2020, 2020, 2021] + [2022] * 4 + [2020],
+        })
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        by_id = {row[0]: row[3] for row in table["rows"]}
+        assert by_id["0"] == "1"
+        assert by_id["1"] == "4"
+        assert by_id["2"] == "-"        # a topic with no document at all
+
+    def test_median_year_is_where_the_topic_sits_in_time(self, tiny_topic_info):
+        # Topic 0 publishes 4 documents in 2020 and one in 2024: it is a 2020
+        # topic, not a 2022 one. Topic 1's four documents are all from 2024.
+        br = pd.DataFrame({
+            "Topic": [0] * 5 + [1] * 4 + [-1],
+            "year":  [2020, 2020, 2020, 2020, 2024] + [2024] * 4 + [2020],
+        })
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        by_id = {row[0]: row[4] for row in table["rows"]}
+        assert by_id["0"] == "2020"
+        assert by_id["1"] == "2024"
+        assert by_id["2"] == "-"        # a topic with no document at all
+
+    def test_median_year_is_taken_low_on_an_even_count(self, tiny_topic_info):
+        # Two documents, 2010 and 2013 → a real year of the corpus, not 2011.5
+        br = pd.DataFrame({"Topic": [0, 0], "year": [2010, 2013]})
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        assert table["rows"][0][4] == "2010"
 
 
 # =============================================================================
@@ -478,6 +535,62 @@ class TestBuildTemporalSection:
         cfg = TemporalSectionConfig(variants=["absolute"])
         sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 4)
         assert "4." in sec["title"]
+
+    def test_trajectory_is_a_default_variant(self):
+        assert "trajectory" in TemporalSectionConfig().variants
+
+    def test_smoothing_window_below_one_is_refused(self):
+        with pytest.raises(ValueError):
+            TemporalSectionConfig(smoothing_window=0)
+
+    def test_trajectory_draws_counts_smoothed_and_share(self, tiny_bertopic_results):
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=3)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
+        sub = _subsections(sec)[0]
+        assert "per year" in sub["title"].lower()
+        assert len(_blocks_of_type(sub, "plotly")) == 3
+
+    def test_trajectory_without_smoothing_drops_the_rolling_mean(self, tiny_bertopic_results):
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
+        sub = _subsections(sec)[0]
+        assert len(_blocks_of_type(sub, "plotly")) == 2
+
+    def test_trajectory_curves_are_not_cumulative(self, tiny_bertopic_results):
+        # The whole point of the section: a topic that stops publishing must be
+        # able to come back down, which a cumulative curve can never do.
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
+        fig = _blocks_of_type(_subsections(sec)[0], "plotly")[0]["figure"]
+        assert any(
+            any(b < a for a, b in zip(trace.y, trace.y[1:]))
+            for trace in fig.data
+        )
+
+    def test_trajectory_uses_llm_labels_in_the_legend(self, tiny_bertopic_results):
+        labels = {0: "Agent-Based Models", 1: "Epidemiology", 2: "Network Theory"}
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3,
+                                      topic_labels=labels)
+        fig = _blocks_of_type(_subsections(sec)[0], "plotly")[0]["figure"]
+        assert {t.name for t in fig.data} == {
+            "0. Agent-Based Models", "1. Epidemiology", "2. Network Theory"}
+
+    def test_trajectory_skipped_on_a_single_year_corpus(self, tiny_bertopic_results):
+        br = tiny_bertopic_results.assign(year=2020)
+        cfg = TemporalSectionConfig(variants=["trajectory", "absolute"])
+        sec = _build_temporal_section(br, 3, cfg, 3)
+        # no trend to draw through one point → only the "absolute" subsection
+        assert [s["title"] for s in _subsections(sec)] == ["Absolute"]
+
+    def test_trajectory_fills_the_years_a_topic_skipped(self, tiny_bertopic_results):
+        br = tiny_bertopic_results[tiny_bertopic_results["year"] != 2015]
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(br, 3, cfg, 3)
+        fig = _blocks_of_type(_subsections(sec)[0], "plotly")[0]["figure"]
+        for trace in fig.data:
+            assert 2015 in list(trace.x)          # drawn at zero, not skipped
+            assert len(trace.x) == len(set(trace.x))
 
 
 # =============================================================================
