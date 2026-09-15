@@ -298,6 +298,65 @@ class TestBuildNetworksSection:
             "Internal vs outward co-citation per community (obs/exp)")
 
 
+class TestConnectivitySupportThreshold:
+
+    @staticmethod
+    def _panel(min_support, observations):
+        from pysyrev.core.report.sections.networks import _connectivity_panel
+        W = np.array([[0, .9, .1, 0],
+                      [.9, 0, 0, .1],
+                      [.1, 0, 0, .9],
+                      [0, .1, .9, 0]], dtype=float)
+        groups = [("A", np.array([0, 1])), ("B", np.array([2, 3]))]
+        return _connectivity_panel(W, groups, "community", None,
+                                   kind="cocitation", observations=observations,
+                                   min_support=min_support)
+
+    @staticmethod
+    def _table(panel):
+        return next(b for b in panel["blocks"] if b["type"] == "table")
+
+    def test_a_thin_group_reports_no_internal_ratio(self):
+        # two observations back A, six back B: A's internal ratio is unknown,
+        # not small, so it must not be printed as a number that can be ranked
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        table = self._table(self._panel(5, obs))
+        rows = {r[0]: r for r in table["rows"]}
+        assert rows["A"][2] == "—"
+        assert rows["A"][-1] == "insufficient"
+        assert rows["B"][2] != "—"
+        assert rows["B"][-1] in {"self-contained", "integrated"}
+
+    def test_the_withheld_ratio_is_a_gap_in_the_heatmap_diagonal(self):
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        panel = self._panel(5, obs)
+        z = np.asarray(next(b for b in panel["blocks"]
+                            if b["type"] == "plotly")["figure"].data[0].z,
+                       dtype=float)
+        assert not np.isfinite(z[0, 0])       # A withheld
+        assert np.isfinite(z[1, 1])           # B reported
+        assert np.isfinite(z[0, 1])           # outward cells are never withheld
+
+    def test_outward_still_reported_for_a_thin_group(self):
+        # only the diagonal rests on the group's own thin evidence; its outward
+        # cells rest on the whole corpus and stay readable
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        rows = {r[0]: r for r in self._table(self._panel(5, obs))["rows"]}
+        assert rows["A"][3] != "—"
+
+    def test_threshold_is_honoured(self):
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        lenient = {r[0]: r for r in self._table(self._panel(2, obs))["rows"]}
+        strict  = {r[0]: r for r in self._table(self._panel(20, obs))["rows"]}
+        assert lenient["A"][2] != "—" and lenient["B"][2] != "—"
+        assert strict["A"][2] == "—" and strict["B"][2] == "—"
+
+    def test_nothing_is_withheld_without_observations(self):
+        table = self._table(self._panel(1000, None))
+        assert all(r[2] != "—" for r in table["rows"])
+        assert "Support" not in table["headers"]
+
+
 class TestConnectivityMatrix:
 
     def test_matrix_symmetric_scaled_and_baseline(self):
@@ -342,8 +401,9 @@ class TestConnectivityMatrix:
     def test_enrichment_separates_real_cohesion_from_a_saturated_micro_group(self):
         # the case that prompted the change, in miniature: a few references
         # co-cited by two documents against two much larger intellectual bases.
-        # The ratio must score the equal-sized bases equally.
-        from pysyrev.core.networks import (cocitation_matrix,
+        # The ratio must score the equal-sized bases equally; the support count
+        # is what exposes the micro-group.
+        from pysyrev.core.networks import (cocitation_matrix, internal_support,
                                            inter_cluster_matrix,
                                            inter_cluster_enrichment)
         rng = np.random.default_rng(0)
@@ -363,12 +423,17 @@ class TestConnectivityMatrix:
                                         ("C", base_c))]
         M, _ = inter_cluster_matrix(W, groups, scale=1000)
         R, _ = inter_cluster_enrichment(W, groups)
+        observations = [[pos[r] for r in refs if r in pos] for refs in refsets]
+        support = internal_support([o for o in observations if len(o) > 1], groups)
 
         # the two bases are built the same way, so they must score the same
         assert R[1, 1] == pytest.approx(R[2, 2], rel=0.15)
         # each is cohesive on its own terms and depleted towards the other
         assert R[1, 1] > 1 and R[1, 2] < 1
         assert M[0, 0] / M[1, 1] > 10        # the raw mean buried them
+        # the micro-group still scores high, so support is what exposes it
+        assert support[0] == 2
+        assert support[1] > 100 and support[2] > 100
 
     def test_enrichment_matches_averaging_the_dense_null(self):
         # inter_cluster_enrichment evaluates the null's block means in closed
@@ -396,6 +461,17 @@ class TestConnectivityMatrix:
         E = configuration_null(W)
         assert np.allclose(E.sum(axis=1), W.sum(axis=1))
         assert np.allclose(configuration_null(np.zeros((3, 3))), 0.0)
+
+    def test_internal_support_counts_observations_touching_two_nodes(self):
+        from pysyrev.core.networks import internal_support
+        groups = [("A", np.array([0, 1, 2])), ("B", np.array([3, 4]))]
+        observations = [
+            [0, 1],        # supports A
+            [0, 2, 3],     # supports A (two of its nodes), not B (only one)
+            [3, 4],        # supports B
+            [2],           # supports nothing: a single node makes no pair
+        ]
+        assert internal_support(observations, groups) == [2, 1]
 
 
 class TestCompositeSelection:

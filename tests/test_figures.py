@@ -119,6 +119,23 @@ class TestPanels:
         assert _trace(fig).zmin == pytest.approx(np.log10(2.0))
         assert _trace(fig).text == (["4", "0"], ["0", "2"])
 
+    def test_connectivity_ratio_keeps_a_withheld_cell_as_a_gap(self):
+        # 0 and NaN mean different things: 0x expected is the floor of the
+        # scale, NaN is a value the caller withheld and must stay a hole
+        M = np.array([[np.nan, 0.0], [0.0, 2.0]])
+        fig = plot_connectivity_matrix(M, ["C0", "C1"], baseline=1.0, ratio=True)
+        z = np.asarray(_trace(fig).z, dtype=float)
+        assert not np.isfinite(z[0, 0])                  # withheld
+        assert z[0, 1] == pytest.approx(np.log10(2.0))   # zero -> floor
+        assert _trace(fig).text == (["", "0"], ["0", "2"])
+
+    def test_connectivity_ratio_survives_an_all_withheld_matrix(self):
+        M = np.array([[np.nan, 0.0], [0.0, np.nan]])
+        fig = plot_connectivity_matrix(M, ["a", "b"], baseline=1.0, ratio=True)
+        z = np.asarray(_trace(fig).z, dtype=float)
+        assert not np.isfinite(z[0, 0]) and not np.isfinite(z[1, 1])
+        assert np.isfinite(z[0, 1])
+
     def test_connectivity_ratio_survives_an_all_zero_matrix(self):
         fig = plot_connectivity_matrix(np.zeros((2, 2)), ["a", "b"],
                                        baseline=1.0, ratio=True)

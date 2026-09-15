@@ -1295,6 +1295,19 @@ not here.
          model, which makes groups of different sizes comparable; ``1.00`` is
          the expected level.
 
+         ``connectivity.min_support``
+            :Type: ``int``
+            :Default: ``10``
+
+            Observations required before a group's internal ratio is reported.
+            Below it the table cell is left blank and the heatmap's diagonal
+            cell is a gap: a ratio computed from two or three observations is
+            not a small ratio but an unknown one, and printing it would let it
+            rank against ratios that are known.  Only the diagonal is withheld —
+            outward figures rest on their own, far larger, evidence.  Raise it
+            on a large corpus, where a community backed by ten documents is
+            still thin.
+
          ``connectivity.scale``
             :Type: ``float``
             :Default: ``1000.0``

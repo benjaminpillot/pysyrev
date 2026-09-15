@@ -515,6 +515,7 @@ _CONNECTIVITY_KINDS = {
         "colorbar": "coupling obs/exp (log₁₀)",
         "offdiag":  "how much two {units} share references",
         "darker":   "stronger shared-reference overlap",
+        "support":  "references shared by at least two documents of the {unit}",
         "profile":  ("A {unit} with internal coupling above 1 and outward coupling "
                      "below 1 is a self-contained / weakly integrated theme."),
     },
@@ -524,14 +525,21 @@ _CONNECTIVITY_KINDS = {
         "colorbar": "co-citation obs/exp (log₁₀)",
         "offdiag":  "how often the references of two {units} are cited together",
         "darker":   "more frequent co-citation",
+        "support":  "documents citing at least two references of the {unit}",
         "profile":  ("A {unit} with internal co-citation above 1 and outward "
                      "co-citation below 1 is an intellectual base mobilised on its "
                      "own, rarely alongside the others."),
     },
 }
 
+# Text for an internal ratio that is not reported for lack of evidence. The
+# blank is deliberate: a ratio from two observations is not a small ratio, it is
+# an unknown one, and a number there would rank as if it were known.
+_NO_VALUE = "—"
+
+
 def _connectivity_panel(W, groups, unit, export_to, kind="coupling",
-                        title=None):
+                        title=None, observations=None, min_support=10):
     """One inter-group connectivity subsection for a precomputed grouping.
 
     *groups* is a list of ``(label, idx_array)``; *unit* is ``"topic"`` or
@@ -543,13 +551,24 @@ def _connectivity_panel(W, groups, unit, export_to, kind="coupling",
 
     Blocks are scored as an enrichment over a degree-preserving null rather than
     as a raw block mean, which is not comparable across group sizes (see
-    :mod:`pysyrev.core.networks.connectivity`).
+    :mod:`pysyrev.core.networks.connectivity`). A small saturated group still
+    scores high, so *observations* — the node indices behind each edge-producing
+    observation — is counted by
+    :func:`~pysyrev.core.networks.connectivity.internal_support` into the
+    evidence behind each internal ratio. Below *min_support* that ratio is left
+    blank in the table and its diagonal cell is a gap in the heatmap: a ratio
+    from two or three observations is not a small one, it is an unknown one, and
+    printing it would let it rank against ratios that are actually known. Only
+    the diagonal is withheld — a group's outward cells rest on their own, far
+    larger, evidence. Omit *observations* and nothing is withheld.
 
     *title* overrides the subsection title; it also drives the exported HTML
     filename, so two panels of the same *unit* over different networks must not
     share one.
     """
-    from pysyrev.core.networks import inter_cluster_enrichment, coupling_inout
+    from pysyrev.core.networks import (
+        inter_cluster_enrichment, coupling_inout, internal_support,
+    )
     from pysyrev.core.report.figures import plot_connectivity_matrix
 
     groups = [(lab, idx) for lab, idx in groups if len(idx) > 0]
@@ -561,20 +580,44 @@ def _connectivity_panel(W, groups, unit, export_to, kind="coupling",
     units  = _UNIT_PLURALS.get(unit, unit + "s")
 
     M, labs = inter_cluster_enrichment(W, groups)
-    fig     = plot_connectivity_matrix(M, labs, baseline=1.0, title=None,
-                                       colorbar_title=words["colorbar"],
-                                       ratio=True)
+    support = internal_support(observations, groups) if observations else None
+    thin    = ([s < min_support for s in support] if support is not None
+               else [False] * len(labs))
 
-    rows = []
+    # Withhold the internal ratio of a thinly-evidenced group everywhere it
+    # would be read as a value: a gap on the heatmap's diagonal, a blank in the
+    # table. The profile verdict goes with it — it is derived from that ratio.
+    profiles = []
+    rows     = []
     for i, lab in enumerate(labs):
         p = coupling_inout(M, i)
-        profile = ("self-contained" if p["internal"] > 1.0 > p["outward"]
-                   else "integrated")
-        rows.append([lab, str(len(groups[i][1])), _ratio(p["internal"]),
-                     _ratio(p["outward"]), profile])
+        if thin[i]:
+            internal, profile = _NO_VALUE, "insufficient"
+        else:
+            internal = _ratio(p["internal"])
+            profile  = ("self-contained" if p["internal"] > 1.0 > p["outward"]
+                        else "integrated")
+        profiles.append(profile)
+        row = [lab, str(len(groups[i][1])), internal, _ratio(p["outward"])]
+        if support is not None:
+            row.append(str(support[i]))
+        row.append(profile)
+        rows.append(row)
 
-    headers = [unit.capitalize(), "Size", "Internal", "Outward", "Profile"]
-    widths  = [4.4, 1.8, 2.8, 2.8, 3.6]
+    M_shown = M.astype(float).copy()
+    for i, is_thin in enumerate(thin):
+        if is_thin:
+            M_shown[i, i] = np.nan
+    fig = plot_connectivity_matrix(M_shown, labs, baseline=1.0, title=None,
+                                   colorbar_title=words["colorbar"], ratio=True)
+
+    headers = [unit.capitalize(), "Size", "Internal", "Outward"]
+    widths  = [4.4, 1.8, 2.6, 2.6]
+    if support is not None:
+        headers.append("Support")
+        widths.append(2.2)
+    headers.append("Profile")
+    widths.append(3.4)
 
     explain = (
         f"Each block scores the {words['metric']} between {units} "
@@ -589,11 +632,22 @@ def _connectivity_panel(W, groups, unit, export_to, kind="coupling",
         f"average, which would rank small {units} far above large ones for "
         f"arithmetic reasons alone."
     )
+    if support is not None:
+        explain += (
+            f" <b>Support</b> counts the {words['support'].format(unit=unit)} — "
+            f"the evidence behind the internal ratio. Below {min_support} that "
+            f"ratio is left blank rather than printed: computed from a handful "
+            f"of observations it is not a small number but an unknown one, and "
+            f"showing it would let it rank against ratios that are known. The "
+            f"outward figure stands, resting on its own evidence."
+        )
+
     sub_content = [
         {"type": "paragraph", "text": explain},
         {"type": "plotly", "figure": fig,
          "caption": (f"Darker = {words['darker']} than expected; colour runs on "
-                     f"log₁₀ of the ratio. "
+                     f"log₁₀ of the ratio, and a blank diagonal cell is a "
+                     f"{unit} with too little evidence to score. "
                      + words["profile"].format(unit=unit, units=units)),
          "filename_prefix": _slug(title)},
         {"type": "table",
@@ -607,7 +661,65 @@ def _connectivity_panel(W, groups, unit, export_to, kind="coupling",
     return {"type": "subsection", "title": title, "blocks": sub_content}
 
 
-def _build_connectivity_subsections(coupling_result, cocitation_result,
+def _connectivity_observations(df, coupling_result, cocitation_result) -> dict:
+    """Node indices behind every edge-producing observation, per network.
+
+    :func:`~pysyrev.core.networks.connectivity.internal_support` counts the
+    observations that touch at least two nodes of a group. What an observation
+    *is* flips with the network, but it is the same reference sets read two ways:
+
+    * coupling — nodes are documents, so an observation is one **reference** and
+      the documents citing it (an inverted index of the reference sets);
+    * co-citation — nodes are references, so an observation is one **document**
+      and the reference nodes it cites.
+
+    Returns ``{"coupling": [...], "cocitation": [...]}``, omitting a network
+    whose result is missing. Anything unexpected in the dataset yields ``{}``:
+    support is a column of the table, never a reason to lose the panel.
+    """
+    if df is None:
+        return {}
+    try:
+        from pysyrev.core.networks import reference_sets
+
+        ref_col = ("reference_keys" if "reference_keys" in df.columns
+                   else "references")
+        if ref_col not in df.columns or "id" not in df.columns:
+            return {}
+        doc_ids, refsets = reference_sets(df, ref_col=ref_col)
+
+        out = {}
+        if coupling_result is not None:
+            # One observation per reference: the coupling nodes (documents)
+            # citing it. Only references cited twice or more create an edge.
+            pos = {nid: i for i, nid in enumerate(coupling_result.node_ids)}
+            by_ref = {}
+            for doc_id, refs in zip(doc_ids, refsets):
+                i = pos.get(doc_id)
+                if i is None:
+                    continue
+                for r in refs:
+                    by_ref.setdefault(r, []).append(i)
+            out["coupling"] = [v for v in by_ref.values() if len(v) > 1]
+
+        if cocitation_result is not None:
+            # One observation per document: the co-citation nodes (references)
+            # it cites. The long tail dropped by min_ref_freq is not a node.
+            pos = {nid: i for i, nid in enumerate(cocitation_result.node_ids)}
+            docs = []
+            for refs in refsets:
+                hit = [pos[r] for r in refs if r in pos]
+                if len(hit) > 1:
+                    docs.append(hit)
+            out["cocitation"] = docs
+
+        return out
+    except Exception as e:                # support is a nicety, not the panel
+        print(f"[report] connectivity support skipped: {e!r}")
+        return {}
+
+
+def _build_connectivity_subsections(df, coupling_result, cocitation_result,
                                     bertopic_results, topic_labels, section_cfg,
                                     export_to):
     """The connectivity panels — by BERTopic topic, then by Leiden community for
@@ -623,12 +735,18 @@ def _build_connectivity_subsections(coupling_result, cocitation_result,
     There is deliberately no topic panel for co-citation: its nodes are
     references, mostly extra-corpus, which carry no BERTopic topic.
 
+    Each panel also reports how much evidence backs a group's internal value, so
+    *df* is read once into per-network observations (see
+    :func:`_connectivity_observations`).
+
     Returns a list of subsection blocks (0-3), skipping any grouping with fewer
     than two non-empty groups.
     """
     from pysyrev.core.networks import groups_from_labels
 
     panels = []
+    obs = _connectivity_observations(df, coupling_result, cocitation_result)
+    min_support = getattr(section_cfg.connectivity, "min_support", 10)
 
     # By BERTopic topic — coupling only (topics are a property of documents).
     if coupling_result is not None and coupling_result.n_nodes >= 2:
@@ -643,7 +761,9 @@ def _build_connectivity_subsections(coupling_result, cocitation_result,
             tgroups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
                        for t in sorted(x for x in set(topics.tolist()) if x != -1)]
             panel = _connectivity_panel(coupling_result.W, tgroups, "topic",
-                                        export_to, kind="coupling")
+                                        export_to, kind="coupling",
+                                        observations=obs.get("coupling"),
+                                        min_support=min_support)
             if panel is not None:
                 panels.append(panel)
 
@@ -654,7 +774,8 @@ def _build_connectivity_subsections(coupling_result, cocitation_result,
             continue
         panel = _connectivity_panel(
             result.W, groups_from_labels(result.labels), "community",
-            export_to, kind=kind,
+            export_to, kind=kind, observations=obs.get(kind),
+            min_support=min_support,
             title=f"Community connectivity ({label})")
         if panel is not None:
             panels.append(panel)
@@ -764,7 +885,7 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         sub_blocks.append(cocitation_sub)
 
     sub_blocks.extend(_build_connectivity_subsections(
-        coupling_result, cocitation_result, bertopic_results, topic_labels,
+        df, coupling_result, cocitation_result, bertopic_results, topic_labels,
         cfg, export_to))
 
     if not sub_blocks:

@@ -19,7 +19,10 @@ Two readings of the same blocks are available:
   whatever the group size: 1.0 is the expected level, above enriched, below
   depleted. This corrects the arithmetic penalty on large groups, not a small
   group's genuine saturation — a few nodes always seen together really are
-  enriched.
+  enriched, they are merely thinly evidenced.
+
+:func:`internal_support` measures that last point, counting the observations
+that actually produce a group's internal weight.
 
 Grouping by **topic** is the informative use: topics are not defined by
 coupling, so their coupling connectivity is a genuine measurement (which topics
@@ -166,3 +169,31 @@ def inter_cluster_enrichment(
     with np.errstate(divide="ignore", invalid="ignore"):
         R = np.where(exp > 0, obs / exp, 0.0)
     return R, labs
+
+
+def internal_support(observations: Sequence[Sequence[int]],
+                     groups: Sequence[Tuple[str, np.ndarray]]) -> List[int]:
+    """How many observations actually back each group's internal weight.
+
+    An *observation* is whatever creates an edge, given as the node indices it
+    touches: for co-citation, one corpus document and the references it cites;
+    for coupling, one reference and the documents citing it. It supports a group
+    when it touches at least **two** of its nodes — that is one internal pair.
+
+    Returns one count per group, in ``groups`` order. A high internal weight on
+    a support of two says little, whatever the metric.
+    """
+    out: List[int] = []
+    for _, idx in groups:
+        members = {int(i) for i in np.asarray(idx).ravel().tolist()}
+        n = 0
+        for obs in observations:
+            hit = 0
+            for node in obs:
+                if node in members:
+                    hit += 1
+                    if hit >= 2:
+                        n += 1
+                        break
+        out.append(n)
+    return out

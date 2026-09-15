@@ -165,15 +165,16 @@ def plot_connectivity_matrix(M: np.ndarray, labels: List[str],
         )
 
     M = np.asarray(M, dtype=float)
-    positive = M[M > 0]
+    positive = M[np.isfinite(M) & (M > 0)]
     if positive.size == 0:
-        z, floor = np.zeros_like(M), None
+        z, floor = np.where(np.isnan(M), np.nan, 0.0), None
     else:
         floor = float(np.log10(positive.min()))
         # A block of exactly 0 is not missing data — it is the most depleted a
-        # block can be, so it takes the bottom of the scale rather than the gap
-        # a NaN would leave.
+        # block can be, so it takes the bottom of the scale. A NaN *is* missing
+        # data (a value the caller withheld) and must stay a gap.
         z = np.where(M > 0, np.log10(np.where(M > 0, M, 1.0)), floor)
+        z = np.where(np.isnan(M), np.nan, z)
     return matrix_heatmap(
         z, labels, labels,
         text_format=_ratio_text,

@@ -848,6 +848,13 @@ class ConnectivityConfig(ConfigField):
     by:    str   = "topic"          # deprecated / ignored — both topic and community panels are rendered
     scale: float = 1000.0           # deprecated / ignored — the obs/exp ratio needs no rescaling
 
+    # Observations required before a group's internal ratio is reported at all.
+    # Below it the cell is left blank rather than filled with a number no amount
+    # of evidence backs: a ratio computed from two or three observations is not
+    # a small ratio, it is an unknown one. Raise it on a large corpus, where a
+    # community backed by ten documents is still thin.
+    min_support: int = 10
+
 
 @dataclass
 class BibNetworkSectionConfig(ConfigField):
