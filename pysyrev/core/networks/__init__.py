@@ -23,7 +23,9 @@ from pysyrev.core.networks.cocitation import (
     reference_texts,
 )
 from pysyrev.core.networks.connectivity import (
+    configuration_null,
     inter_cluster_matrix,
+    inter_cluster_enrichment,
     corpus_baseline,
     coupling_inout,
     groups_from_labels,
@@ -50,7 +52,9 @@ __all__ = [
     "build_cocitation",
     "reference_texts",
     "cluster_profiles",
+    "configuration_null",
     "inter_cluster_matrix",
+    "inter_cluster_enrichment",
     "corpus_baseline",
     "coupling_inout",
     "groups_from_labels",

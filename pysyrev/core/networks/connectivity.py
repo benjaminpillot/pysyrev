@@ -2,11 +2,24 @@
 Inter-cluster connectivity — how groups of the coupling network connect.
 
 Given the coupling matrix ``W`` and a grouping of its nodes (by BERTopic topic,
-or by Leiden community), this measures the mean bibliographic-coupling weight
-between every pair of groups: the diagonal is a group's internal cohesion (do
-its papers share references?), the off-diagonal is how much two groups share
-references (are they intellectually connected?), and the corpus baseline is the
-line to judge any block as high or low.
+or by Leiden community), this measures how much weight sits between every pair
+of groups: the diagonal is a group's internal cohesion (do its papers share
+references?) and the off-diagonal is how much two groups share references (are
+they intellectually connected?).
+
+Two readings of the same blocks are available:
+
+* :func:`inter_cluster_matrix` — the **mean** weight over the block, judged
+  against :func:`corpus_baseline`. Intuitive, but not comparable across group
+  sizes: the mean of a sparse block falls as the block grows, since most pairs
+  of a large group carry no weight and those zeros dominate the average.
+* :func:`inter_cluster_enrichment` — the same block mean divided by what a
+  degree-preserving null expects over the same pairs
+  (:func:`configuration_null`). The pair count cancels, leaving one scale
+  whatever the group size: 1.0 is the expected level, above enriched, below
+  depleted. This corrects the arithmetic penalty on large groups, not a small
+  group's genuine saturation — a few nodes always seen together really are
+  enriched.
 
 Grouping by **topic** is the informative use: topics are not defined by
 coupling, so their coupling connectivity is a genuine measurement (which topics
@@ -92,3 +105,64 @@ def coupling_inout(M: np.ndarray, i: int) -> dict:
         "outward": float(np.mean([M[i, j] for j in others])) if others else 0.0,
         "per_target": {j: float(M[i, j]) for j in others},
     }
+
+
+def configuration_null(W: np.ndarray) -> np.ndarray:
+    """Expected weight between every pair of nodes under a degree-preserving null.
+
+    ``E[a,b] = s_a * s_b / 2m``, with ``s_a`` the strength of node ``a`` (its row
+    sum in ``W``) and ``2m = sum(s)``: the weight one would expect between ``a``
+    and ``b`` if the network's whole weight were redistributed at random while
+    every node kept its own total strength. An all-zero ``W`` yields all zeros.
+    """
+    W = np.asarray(W, dtype=float)
+    s = W.sum(axis=1)
+    total = float(s.sum())
+    if total <= 0:
+        return np.zeros_like(W)
+    return np.outer(s, s) / total
+
+
+def inter_cluster_enrichment(
+        W: np.ndarray,
+        groups: Sequence[Tuple[str, np.ndarray]]) -> Tuple[np.ndarray, List[str]]:
+    """Observed / expected weight between every pair of groups.
+
+    ``R[i,j]`` divides the block mean of :func:`inter_cluster_matrix` by the
+    block mean of :func:`configuration_null` over the *same* pairs, so the pair
+    count cancels and what is left is judged against the strength the block's
+    own nodes carry. That is what makes ``R`` comparable across group sizes
+    where the raw mean is not. The baseline is ``1.0``: above is more weight
+    than the node strengths predict, below is less.
+
+    Returns ``(R, labels)``. Blocks whose expectation is zero yield ``0.0``.
+
+    The null's block means are derived in closed form from the node strengths;
+    averaging :func:`configuration_null` itself would materialise a second dense
+    ``n x n`` matrix for a result that is a handful of numbers.
+    """
+    W = np.asarray(W, dtype=float)
+    obs, labs = inter_cluster_matrix(W, groups, scale=1.0)
+
+    s = W.sum(axis=1)
+    total = float(s.sum())
+    G = len(groups)
+    exp = np.zeros((G, G))
+    if total > 0:
+        # Mean of E[a,b] = s_a*s_b/total over the same pairs inter_cluster_matrix
+        # averages: the strict upper triangle within a group, the full block
+        # between two (disjoint) groups.
+        sums = [float(s[np.asarray(idx)].sum()) for _, idx in groups]
+        sqs  = [float((s[np.asarray(idx)] ** 2).sum()) for _, idx in groups]
+        for i, (_, ai) in enumerate(groups):
+            n_i = len(ai)
+            if n_i > 1:
+                exp[i, i] = (sums[i] ** 2 - sqs[i]) / (total * n_i * (n_i - 1))
+            for j in range(i + 1, G):
+                n_j = len(groups[j][1])
+                if n_i and n_j:
+                    exp[i, j] = exp[j, i] = sums[i] * sums[j] / (total * n_i * n_j)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        R = np.where(exp > 0, obs / exp, 0.0)
+    return R, labs

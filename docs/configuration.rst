@@ -1290,14 +1290,17 @@ not here.
 
       ``bib_network.connectivity``
 
-         Inter-community and inter-topic connectivity matrices (mean coupling
-         between groups).
+         Inter-community and inter-topic connectivity matrices.  Each block is
+         scored as **observed / expected** against a degree-preserving null
+         model, which makes groups of different sizes comparable; ``1.00`` is
+         the expected level.
 
          ``connectivity.scale``
             :Type: ``float``
             :Default: ``1000.0``
 
-            Rescales the very small coupling values so the matrix is readable.
+            Deprecated and ignored: the observed/expected ratio needs no
+            rescaling.  Kept so existing configs still load.
 
    ``sections.temporal``
 

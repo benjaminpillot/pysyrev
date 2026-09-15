@@ -839,9 +839,14 @@ class CocitationPanelConfig(ConfigField):
 @dataclass
 class ConnectivityConfig(ConfigField):
     """Inter-group connectivity matrix panels (rendered for BOTH topic and
-    community groupings)."""
+    community groupings).
+
+    Blocks are scored as observed/expected against a degree-preserving null, a
+    ratio whose baseline is 1 and which therefore needs no rescaling — *by* and
+    *scale* are inert, kept so existing configs still load.
+    """
     by:    str   = "topic"          # deprecated / ignored — both topic and community panels are rendered
-    scale: float = 1000.0           # rescales the tiny coupling values for readability
+    scale: float = 1000.0           # deprecated / ignored — the obs/exp ratio needs no rescaling
 
 
 @dataclass

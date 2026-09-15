@@ -39,6 +39,7 @@ def matrix_heatmap(z: np.ndarray,
                    y_labels: Sequence[str],
                    *,
                    text_format: Optional[Callable[[float], str]] = None,
+                   text_values: Optional[np.ndarray] = None,
                    hovertemplate: Optional[str] = None,
                    colorbar_title: str = "",
                    title: Optional[str] = None,
@@ -65,6 +66,11 @@ def matrix_heatmap(z: np.ndarray,
     text_format : callable, optional
         ``value -> str`` used to annotate each cell; ``None`` leaves cells bare.
         Non-finite values never reach it.
+    text_values : array-like, optional
+        Matrix the annotations are formatted from, when it differs from *z* —
+        colour by a transform (a log, say) while the cells read as the quantity
+        itself. Same shape as *z*; ``%{text}`` in *hovertemplate* then shows
+        this value rather than ``%{z}``.
     hovertemplate : str, optional
         Plotly hover template. Give one whenever the raw number needs a unit or
         more precision than the annotation shows.
@@ -90,10 +96,11 @@ def matrix_heatmap(z: np.ndarray,
     z = np.asarray(z, dtype=float)
     n_rows, n_cols = z.shape
 
+    annotate = z if text_values is None else np.asarray(text_values, dtype=float)
     text = None
     if text_format is not None:
         text = [["" if not np.isfinite(v) else text_format(v) for v in row]
-                for row in z]
+                for row in annotate]
 
     heatmap_kwargs = dict(
         z=z, x=list(x_labels), y=list(y_labels),
@@ -119,26 +126,62 @@ def matrix_heatmap(z: np.ndarray,
     return fig
 
 
+def _ratio_text(v: float) -> str:
+    """Annotation for an enrichment ratio, which spans orders of magnitude:
+    two significant digits below 10, a plain integer above."""
+    if v <= 0:
+        return "0"
+    return f"{v:.0f}" if v >= 10 else f"{v:.2g}"
+
+
 def plot_connectivity_matrix(M: np.ndarray, labels: List[str],
                              baseline: Optional[float] = None,
                              title: Optional[str] = None,
-                             colorbar_title: str = "mean coupling"):
+                             colorbar_title: str = "mean coupling",
+                             ratio: bool = False):
     """Inter-group connectivity matrix.
 
-    ``M[i,j]`` is the mean edge weight between groups *i* and *j* (diagonal =
-    internal cohesion) — bibliographic coupling by default, hence the colorbar
-    default, but the same figure serves any weighted network (co-citation, say):
-    pass *colorbar_title* to name the metric being averaged. *baseline*, the
-    corpus-wide mean, is appended to the title as the line against which a block
-    reads high or low.
+    ``M[i,j]`` is the weight between groups *i* and *j* (diagonal = internal
+    cohesion) — bibliographic coupling by default, hence the colorbar default,
+    but the same figure serves any weighted network (co-citation, say): pass
+    *colorbar_title* to name the metric. *baseline* is the line against which a
+    block reads high or low, appended to the title.
+
+    With ``ratio=True``, ``M`` holds an observed/expected enrichment (see
+    :func:`~pysyrev.core.networks.connectivity.inter_cluster_enrichment`), which
+    spans orders of magnitude around a baseline of 1: colour then runs on
+    ``log10(M)`` so a modest block stays distinguishable beside an extreme one,
+    while the cells and the hover keep showing the ratio itself.
     """
     subtitle = f"  (corpus baseline {baseline:.2f})" if baseline is not None else ""
+    heading  = (title + subtitle) if title else (subtitle.strip() or None)
+    if not ratio:
+        return matrix_heatmap(
+            M, labels, labels,
+            text_format=lambda v: f"{v:.1f}",
+            hovertemplate="%{y} ↔ %{x}: %{z:.2f}<extra></extra>",
+            colorbar_title=colorbar_title,
+            title=heading,
+        )
+
+    M = np.asarray(M, dtype=float)
+    positive = M[M > 0]
+    if positive.size == 0:
+        z, floor = np.zeros_like(M), None
+    else:
+        floor = float(np.log10(positive.min()))
+        # A block of exactly 0 is not missing data — it is the most depleted a
+        # block can be, so it takes the bottom of the scale rather than the gap
+        # a NaN would leave.
+        z = np.where(M > 0, np.log10(np.where(M > 0, M, 1.0)), floor)
     return matrix_heatmap(
-        M, labels, labels,
-        text_format=lambda v: f"{v:.1f}",
-        hovertemplate="%{y} ↔ %{x}: %{z:.2f}<extra></extra>",
+        z, labels, labels,
+        text_format=_ratio_text,
+        text_values=M,
+        hovertemplate="%{y} ↔ %{x}: %{text}× expected<extra></extra>",
         colorbar_title=colorbar_title,
-        title=(title + subtitle) if title else (subtitle.strip() or None),
+        zmin=floor,
+        title=heading,
     )
 
 

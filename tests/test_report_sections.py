@@ -295,7 +295,7 @@ class TestBuildNetworksSection:
         assert "co-citation" in text
         assert "bibliographic coupling" not in text
         assert _blocks_of_type(sub, "table")[0]["title"] == (
-            "Internal vs outward co-citation per community")
+            "Internal vs outward co-citation per community (obs/exp)")
 
 
 class TestConnectivityMatrix:
@@ -317,6 +317,85 @@ class TestConnectivityMatrix:
         prof = coupling_inout(M, 0)
         assert prof["internal"] == M[0, 0]
         assert prof["outward"] == M[0, 1]
+
+    def test_a_block_at_the_null_scores_one_whatever_the_group_size(self):
+        # a group carrying exactly the weight its nodes' strengths predict
+        # scores 1.00, whether it holds 5 strong nodes or 100 weak ones. The
+        # raw mean ranks the two apart though neither is enriched at all.
+        from pysyrev.core.networks import (configuration_null,
+                                           inter_cluster_matrix,
+                                           inter_cluster_enrichment)
+        strengths = np.concatenate([np.full(5, 40.0), np.full(100, 2.0)])
+        W = np.outer(strengths, strengths) / strengths.sum()
+        np.fill_diagonal(W, 0.0)
+        W = configuration_null(W)        # a network that *is* its own null
+        groups = [("strong", np.arange(5)), ("weak", np.arange(5, 105))]
+
+        M, _ = inter_cluster_matrix(W, groups, scale=1000)
+        R, labs = inter_cluster_enrichment(W, groups)
+        assert labs == ["strong", "weak"]
+        assert np.allclose(R, R.T)
+        assert M[0, 0] / M[1, 1] > 50            # the mean ranks them apart...
+        assert R[0, 0] == pytest.approx(1.0, rel=1e-6)   # ...the ratio does not
+        assert R[1, 1] == pytest.approx(1.0, rel=1e-6)
+
+    def test_enrichment_separates_real_cohesion_from_a_saturated_micro_group(self):
+        # the case that prompted the change, in miniature: a few references
+        # co-cited by two documents against two much larger intellectual bases.
+        # The ratio must score the equal-sized bases equally.
+        from pysyrev.core.networks import (cocitation_matrix,
+                                           inter_cluster_matrix,
+                                           inter_cluster_enrichment)
+        rng = np.random.default_rng(0)
+        micro = [f"a{i}" for i in range(8)]
+        base_b = [f"b{i}" for i in range(300)]
+        base_c = [f"c{i}" for i in range(300)]
+        refsets = [set(micro), set(micro)]           # two documents, that is all
+        for src, other in ((base_b, base_c), (base_c, base_b)):
+            for _ in range(400):
+                refsets.append(set(rng.choice(src, 20, replace=False)) |
+                               set(rng.choice(other, 2, replace=False)))
+
+        ids, W = cocitation_matrix(refsets, min_ref_freq=2)
+        pos = {r: i for i, r in enumerate(ids)}
+        groups = [(name, np.array([pos[r] for r in members if r in pos]))
+                  for name, members in (("micro", micro), ("B", base_b),
+                                        ("C", base_c))]
+        M, _ = inter_cluster_matrix(W, groups, scale=1000)
+        R, _ = inter_cluster_enrichment(W, groups)
+
+        # the two bases are built the same way, so they must score the same
+        assert R[1, 1] == pytest.approx(R[2, 2], rel=0.15)
+        # each is cohesive on its own terms and depleted towards the other
+        assert R[1, 1] > 1 and R[1, 2] < 1
+        assert M[0, 0] / M[1, 1] > 10        # the raw mean buried them
+
+    def test_enrichment_matches_averaging_the_dense_null(self):
+        # inter_cluster_enrichment evaluates the null's block means in closed
+        # form to avoid building a second dense n x n matrix; it must agree
+        # exactly with averaging configuration_null itself.
+        from pysyrev.core.networks import (configuration_null,
+                                           inter_cluster_matrix,
+                                           inter_cluster_enrichment)
+        rng = np.random.default_rng(3)
+        for _ in range(3):
+            n = 40
+            A = np.triu(rng.random((n, n)) * (rng.random((n, n)) < 0.4), 1)
+            W = A + A.T
+            perm = rng.permutation(n)
+            groups = [("a", perm[:9]), ("b", perm[9:20]), ("c", perm[20:])]
+            obs, _ = inter_cluster_matrix(W, groups, scale=1.0)
+            exp, _ = inter_cluster_matrix(configuration_null(W), groups, scale=1.0)
+            expected = np.where(exp > 0, obs / exp, 0.0)
+            got, _ = inter_cluster_enrichment(W, groups)
+            assert np.allclose(got, expected)
+
+    def test_configuration_null_preserves_total_strength(self):
+        from pysyrev.core.networks import configuration_null
+        W = np.array([[0, 2., 1.], [2., 0, 3.], [1., 3., 0]])
+        E = configuration_null(W)
+        assert np.allclose(E.sum(axis=1), W.sum(axis=1))
+        assert np.allclose(configuration_null(np.zeros((3, 3))), 0.0)
 
 
 class TestCompositeSelection:

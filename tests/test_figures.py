@@ -100,6 +100,31 @@ class TestPanels:
         fig = plot_connectivity_matrix(np.eye(2), ["a", "b"])
         assert fig.layout.title.text is None
 
+    def test_connectivity_ratio_colours_by_log_but_annotates_the_ratio(self):
+        # an enrichment ratio spans orders of magnitude, so colour runs on
+        # log10 while the cells must still read as the ratio itself
+        M = np.array([[36.0, 2.0], [2.0, 1.8]])
+        fig = plot_connectivity_matrix(M, ["C0", "C1"], baseline=1.0, ratio=True)
+        assert _trace(fig).text == (["36", "2"], ["2", "1.8"])
+        assert np.allclose(np.asarray(_trace(fig).z, dtype=float), np.log10(M))
+
+    def test_connectivity_ratio_draws_a_zero_block_as_depletion_not_a_gap(self):
+        # 0x expected is the most depleted a block can be, not missing data:
+        # it must take the bottom of the colour scale rather than leave a hole
+        M = np.array([[4.0, 0.0], [0.0, 2.0]])
+        fig = plot_connectivity_matrix(M, ["C0", "C1"], baseline=1.0, ratio=True)
+        z = np.asarray(_trace(fig).z, dtype=float)
+        assert np.isfinite(z).all()
+        assert z[0, 1] == pytest.approx(np.log10(2.0))   # the scale's floor
+        assert _trace(fig).zmin == pytest.approx(np.log10(2.0))
+        assert _trace(fig).text == (["4", "0"], ["0", "2"])
+
+    def test_connectivity_ratio_survives_an_all_zero_matrix(self):
+        fig = plot_connectivity_matrix(np.zeros((2, 2)), ["a", "b"],
+                                       baseline=1.0, ratio=True)
+        assert np.isfinite(np.asarray(_trace(fig).z, dtype=float)).all()
+        assert _trace(fig).text == (["0", "0"], ["0", "0"])
+
     def test_similarity_blanks_the_diagonal(self):
         S = np.array([[np.nan, 0.4], [0.4, np.nan]])
         fig = plot_similarity_matrix(S, ["T0", "T1"])

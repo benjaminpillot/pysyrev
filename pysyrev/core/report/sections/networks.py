@@ -30,6 +30,16 @@ def _slug(label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
 
 
+def _ratio(v: float) -> str:
+    """An observed/expected ratio as table text.
+
+    The values run from well under 1 to the hundreds, so a fixed number of
+    decimals either loses the small end or pads the large one: two decimals
+    below 10, none above.
+    """
+    return f"{v:.0f}" if v >= 10 else f"{v:.2f}"
+
+
 def _export_network_html(fig, export_to, label):
     """Write an interactive HTML version of a Plotly network figure and return a
     'Interactive version' callout block (or None)."""
@@ -495,50 +505,51 @@ _UNIT_PLURALS = {"topic": "topics", "community": "communities"}
 
 
 # Vocabulary of one connectivity panel. The matrix machinery is metric-agnostic —
-# inter_cluster_matrix averages blocks of any weighted W — so only the prose
+# inter_cluster_enrichment scores blocks of any weighted W — so only the prose
 # differs between a coupling W (how much two groups cite the same works) and a
 # co-citation W (how often two groups' references are cited together).
 _CONNECTIVITY_KINDS = {
     "coupling": {
         "metric":   "bibliographic coupling",
         "basis":    "shared references",
-        "colorbar": "mean coupling",
+        "colorbar": "coupling obs/exp (log₁₀)",
         "offdiag":  "how much two {units} share references",
         "darker":   "stronger shared-reference overlap",
-        "profile":  ("A {unit} with high internal and low outward coupling (below "
-                     "baseline) is a self-contained / weakly integrated theme."),
+        "profile":  ("A {unit} with internal coupling above 1 and outward coupling "
+                     "below 1 is a self-contained / weakly integrated theme."),
     },
     "cocitation": {
         "metric":   "co-citation",
         "basis":    "documents citing both references",
-        "colorbar": "mean co-citation",
+        "colorbar": "co-citation obs/exp (log₁₀)",
         "offdiag":  "how often the references of two {units} are cited together",
         "darker":   "more frequent co-citation",
-        "profile":  ("A {unit} with high internal and low outward co-citation (below "
-                     "baseline) is an intellectual base mobilised on its own, rarely "
-                     "alongside the others."),
+        "profile":  ("A {unit} with internal co-citation above 1 and outward "
+                     "co-citation below 1 is an intellectual base mobilised on its "
+                     "own, rarely alongside the others."),
     },
 }
 
-
-def _connectivity_panel(W, groups, unit, scale, export_to,
-                        kind="coupling", title=None):
+def _connectivity_panel(W, groups, unit, export_to, kind="coupling",
+                        title=None):
     """One inter-group connectivity subsection for a precomputed grouping.
 
     *groups* is a list of ``(label, idx_array)``; *unit* is ``"topic"`` or
     ``"community"``; *kind* selects the metric's vocabulary from
     :data:`_CONNECTIVITY_KINDS` (``W`` is a coupling or a co-citation matrix).
-    A heatmap of the mean weight between groups plus a per-group
+    A heatmap of the observed/expected weight between groups plus a per-group
     internal/outward table. Returns None when fewer than two non-empty groups
     exist.
+
+    Blocks are scored as an enrichment over a degree-preserving null rather than
+    as a raw block mean, which is not comparable across group sizes (see
+    :mod:`pysyrev.core.networks.connectivity`).
 
     *title* overrides the subsection title; it also drives the exported HTML
     filename, so two panels of the same *unit* over different networks must not
     share one.
     """
-    from pysyrev.core.networks import (
-        inter_cluster_matrix, corpus_baseline, coupling_inout,
-    )
+    from pysyrev.core.networks import inter_cluster_enrichment, coupling_inout
     from pysyrev.core.report.figures import plot_connectivity_matrix
 
     groups = [(lab, idx) for lab, idx in groups if len(idx) > 0]
@@ -549,33 +560,45 @@ def _connectivity_panel(W, groups, unit, scale, export_to,
     title  = title or f"{unit.capitalize()} connectivity"
     units  = _UNIT_PLURALS.get(unit, unit + "s")
 
-    M, labs = inter_cluster_matrix(W, groups, scale=scale)
-    base    = corpus_baseline(W, scale=scale)
-    fig     = plot_connectivity_matrix(M, labs, baseline=base, title=None,
-                                       colorbar_title=words["colorbar"])
+    M, labs = inter_cluster_enrichment(W, groups)
+    fig     = plot_connectivity_matrix(M, labs, baseline=1.0, title=None,
+                                       colorbar_title=words["colorbar"],
+                                       ratio=True)
 
     rows = []
     for i, lab in enumerate(labs):
         p = coupling_inout(M, i)
-        siloed = p["internal"] > p["outward"] and p["outward"] < base
-        rows.append([lab, f"{p['internal']:.2f}", f"{p['outward']:.2f}",
-                     "self-contained" if siloed else "integrated"])
+        profile = ("self-contained" if p["internal"] > 1.0 > p["outward"]
+                   else "integrated")
+        rows.append([lab, str(len(groups[i][1])), _ratio(p["internal"]),
+                     _ratio(p["outward"]), profile])
 
+    headers = [unit.capitalize(), "Size", "Internal", "Outward", "Profile"]
+    widths  = [4.4, 1.8, 2.8, 2.8, 3.6]
+
+    explain = (
+        f"Each block scores the {words['metric']} between {units} "
+        f"({words['basis']}) as <b>observed / expected</b>: the block's mean "
+        f"weight divided by what a degree-preserving null model predicts for "
+        f"the same pairs. <b>1.00</b> is the expected level, above is enriched, "
+        f"below depleted. The diagonal is each {unit}'s internal cohesion; "
+        f"off-diagonal cells show "
+        f"{words['offdiag'].format(unit=unit, units=units)}. "
+        f"The raw mean is not shown: it falls with {unit} size, since most "
+        f"pairs of a large {unit} carry no weight and those zeros dominate the "
+        f"average, which would rank small {units} far above large ones for "
+        f"arithmetic reasons alone."
+    )
     sub_content = [
-        {"type": "paragraph",
-         "text": (f"Mean {words['metric']} between {units} ({words['basis']}, "
-                  f"scaled ×{int(scale)}). The diagonal is each {unit}'s internal "
-                  f"cohesion; off-diagonal cells show "
-                  f"{words['offdiag'].format(unit=unit, units=units)}. "
-                  f"Corpus baseline: <b>{base:.2f}</b>.")},
+        {"type": "paragraph", "text": explain},
         {"type": "plotly", "figure": fig,
-         "caption": (f"Darker = {words['darker']}. "
+         "caption": (f"Darker = {words['darker']} than expected; colour runs on "
+                     f"log₁₀ of the ratio. "
                      + words["profile"].format(unit=unit, units=units)),
          "filename_prefix": _slug(title)},
         {"type": "table",
-         "title": f"Internal vs outward {words['metric']} per {unit}",
-         "headers": [unit.capitalize(), "Internal", "Outward", "Profile"],
-         "rows": rows, "col_widths": [7.0, 3.0, 3.0, 4.0]},
+         "title": f"Internal vs outward {words['metric']} per {unit} (obs/exp)",
+         "headers": headers, "rows": rows, "col_widths": widths},
     ]
     html_block = _export_network_html(fig, export_to, title)
     if html_block is not None:
@@ -605,7 +628,6 @@ def _build_connectivity_subsections(coupling_result, cocitation_result,
     """
     from pysyrev.core.networks import groups_from_labels
 
-    scale = section_cfg.connectivity.scale
     panels = []
 
     # By BERTopic topic — coupling only (topics are a property of documents).
@@ -620,7 +642,7 @@ def _build_connectivity_subsections(coupling_result, cocitation_result,
                                for nid in coupling_result.node_ids])
             tgroups = [(_topic_label(t, topic_labels), np.where(topics == t)[0])
                        for t in sorted(x for x in set(topics.tolist()) if x != -1)]
-            panel = _connectivity_panel(coupling_result.W, tgroups, "topic", scale,
+            panel = _connectivity_panel(coupling_result.W, tgroups, "topic",
                                         export_to, kind="coupling")
             if panel is not None:
                 panels.append(panel)
@@ -631,7 +653,7 @@ def _build_connectivity_subsections(coupling_result, cocitation_result,
         if result is None or result.n_nodes < 2:
             continue
         panel = _connectivity_panel(
-            result.W, groups_from_labels(result.labels), "community", scale,
+            result.W, groups_from_labels(result.labels), "community",
             export_to, kind=kind,
             title=f"Community connectivity ({label})")
         if panel is not None:
