@@ -31,6 +31,13 @@
 # resolved against it at load time.
 # env: /path/to/.env
 
+# Optional but recommended: one root folder for every result of the project.
+# Each section then exports to <output_dir>/<section>/ (bib/, review/,
+# topic_model/, topic_report/) and its own export.export_dir may be left blank.
+# A section's export_dir still overrides it: a relative path is taken under
+# output_dir, an absolute one is used as is.
+output_dir: /path/to/output/my_project/
+
 
 # =============================================================================
 # bib
@@ -160,7 +167,7 @@ bib:
   # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS).
   # The review section will automatically pick up the most recent run.
   export:
-    export_dir: /path/to/output/bib_results/
+    export_dir:             # blank → <output_dir>/bib/
     run_name:               # blank → auto-timestamp; or e.g. "may_2026_wos_oa"
 
 
@@ -181,7 +188,7 @@ review:
   # The topic_model section auto-detects the most recent run (its dataset also
   # feeds the report's network panels).
   export:
-    export_dir: /path/to/output/review_results/
+    export_dir:             # blank → <output_dir>/review/
     run_name:               # blank → auto-timestamp; or e.g. "pilot_run_1"
     cache_dir:              # blank → <export_dir>/<run_name>/cache/
 
@@ -358,7 +365,7 @@ topic_model:
   doc_dataset:
 
   export:
-    export_dir: /path/to/output/topic_modeling/
+    export_dir:                   # blank → <output_dir>/topic_model/
     run_name:                     # blank → auto-timestamp
 
   # ---- Distance metric used to rank configurations -----------------------
@@ -448,7 +455,8 @@ topic_model:
 # Remove this section entirely to skip report generation.
 #
 # topic_report:
-#   export_to: /path/to/output/report/
+#   export:
+#     export_dir:           # blank → <output_dir>/topic_report/
 #   # run_dir:              # blank → auto-detect the latest topic_model run
 #
 #   # ---- PDF metadata (defaults shown) -------------------------------------

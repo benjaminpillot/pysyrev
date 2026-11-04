@@ -33,6 +33,10 @@ automatically propagates outputs between stages:
 - ``review.export.export_dir``      → ``topic_model.doc_dataset``
 - ``topic_model.export.export_dir`` → ``topic_report.run_dir``
 
+With a root-level ``output_dir``, a stage finds its input under
+``<output_dir>/<upstream section>/`` even when the upstream section is absent
+from the config.
+
 .. note::
    ``topic_model.doc_dataset`` is also the file the report's bibliographic
    network panels are recomputed from, so it must carry the corpus' reference
@@ -62,6 +66,27 @@ Root level
         wos:
           api:
             api_key: ${WOS_API_KEY}
+
+``output_dir``
+   :Type: ``str``
+   :Default: —
+   :Required: no (but then every section needs its own ``export.export_dir``)
+
+   Root folder for every result of the project.  Each section exports to
+   ``<output_dir>/<section>/`` — ``bib/``, ``review/``, ``topic_model/``,
+   ``topic_report/`` — so their ``export.export_dir`` may be left blank.  A
+   section's ``export.export_dir`` still overrides it: a relative path is taken
+   under ``output_dir``, an absolute one is used as is.  API caches
+   (``cache_dir`` of the sources) are not placed under it, so they can be
+   shared across projects.
+
+   .. code-block:: yaml
+
+      output_dir: /path/to/output/solar_cooking/
+
+      topic_model:
+        export:
+          export_dir: specter2     # → /path/to/output/solar_cooking/specter2/
 
 
 ----
@@ -1145,12 +1170,14 @@ not here.
    Path to a specific topic-model run directory.  Leave blank to use
    the most recent run in ``topic_model.export.export_dir``.
 
-``topic_report.export_to``
+``topic_report.export.export_dir``
    :Type: ``str``
-   :Required: yes
+   :Default: ``<output_dir>/topic_report/``
 
-   Directory where the generated PDF is written.  Interactive HTML versions of
-   the network figures and the paper-selection annex are written here too.
+   Directory where each report is written, in its own ``report_<timestamp>/``
+   sub-directory.  Interactive HTML versions of the network figures and the
+   paper-selection annex are written there too.  The former flat key
+   ``topic_report.export_to`` is still accepted, with a deprecation warning.
 
 ``topic_report.meta``
    :Type: mapping

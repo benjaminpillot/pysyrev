@@ -76,7 +76,8 @@ re-running the full pipeline:
 
    topic_report:
      run_dir: /path/to/topic_modeling/run_2026-05-01T120000/   # or blank to auto-detect
-     export_to: /path/to/output/report/
+     export:
+       export_dir: /path/to/output/report/
 
 .. code-block:: bash
 

@@ -286,6 +286,8 @@ def _render_requirements() -> str:
                      f"{', '.join(keys) if keys else 'none'}")
         for note in conditional_keys(cls, name):
             lines.append(f"  {'':<15} conditional:    {note}")
+    lines.append("  Every `<section>.export.export_dir` may be left blank when the "
+                 "root-level `output_dir:` is set (→ <output_dir>/<section>/).")
 
     lines += ["", "Stages — `--stage <name>` only reads the sections below."]
     for stage, spec in STAGE_SECTIONS.items():

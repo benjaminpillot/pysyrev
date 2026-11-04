@@ -67,7 +67,8 @@ class TopicReport:
             run_dir            = config.topic_report.run_dir,
             report_config      = config.topic_report,
             best_model_index        = config.topic_model.best_model_index if config.topic_model is not None else 0,
-            export_to          = config.topic_report.export_to,
+            export_to          = (config.topic_report.export.export_dir
+                                  if config.topic_report.export is not None else None),
             labeler_config     = config.llm,
             # The network panels are recomputed from the reviewed dataset (they
             # need the raw references, which the bertopic outputs drop) — the same
@@ -139,7 +140,8 @@ class TopicReport:
         if output_file is None:
             if self.export_to is None:
                 raise ValueError(
-                    "Provide output_file or set export_to in the config."
+                    "Provide output_file, or set topic_report.export.export_dir "
+                    "(or a root-level output_dir) in the config."
                 )
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             run_subdir = os.path.join(self.export_to, f"report_{ts}")

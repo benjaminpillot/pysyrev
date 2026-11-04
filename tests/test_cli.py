@@ -84,7 +84,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {tmp_path / "report"}
+              export:
+                export_dir: {tmp_path / "report"}
         """)
         result = _run(str(cfg), "--stage", "topic-report")
         assert result.returncode == 0, result.stderr
@@ -93,7 +94,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {tmp_path / "report"}
+              export:
+                export_dir: {tmp_path / "report"}
         """)
         result = _run(str(cfg), "--stage", "topic-report")
         assert "[topic-report] Done" in result.stdout
@@ -103,7 +105,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {export_dir}
+              export:
+                export_dir: {export_dir}
         """)
         _run(str(cfg), "--stage", "topic-report")
         pdfs = list(export_dir.glob("**/*.pdf"))
@@ -114,7 +117,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {tmp_path / "report"}
+              export:
+                export_dir: {tmp_path / "report"}
         """)
         result = _run(str(cfg))
         assert result.returncode == 0, result.stderr
@@ -132,7 +136,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {export_dir}
+              export:
+                export_dir: {export_dir}
         """)
         result = _run(str(cfg), "--stage", "topic-report", "topic-report")
         assert result.returncode == 0, result.stderr
@@ -143,7 +148,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {export_dir}
+              export:
+                export_dir: {export_dir}
         """)
         result = _run(str(cfg), "--from", "topic-report")
         assert result.returncode == 0, result.stderr
@@ -155,7 +161,8 @@ class TestCLITopicReport:
         cfg = _write_config(tmp_path, f"""\
             topic_report:
               run_dir: {topic_model_outputs["run_dir"]}
-              export_to: {export_dir}
+              export:
+                export_dir: {export_dir}
         """)
         result = _run(str(cfg), "--from", "topic-model")
         assert result.returncode == 0, result.stderr

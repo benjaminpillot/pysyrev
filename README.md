@@ -153,7 +153,8 @@ A config containing only the `topic_report` (and optionally `report` and `llm`) 
 # report_only.yaml
 topic_report:
   run_dir: /path/to/topic_modeling/run_2026-05-01T120000/  # or leave blank to auto-detect
-  export_to: /path/to/output/report/
+  export:
+    export_dir: /path/to/output/report/
 ```
 
 Which model configuration is rendered comes from `topic_model.best_model_index` (default `0`, the highest-ranked one), not from the `topic_report` section.
@@ -168,6 +169,8 @@ pysyrev report_only.yaml
 
 A single YAML file controls all stages. Copy `pysyrev/templates/config.yaml` and fill in the sections you need — or start from one of the fuller, annotated files in `config_examples/`. Sections not present in the file are simply skipped.
 
+Set a root-level `output_dir:` to keep every result of a project in one folder: each section then exports to `<output_dir>/<section>/` (`bib/`, `review/`, `topic_model/`, `topic_report/`), and its own `export.export_dir` becomes an optional override — relative to `output_dir`, or absolute.
+
 ### Mandatory sections and keys
 
 Each stage reads its own section, and only its own: an incomplete `topic_model:` cannot stop `--stage bib`. Loading reports such a section and keeps going; the error is raised when a stage that needs it runs. Run `pysyrev check` for the authoritative, always-current list, and `pysyrev check config.yaml` to see which stages your file can run.
@@ -175,8 +178,8 @@ Each stage reads its own section, and only its own: an incomplete `topic_model:`
 | Stage | Needs | Mandatory keys | Also reads when valid |
 |---|---|---|---|
 | `bib` | `bib:` | at least one source among `wos:` / `open_alex:` / `scopus:` / `pubmed:` | — |
-| `review` | `review:` | `export.export_dir`, `text_inputs`, `inclusion_criteria`, `exclusion_criteria`, `reviewers[]` (`name`, `model_id`, `provider`, `backstory`), `workflow` | `topic_model:` |
-| `topic-model` | `topic_model:` | `export.export_dir` | `llm:`, `topic_report:` |
+| `review` | `review:` | `export.export_dir` (or a root `output_dir`), `text_inputs`, `inclusion_criteria`, `exclusion_criteria`, `reviewers[]` (`name`, `model_id`, `provider`, `backstory`), `workflow` | `topic_model:` |
+| `topic-model` | `topic_model:` | `export.export_dir` (or a root `output_dir`) | `llm:`, `topic_report:` |
 | `topic-report` | `topic_report:` | none | `topic_model:`, `llm:` |
 
 The `llm:` section (topic labelling) is optional everywhere, but needs `provider` and `model_id` once declared.

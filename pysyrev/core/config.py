@@ -155,6 +155,72 @@ def _find_latest_file(export_dir: str, filename: str) -> Union[str, None]:
     return candidate if os.path.isfile(candidate) else None
 
 
+#: Sections that write results, in stage order. Under a root-level
+#: ``output_dir``, each one exports to ``<output_dir>/<section>/`` by default.
+OUTPUT_SECTIONS = ('bib', 'review', 'topic_model', 'topic_report')
+
+
+def _resolve_export_dirs(resolved: dict) -> dict:
+    """Fill every section's ``export.export_dir`` from the root ``output_dir``.
+
+    - blank ``export_dir``    → ``<output_dir>/<section>``
+    - relative ``export_dir`` → ``<output_dir>/<export_dir>``
+    - absolute ``export_dir`` → kept as is (an explicit override)
+
+    Without ``output_dir`` the sections are left as written. The legacy flat
+    ``topic_report.export_to`` is folded into ``topic_report.export.export_dir``.
+    Returns a new mapping; *resolved* is not modified.
+    """
+    out = dict(resolved)
+    output_dir = out.get('output_dir')
+    if output_dir:
+        output_dir = os.path.expanduser(output_dir)
+        out['output_dir'] = output_dir
+
+    report = out.get('topic_report')
+    if isinstance(report, dict) and 'export_to' in report:
+        print("[config] `topic_report.export_to` is deprecated — use "
+              "`topic_report.export.export_dir`, or a root-level `output_dir`.")
+        report = dict(report)
+        legacy = report.pop('export_to')
+        export = dict(report.get('export') or {})
+        if legacy and not export.get('export_dir'):
+            export['export_dir'] = legacy
+        if export:
+            report['export'] = export
+        out['topic_report'] = report
+
+    if not output_dir:
+        return out
+
+    for name in OUTPUT_SECTIONS:
+        data = out.get(name)
+        if not isinstance(data, dict) or not data:
+            continue
+        export = data.get('export')
+        if export is not None and not isinstance(export, dict):
+            continue  # malformed: let the section's own parsing name it
+        export = dict(export or {})
+        export_dir = export.get('export_dir')
+        if not export_dir:
+            export['export_dir'] = os.path.join(output_dir, name)
+        elif not os.path.isabs(os.path.expanduser(export_dir)):
+            export['export_dir'] = os.path.join(output_dir, export_dir)
+        out[name] = {**data, 'export': export}
+    return out
+
+
+def _export_dir_of(resolved: dict, section: str) -> Union[None, str]:
+    """Where *section* exports: its own ``export.export_dir`` when declared,
+    else ``<output_dir>/<section>`` — so a stage finds its input under the
+    project root even when the upstream section is absent from this config."""
+    export = (resolved.get(section) or {}).get('export')
+    if isinstance(export, dict) and export.get('export_dir'):
+        return export['export_dir']
+    output_dir = resolved.get('output_dir')
+    return os.path.join(output_dir, section) if output_dir else None
+
+
 
 def _resolve_env_vars(node) -> dict:
     """Recursively walk a YAML structure (dict / list / scalar) and replace
@@ -1067,15 +1133,25 @@ class TopicLabelerConfig(ConfigField):
 
 
 @dataclass
+class TopicReportExportConfig(ConfigField):
+    """Output configuration for the topic-report stage.
+
+    Each report is written to ``<export_dir>/report_<timestamp>/``.
+    """
+    export_dir: str
+
+
+@dataclass
 class TopicReportConfig(ConfigField):
     """PDF layout parameters for the topic-report stage."""
     run_dir:     str = None  # auto-detected by Config.load() from topic_model.export.export_dir when blank
-    export_to:   str = None
+    export:      Union[None, TopicReportExportConfig] = None
     meta:        Union[None, ReportMetaConfig]     = None
     sections:    Union[None, ReportSectionsConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
+        self.export   = _build(TopicReportExportConfig, self.export, 'export')
         self.meta     = _with_defaults(ReportMetaConfig, self.meta, 'meta')
         self.sections = _with_defaults(ReportSectionsConfig, self.sections, 'sections')
 
@@ -1237,6 +1313,9 @@ class Config:
     :meth:`require_stages`).
     """
     env:                Union[None, str]                    = None
+    #: Project root: each section exports to ``<output_dir>/<section>/``
+    #: unless its own ``export.export_dir`` says otherwise.
+    output_dir:         Union[None, str]                    = None
     bib:                Union[None, BibConfig]              = None
     review:             Union[None, ReviewConfig]           = None
     topic_model:        Union[None, TopicModelConfig]       = None
@@ -1279,9 +1358,10 @@ class Config:
           1. Read the YAML.
           2. Load the .env file referenced by the root-level ``env:`` key (if any).
           3. Resolve all ``${VAR}`` references.
-          4. Propagate outputs between stages when ``doc_dataset`` / ``run_dir``
+          4. Place each section's ``export_dir`` under the root ``output_dir``.
+          5. Propagate outputs between stages when ``doc_dataset`` / ``run_dir``
              are left blank (auto-detection of the latest run in each export_dir).
-          5. Build a typed dataclass for every section present, recording rather
+          6. Build a typed dataclass for every section present, recording rather
              than raising the failures (see :meth:`require_stages`).
         """
         with open(config_file, 'r') as file:
@@ -1291,15 +1371,16 @@ class Config:
         if env_path:
             load_dotenv(env_path)
 
-        resolved = _resolve_env_vars(raw)
+        resolved = _resolve_export_dirs(_resolve_env_vars(raw))
+        output_dir = resolved.get('output_dir')
 
         # ── Propagate outputs between stages when doc_dataset is blank ────────
-        #   bib.export.export_dir    → review.doc_dataset
-        #   review.export.export_dir → topic_model.doc_dataset
+        #   bib export dir    → review.doc_dataset
+        #   review export dir → topic_model.doc_dataset
         #     (topic_model.doc_dataset — the reviewed_included.csv — is also the
         #      source the report's network panels are recomputed from.)
-        bib_export_dir    = ((resolved.get('bib') or {}).get('export') or {}).get('export_dir')
-        review_export_dir = ((resolved.get('review') or {}).get('export') or {}).get('export_dir')
+        bib_export_dir    = _export_dir_of(resolved, 'bib')
+        review_export_dir = _export_dir_of(resolved, 'review')
         review_data      = dict(resolved.get('review') or {})
         topic_model_data = dict(resolved.get('topic_model') or {})
 
@@ -1316,7 +1397,7 @@ class Config:
         # ── Auto-detect topic_report.run_dir from latest topic_model run ─────
         topic_report_data = dict(resolved.get('topic_report') or {})
         if topic_report_data and not topic_report_data.get('run_dir'):
-            tm_export_dir = (topic_model_data.get('export') or {}).get('export_dir')
+            tm_export_dir = _export_dir_of(resolved, 'topic_model')
             if tm_export_dir:
                 latest = _find_latest_dir(tm_export_dir)
                 if latest:
@@ -1325,7 +1406,7 @@ class Config:
         # A section name the loader does not know would otherwise drop a whole
         # stage without a word — a typo must not read as "not configured".
         for name in resolved:
-            if name != 'env' and name not in SECTION_CLASSES:
+            if name not in ('env', 'output_dir') and name not in SECTION_CLASSES:
                 print(f"[config] ignoring unknown section `{name}:` — known "
                       f"sections: {', '.join(SECTION_CLASSES)}")
 
@@ -1344,13 +1425,18 @@ class Config:
             except (ValueError, TypeError) as exc:
                 # A section is only wrong for the stages that read it: record it,
                 # let `require_stages` raise it if and when one of them runs.
+                if not output_dir and re.search(r'missing.*\bexport\b', str(exc)):
+                    exc = ConfigError(
+                        f"{exc} — or set a root-level `output_dir:` to export "
+                        f"every section under one project folder.",
+                        path=getattr(exc, 'path', name))
                 errors[name] = exc if isinstance(exc, ConfigError) \
                     else ConfigError(str(exc), path=name)
                 print(f"[config] section `{name}:` is unusable and will stop the "
                       f"stages that need it — {exc}")
 
-        return cls(env=resolved.get('env'), declared=declared, errors=errors,
-                   **sections)
+        return cls(env=resolved.get('env'), output_dir=output_dir,
+                   declared=declared, errors=errors, **sections)
 
 
 SECTION_CLASSES.update(
