@@ -145,7 +145,7 @@ review: # LLM-based review
   # doc_dataset: leave blank to auto-detect the most recent bib run in bib.export.export_dir.
   doc_dataset:
   # Each review run is stored in its own sub-directory under export_dir.
-  # Downstream sections (bib_network, topic_model) auto-detect the most recent run.
+  # Downstream sections (topic_model) auto-detect the most recent run.
   export:
     export_dir:             # blank → <output_dir>/review/
     run_name:   # leave blank for auto-timestamp, or set e.g. "test_run_1"
@@ -176,17 +176,7 @@ review: # LLM-based review
   # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
   # calls per chunk, 10 in flight).
   #
-  batch_size: 100               # articles per checkpoint chunk. items_per_call100
-                                # x max_concurrent_requests (25 x 10) is the
-                                # FLOOR: the smallest chunk that fills every
-                                # concurrency slot — at 100 only 4 calls were
-                                # issued for 10 slots. It is a floor, not an
-                                # optimum: a one-wave chunk ends on its slowest
-                                # call, so 500 would run maybe a third faster
-                                # by overlapping that straggler, at the price
-                                # of losing 500 documents on a crash instead of
-                                # 250. Same token cost either way. The run warns
-                                # if this drops back below the floor.
+  batch_size: 100
   api_pause: 20.0               # seconds between chunks (rate-limit guard)
   max_retries: 2                # on API error; overridable per reviewer.
                                 # Applies to single-article calls; a failed
