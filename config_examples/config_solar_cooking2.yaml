@@ -1,0 +1,562 @@
+# Path to the .env file. Loaded at the very top of Config.load, so any
+# ${VAR} reference further down in this file is resolved against it.
+env: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/.env
+
+# Optional but recommended: one root folder for every result of the project.
+# Each section then exports to <output_dir>/<section>/ (bib/, review/,
+# topic_model/, topic_report/) and its own export.export_dir may be left blank.
+# A section's export_dir still overrides it: a relative path is taken under
+# output_dir, an absolute one is used as is.
+output_dir: /home/benjaminpillot/Documents/PRO/SOLAR_COOKING/REVIEW/PYSYREV/
+
+bib:
+  # WoS source: either a local file (source: file) or the Expanded API
+  # (source: api). Pick one. Switch to `source: api` once your API key
+  # is active and update the query below.
+#  wos:
+#    source:        # disabled for this OpenAlex-only test — set to 'file' (or 'api') to re-enable WoS
+#    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/WITH_REFS/MAY_2026/savedrecs_all.bib
+#    file: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/REVIEW/WOS/savedrecs_all.bib
+#    api:
+#      api_key: #${WOS_API_KEY}                                # resolved from .env
+#      query:
+#      cache_dir: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/WoS/cache
+  open_alex:
+    source: seed    # 'file' or 'api' or 'seed' or leave blank if not to be included
+#    file: /home/benjaminpillot/Documents/PRO/ABM_LITERATURE_REVIEW/OpenAlex/DECEMBER_2025/open_alex.csv
+#    api:
+#      api_key: ${OPENALEX_API_KEY}
+#      email: ${OPENALEX_EMAIL}                                # optional, polite-pool credit
+      # Narrowed set (~546 works): justice embedded in energy models. The search
+      # covers title+abstract only (not full text); AND/OR/"quotes" are honoured.
+#      query: energy transition AND model AND justice
+#      filters:                                                # structured filters (combined with AND)
+#        publication_year: '2010-2026'                         # aligns with extract.year below
+#        type: article
+#      cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/OpenAlex_cache
+
+    # Seed expansion — inactive as long as `source:` above says 'api'. Set
+    # `source: seed` to build the corpus from the seed papers instead of the
+    # query: the pool is then the union of the seeds, the papers CITING them,
+    # the papers they CITE, and the text queries below. Worth trying here
+    # because "justice inside an energy model" has no clean keyword handle —
+    # the query above misses papers that never spell out all three terms.
+    # Requires seeds.txt to exist (one DOI per line) before the run.
+    seed:
+      api_key: ${OPENALEX_API_KEY}
+      email: ${OPENALEX_EMAIL}                                # optional, polite-pool credit
+      file: /home/benjaminpillot/Documents/PRO/SOLAR_COOKING/REVIEW/seeds.txt
+      # seeds: [10.xxxx/your-seed-doi, W2741809807]           # optional inline seeds, merged with the file
+      # Text queries: the recall backstop, for papers with no citation link to
+      # any seed. Each line is ONE title+abstract search whose terms are AND-ed
+      # and stemmed (hyphens and plurals ignored) — quote a line to match the
+      # words in that order instead. AND / OR / NOT are honoured. The separate
+      # queries are unioned into the pool. Prune or extend once you see what
+      # they drag in.
+      queries:
+      year_min: 2010                                          # aligns with extract.year below
+      year_max: 2030
+      use_forward: true                                       # papers citing the seeds
+      use_backward: true                                      # papers the seeds cite
+      max_per_seed: 800                                       # cap per seed on forward citations
+      max_per_query: 600                                      # cap per text query
+      cache_dir: /home/benjaminpillot/Documents/PRO/SOLAR_COOKING/REVIEW/PYSYREV/OpenAlex_cache
+  scopus:
+  pubmed:
+
+  # --- Abstract completion (opt-in, corpus-level) ---
+  # Any source can leave abstracts missing (OpenAlex notably), and no-abstract
+  # rows are dropped by cleaning. Add steps to recover those abstracts from an
+  # external provider (looked up by DOI) on the merged corpus, before the drop.
+  # A list of provider steps, run in order — a later provider only fills
+  # abstracts still missing after the earlier ones. Only the abstract is filled;
+  # references/IDs used for coupling networks are left intact. `provider: wos` is
+  # the only backend today (needs a WoS Expanded API key); scopus / pubmed can
+  # register their own the same way.
+  abstract_completion:
+    - provider: wos
+      api_key: ${WOS_API_KEY}
+  #     cache_dir: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/wos_completion_cache
+
+  # --- Merge parameters (duplicates removal across sources) ---
+  # merge:
+  #   title_similarity: 98         # fuzzy similarity threshold (0-100) for duplicate detection
+  #   ngram_size: 3                # word n-gram size for the blocking index
+  #   max_candidates_per_row: 200  # max candidates per query in the blocking phase
+  #   scorer: token_set_ratio      # rapidfuzz scorer: token_set_ratio | partial_token_sort_ratio | WRatio | partial_ratio | ratio
+  #   priority: [open_alex, wos, scopus, pubmed]  # dedup priority, most-important first.
+  #                                # First configured source wins duplicates and keeps its IDs
+  #                                # (default keeps OpenAlex first); list wos first for the old behaviour.
+
+  # --- Canonical reference keys (optional; presence enables it) ---
+  # Remap references onto a shared DOI key space so bibliographic coupling holds
+  # across merged sources regardless of merge order. Intra-corpus and DOI-bearing
+  # refs map for free; extra-corpus OpenAlex ids are resolved via the OpenAlex API
+  # (creds reused from open_alex.api) and cached. The API step is skipped
+  # automatically when there is no other-source DOI to bridge to (e.g. WoS-only or
+  # pure-OpenAlex run), so it is safe to leave enabled.
+  # reference_keys:
+  #   cache: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/PYSYREV/openalex_doi_cache.csv
+  #   resolve_external: true       # false = offline only (no API calls)
+
+  # --- Cleaning parameters ---
+  clean:
+  #   min_signals_to_reject: 2     # min number of garbage signals to drop an abstract
+  #   extra_garbage_phrases: []    # additional phrases to flag as garbage
+  #   use_langdetect: false        # use langdetect library for language detection
+    # Cap on the abstract length, in characters (blank = keep whole). Sources
+    # regularly put something other than an abstract in the abstract field: a
+    # scraped landing page, the full text, an author list trailed by a mangled
+    # reference dump. On the May 2026 corpus, 9 % of records ran past 15 000
+    # characters and carried 54 % of the corpus' characters — i.e. most of the
+    # review bill, spent on noise the screening decision does not use. The cut
+    # lands on a sentence boundary; 2500 comfortably holds a real abstract.
+    max_abstract_chars: 2500
+
+  # --- Extraction / filtering parameters ---
+  extract:
+    include_doc_type: [article, review]  # leave empty to keep all document types
+    exclude_doc_type: [peer review]      # types to remove (fuzzy); takes priority over include_doc_type
+    year:                          # min publication year (inclusive)
+  #   nb_citations: 0              # min citation count (inclusive)
+    language: english              # str, list of str, or null/empty (default: null = keep all languages)
+  #   scorer: partial_token_sort_ratio
+  #   score_cutoff: 90             # min fuzzy match score (0-100)
+
+  # --- Reference resolution (opt-in, expensive) ---
+  resolve_references:
+     enabled: true
+     flag_unresolved: true
+  #   fuzzy_score_cutoff: 90
+  #   ngram_size: 3
+  #   max_candidates: 50
+  #   scorer: token_set_ratio
+
+  # --- Output ---
+  # Each run is stored in its own sub-directory under export_dir.
+  # The review section will automatically pick up the most recent run.
+  export:
+    export_dir:             # blank → <output_dir>/bib/
+    run_name:   # leave blank for auto-timestamp, or set e.g. "may_2026_wos_oa"
+
+
+review: # LLM-based review
+  #
+  # doc_dataset: leave blank to auto-detect the most recent bib run in bib.export.export_dir.
+  doc_dataset:
+  # Each review run is stored in its own sub-directory under export_dir.
+  # Downstream sections (bib_network, topic_model) auto-detect the most recent run.
+  export:
+    export_dir:             # blank → <output_dir>/review/
+    run_name:   # leave blank for auto-timestamp, or set e.g. "test_run_1"
+    cache_dir:  # leave blank to place inside the run directory
+
+  # ---- Execution parameters ----------------------------------------------
+  # batch_size and items_per_call both split the corpus, but at two different
+  # levels — they are not two names for the same thing:
+  #
+  #   dataset
+  #   └─ chunk of `batch_size` articles     SEQUENTIAL, one checkpoint each:
+  #      │                                  the chunk's result is written to
+  #      │                                  cache_dir, then `api_pause` seconds
+  #      │                                  elapse. A re-run reads a chunk
+  #      │                                  already on disk instead of paying
+  #      │                                  for it again. batch_size >= corpus
+  #      │                                  size = one shot, no checkpoints.
+  #      └─ per round, per reviewer         SEQUENTIAL
+  #         └─ call of `items_per_call`     CONCURRENT, up to
+  #            articles                     max_concurrent_requests in flight.
+  #                                         The backstory + criteria are sent
+  #                                         once per call, not once per article.
+  #
+  # So batch_size is about crash-recovery and pacing; items_per_call is about
+  # prompt cost and throughput. PITFALL: items_per_call larger than batch_size
+  # gains nothing — each chunk then collapses into a single API call and
+  # max_concurrent_requests goes unused. Keep batch_size a comfortable multiple
+  # of items_per_call (e.g. 10 per call, 200 per chunk, 10 concurrent = 20
+  # calls per chunk, 10 in flight).
+  #
+  batch_size: 100               # articles per checkpoint chunk. items_per_call100
+                                # x max_concurrent_requests (25 x 10) is the
+                                # FLOOR: the smallest chunk that fills every
+                                # concurrency slot — at 100 only 4 calls were
+                                # issued for 10 slots. It is a floor, not an
+                                # optimum: a one-wave chunk ends on its slowest
+                                # call, so 500 would run maybe a third faster
+                                # by overlapping that straggler, at the price
+                                # of losing 500 documents on a crash instead of
+                                # 250. Same token cost either way. The run warns
+                                # if this drops back below the floor.
+  api_pause: 20.0               # seconds between chunks (rate-limit guard)
+  max_retries: 2                # on API error; overridable per reviewer.
+                                # Applies to single-article calls; a failed
+                                # multi-article call is attempted once and then
+                                # split, so a large batch is never re-billed in
+                                # full for a failure the retry cannot fix.
+  max_concurrent_requests: 10    # keep 5-10 for Anthropic, up to 30 for OpenAI
+  items_per_call: 10             # articles per API call (backstory sent once).
+                                 # Measured optimum: 50 saves a further 2 %,
+                                 # 1 would cost 108 % more.
+  requests_per_minute:           # calls STARTED per minute, for the whole run.
+                                 # Leave blank to use the provider's own quota —
+                                 # Albert publishes 10/min per key and answers 429
+                                 # past it. Counted once per provider+host, so the
+                                 # three reviewers below share those ten calls,
+                                 # across both rounds and across checkpoint chunks
+                                 # — the quota is metered on the key, not on the
+                                 # reviewer. max_concurrent_requests cannot stand
+                                 # in for this: it caps how many calls are in
+                                 # flight, and 10 concurrent calls of two seconds
+                                 # spend a whole minute's quota in two seconds.
+
+  # Deferred batch: the same requests, answered within 24 h, billed at half
+  # price on input AND output. It costs nothing but latency, which a screening
+  # run does not need, so it is the largest single saving available whenever
+  # the reviewers are billed per token — larger than every prompt-side
+  # optimisation combined.
+  #
+  # It needs a provider that has such an endpoint: currently anthropic only.
+  # The reviewers below run on albert, which does not (and does not bill per
+  # token either), so this stays false; flip it together with the commented-out
+  # `provider: anthropic` / claude-haiku-4-5 lines. Turning it on with an
+  # albert reviewer is not silently ignored — the run says so and stays live.
+  #
+  # With it on, batch_size and api_pause above stop applying: the round is
+  # submitted in one go and the batch id is written to the run's cache_dir, so
+  # an interrupted run re-attaches to the work already paid for instead of
+  # resubmitting it. Requests the batch cannot answer are retried live at full
+  # price and reported.
+  use_batch_api: false
+  batch_poll_interval: 60.0     # seconds between status checks
+
+  text_inputs : [title, abstract, author_keywords]   # `keywords` matches no
+                                 # column — the canonical name is
+                                 # author_keywords, and the mismatch meant the
+                                 # keywords were silently never sent.
+
+  inclusion_criteria : The scope of the study MUST include broad social and economic analysis
+                       of solar cooking or clean cooking, from the technical system to its use
+                       within communities and territories
+
+  exclusion_criteria : 1. The scope of the study DOES NOT include
+                          solar cooking or clean cooking
+                       2. The scope of the study DOES NOT include territorial aspects
+                       3. The scope of the study DOES NOT include socioeconomic aspects
+
+  sample_size :     # Leave blank if the whole dataset must be processed. Otherwise,
+                    # size of the corresponding random sample to withdraw from the dataset
+  sample_seed :     # Seed for that draw. Blank = a new sample every run; an integer
+                    # keeps the same 50 articles, so two test runs differ by the config
+                    # change and not by the draw. `pysyrev estimate` uses it too.
+  decision_rule : majority   # majority, mean
+  workflow :    # Workflow consists in as many rounds as defined by the
+                # user. Apart the first round, all rounds apply if and only
+                # if consensus has not been reached in the previous one
+                # (whatever the decision rule selected)
+    - round : A
+      reviewers : [Reviewer#1, Reviewer#2]  # Reviewer names defined below
+
+    - round : B
+      reviewers : [Reviewer#3]
+
+  reviewers :
+    - name : Reviewer#1
+      reasoning : brief  # brief, cot (see LatteReview)
+      model_id : openai/gpt-oss-120b # claude-haiku-4-5  # Model identifier
+      host :
+      provider : albert  # values : litellm, albert, open-ai, ollama, anthropic
+      max_tokens : 500   # output budget for ONE article: the call sends
+                         # max_tokens x items_per_call for a batch. Too low and
+                         # the JSON is cut off mid-answer — the run retries with
+                         # a doubled budget and says so, but paying that on every
+                         # batch is waste. Reasoning models spend part of this
+                         # budget thinking, so give them more than a plain one.
+      temperature : 0.2  # temperature parameter is not available for all models.
+                         # Was 0.9: on a 1-5 classification that mostly buys
+                         # malformed batch responses (which are re-billed before
+                         # the split) and makes the review irreproducible.
+      reasoning_effort : low
+      max_retries :                # Leave blank to use the section-level value above.
+      max_concurrent_requests :    # Leave blank to use the section-level value above.
+      requests_per_minute :        # Leave blank to use the section-level value above.
+      backstory: Reviewer#1 is a research scientist with strong expertise
+        in Energy System Modelling for addressing issues related
+        to Energy Transition and net-zero scenarios. Reviewer#1
+        specializes in modeling and analyzing complex energy
+        systems, including renewable integration, grid optimization,
+        demand forecasting, energy policy analysis, and
+        techno-economic assessments. A major focus of Reviewer#1 is
+        literature synthesis and literature reviews — it excels at
+        identifying key themes, comparing methodologies, summarizing
+        findings, and highlighting research gaps in energy systems
+        modeling. Reviewer#1 is highly rigorous  and cautious in its
+        analysis of input texts and articles. It performs thorough and
+        contextualized evaluations of abstracts and full papers,
+        ensuring interpretations are grounded in the methodologies,
+        assumptions, and scope presented by the original authors.
+        It avoids oversimplified generalizations and remains critical
+        of speculative claims or poorly substantiated conclusions.
+      additional_context :
+
+    - name : Reviewer#2
+      reasoning : brief
+      model_id : openai/gpt-oss-120b # claude-haiku-4-5
+      host :
+      provider : albert
+      max_tokens : 500
+      temperature : 0.2
+      reasoning_effort : low
+
+      backstory: Reviewer#2 is a seasoned researcher with a PhD in social
+        sciences, specializing in social sciences for energy research.
+        Reviewer#2 is an international expert on climate change,
+        sustainability and just transition public policy issues. His
+        work all has a principal focus on achieving a sustainable and
+        just transition to a low-carbon economy, and combines a mix of
+        governance, management, policy and economics. His work is based
+        around 5 key energy justice principles, i.e. distributive, procedural,
+        restorative, recognition and cosmopolitan. His work on energy
+        justice has feature in the world’s top journals such as Nature,
+        Nature Energy, Renewable and Sustainable Energy Reviews,
+        Energy Policy, Applied Energy and many more. He has presented his
+        work on energy justice across the world, has written policy
+        documents, held conferences and contributed to project
+        development in different countries across the world.
+        It also assists with writing and reviewing research papers,
+        grant proposals, and academic presentations involving energy
+        justice. Reviewer#2 is collaborative, exploratory, and
+        methodical in its reasoning. It ensures technical accuracy while
+        maintaining a tone that invites discussion, experimentation, and
+        iteration. Reviewer#2 shares relevant methodologies and frameworks
+        but remains open to alternative approaches and creative exploration.
+        It avoids rigid judgment, encourages open-ended inquiry, and flags
+        assumptions that require clarification or validation.
+
+      additional_context :
+
+    - name : Reviewer#3
+      reasoning :
+      model_id : openai/gpt-oss-120b # gpt-4o-mini
+      host :
+      provider : albert
+      max_tokens : 1000
+      temperature : 0.2
+      reasoning_effort : medium  # Left blank on purpose: `reasoning_effort` is an
+                           # OpenAI parameter. The Anthropic Messages API has no
+                           # such field (its output_config.effort is a different
+                           # thing, and Haiku 4.5 rejects it), so this was a
+                           # no-op. Via provider: litellm it would instead turn
+                           # into a 2048-token thinking budget billed as output
+                           # — and would error against max_tokens: 200.
+      backstory: Reviewer#3 is a senior MD-PhD researcher with years of experience
+        in conducting systematic reviews in social-ecological systems,
+        Sustainability Science and decarbonisation of the economy. A major
+        focus of Reviewer#3 is literature synthesis and literature reviews —
+        it excels at identifying key themes, comparing methodologies,
+        summarizing findings, and highlighting research gaps in social-ecological
+        studies. Reviewer#3 is highly rigorous and cautious in its analysis of
+        input texts and articles. It performs thorough and contextualized
+        evaluations of abstracts and full papers, ensuring interpretations
+        are grounded in the methodologies, assumptions, and scope presented
+        by the original authors.
+      additional_context : Two PhD reviewers have already reviewed this article and
+                           disagree on how to evaluate it. You can read their evaluation above.
+
+
+# NOTE: the standalone `bib_network` stage has been removed. Bibliographic
+# coupling, co-citation and topic-connectivity networks are now computed
+# report-side from the reviewed corpus' references and rendered directly in the
+# report — see topic_report.sections.bib_network below.
+
+
+topic_model:
+  # doc_dataset: leave blank to auto-detect the most recent review run.
+  # Set an explicit path to target a specific run or an external CSV.
+  doc_dataset:  # ~/Documents/PRO/ABM_LITERATURE_REVIEW/NOTEBOOKS/merged_wos_openalex_with_abstract_no_duplicate.csv
+  export:
+    export_dir:                   # blank → <output_dir>/topic_model/
+    run_name:   # leave blank for auto-timestamp
+  # Distance : euclidean, chebyshev ; default = euclidean
+  distance: chebyshev
+
+  # ----
+
+  # ---- Coherence scorer -----------------------------
+  # Dict of 2 scorers among: c_v, c_npmi, u_mass
+  #   * 1st scorer ('ranking') is used to rank the
+  #     best configs among all configs (slower part
+  #     of the code)
+  #   * 2nd one ('purity') is used to compute
+  #     purity of the best ranked configurations
+  # Recommendation: use the quickest one for ranking,
+  # and the slowest one for computing final purity
+  # default : {'ranking' : 'u_mass', 'purity' : 'c_v'}
+#  coherence_scorer :
+#    ranking : u_mass
+#    purity : c_v
+
+  # Keep n results : keep N best results among all
+  # clustering procedures corresponding to n_neighbors,
+  # n_components, topic size, and min sample values
+  # default = 10
+  keep_n_results : 25
+
+  # ---- Desired number of topics -------------------
+  # [min, max] band, the sole knob for topic granularity: the min_topic_size grid
+  # is auto-derived from the corpus size to aim at it, and only models with a
+  # topic count in the band are kept. For ~200 docs, [5, 15] targets
+  # min_topic_size ~[13, 40].
+  desired_topics : [10, 20]
+
+# ---- HDBSCAN parameters -------------------------
+  hdbscan:
+    min_sample_range : [2, 20]
+    min_sample_step : 2
+#    cluster_selection_method : leaf
+#    metric : euclidean
+#    prediction_data : True
+
+# ---- UMAP parameters ----------------------------
+  umap:
+    n_neighbors : [5, 10, 15]
+    n_components : [5, 10, 15]
+#    metric : cosine
+#    min_dist : 0.0
+#    low_memory : False
+#    random_state : 42
+
+# ---- Bertopic parameters -------------
+# Bertopic parameters (see https://maartengr.github.io/BERTopic/index.html)
+#  bertopic:
+#    transformer_model : allenai/specter2_base
+#    n_gram_range : bigram
+#    language : english
+#    calculate_probabilities : True
+
+# ---- Berteley parameters --------------
+# Berteley preprocess (see https://github.com/lbl-camera/berteley)
+#  berteley:
+#    allow_abbrev : False
+
+# ---- CTF-IDF parameters ----------------
+#  ctfidf:
+#    bm25_weighting : True
+#    reduce_frequent_words : True
+
+# ---- Topic distribution parameters -----
+#  topic_distribution:
+#    window : 8
+#    stride : 1
+#    min_similarity : 0.1
+#    batch_size : 1000
+
+
+# =============================================================================
+# topic_report — PDF report generation (optional)
+# =============================================================================
+# When this section is present, `Pipeline.run()` generates a PDF report after
+# the topic-model stage. Leave it out to skip report generation entirely.
+#
+topic_report:
+#   # Directory where the PDF and annex files will be written.
+   export:
+     export_dir:      # blank → <output_dir>/topic_report/
+#
+#   # run_dir: leave blank to auto-detect the latest topic_model run.
+#   # run_dir: /path/to/TOPIC_MODELING/run_YYYY-MM-DD_HH-MM-SS/
+#
+#   # ---- PDF metadata (defaults shown) -------------------------------------
+#   meta:
+#     title:       Bibliographic report — Pysyrev
+#     subtitle:
+#     author:      Report generated with the pysyrev engine (v0.1)
+#     date_format: "%d/%m/%Y"
+#     version:     1.0.0
+#     summary: >
+#       This document has been automatically generated.
+#
+#   # ---- Section parameters ------------------------------------------------
+   sections:
+     topics:
+       n_repr_docs_per_topic: 5
+     # Coupling + co-citation + connectivity panels. Rendered automatically
+     # whenever the reviewed corpus carries references (no enable flag). All
+     # values below are the defaults — comment the whole block to use them.
+     bib_network:
+       coupling:                # document × document (Salton + Leiden, coloured by topic)
+         resolution_range: [0.4, 1.2]  # sweep and keep the partition with the best modularity
+         resolution_step: 0.1
+         min_size: 5            # communities smaller than this fall into the uncoupled tail
+         backbone_k: 3          # draw only each node's k strongest couplings
+         color_by: community    # topic | community
+       cocitation:              # reference × reference (Salton + Leiden)
+         min_ref_freq: 2        # keep references cited by at least this many documents
+         resolution_range: [0.4, 1.2]
+         resolution_step: 0.1
+         min_size: 5
+         backbone_k: 3
+         color_by: community    # topic | community
+         metadata:               # resolve the reference nodes to real works — without it the
+                                 # clusters cannot be named (they are extra-corpus works the
+                                 # corpus knows nothing about). Omit the block to skip the step.
+           provider: openalex    # openalex (default; the only backend today)
+           api_key: ${OPENALEX_API_KEY}
+           email: ${OPENALEX_EMAIL}   # polite pool (optional, recommended)
+           cache: cache/reference_metadata.csv  # persists across runs (default: none)
+           include_abstracts: false    # richer TF-IDF terms, much larger payload/cache (default: false)
+       connectivity:            # mean coupling between groups (both topic AND community panels are rendered)
+         scale: 1000            # rescales the tiny coupling values for readability
+#     temporal:
+#       variants: [trajectory, absolute, normalized, weighted]
+#       smoothing_window: 3   # years of the centred rolling mean beside the per-year curves (1 = raw only)
+#     topic_characteristics:
+#       n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
+#       n_top_cited_global: 50     # N most-cited papers globally used for topic distribution
+     topic_similarity:
+       clustering: false
+       dendrogram: false
+     paper_selection:
+       min_year: 2020
+       # Global reading budget, shared over the topics by eligible pool size; reviews
+       # spend it too, so it is the number of papers actually read. Uncomment to use
+       # it instead of proportion_per_topic below.
+       budget: 50
+       allocation: sqrt        # sqrt = big topic gets more, gap compressed | linear
+       min_per_topic: 2        # floor, honoured even past budget
+       max_per_topic:          # ceiling; blank = the topic's own pool
+#       proportion_per_topic: 0.1   # ignored once budget is set
+       selection_by: composite          # citations | random | coupling | co_citation | composite
+       # composite = three-axis indicator (coupling centrality + citation
+       # relevance + thematic representativeness), ranked per topic. Tune it here:
+       composite:
+         aggregate: chebyshev          # mean | gmean | chebyshev
+         relevance_mode: cpy    # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+         split_current_year: true  # current-year "research fronts" (2-axis) shown in a separate table
+         #   weights: [1, 1, 1]       # (centrality, representativeness, relevance); omit for equal
+         #   drop_current_year: true  # drop the incomplete current year from the cit/yr denominator
+         #   current_year:            # reference year; blank = latest year in the corpus
+       # Reviews are added beside the ranking above, then ranked and capped on their own:
+       review:
+         enabled: true
+         detect: type_or_title         # type (document_type) | title | type_or_title
+         max_reviews_per_topic: 3      # historical cohort, best-first
+         relevance_mode: cpy           # blend (cit/yr + raw citations) | cpy (cit/yr alone)
+         recent_years: 1               # reviews this recent bypass the ranking (0 = no cohort)
+         max_recent_reviews: 2         # that cohort's own cap, newest first
+       export_annex: true
+       annex_format: csv
+
+
+# =============================================================================
+# llm — LLM topic labelling (optional)
+# =============================================================================
+# When present, an LLM generates a human-readable label for each topic.
+# Remove or comment out this block to skip LLM labelling.
+#
+llm:
+   provider:   albert
+   model_id:  openai/gpt-oss-120b
+   host:
+   max_tokens: 1000
+   temperature: 0.3
+   n_repr_docs_for_labeling: 10
