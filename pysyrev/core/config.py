@@ -93,6 +93,12 @@ def _instantiate(cls, block: dict):
             f"{', '.join(_dotted(k) for k in missing)}",
             path=_dotted())
 
+    # A key written but left blank (`reasoning:`) reads as None in YAML, which
+    # would override the field's default rather than fall back to it. Blank
+    # means "use the default", as the template's comments promise.
+    optional = {f.name for f in fields(cls) if not _is_mandatory(f)}
+    block = {k: v for k, v in block.items() if not (v is None and k in optional)}
+
     return cls(**block)
 
 

@@ -117,3 +117,32 @@ class TestLegacyExportTo:
             """)))
         assert config.topic_report.export.export_dir == f"{tmp_path}/report"
         assert "deprecated" in capsys.readouterr().out
+
+
+class TestABlankKeyFallsBackToItsDefault:
+    """`key:` with no value is YAML for None — it must not erase the default."""
+
+    def test_blank_reasoning_is_brief(self, tmp_path):
+        config = Config.load(_write(tmp_path, """
+            review:
+              export: {export_dir: /tmp/x}
+              text_inputs: [title]
+              inclusion_criteria: a
+              exclusion_criteria: b
+              batch_size:
+              reviewers:
+                - {name: R1, model_id: m, provider: albert, backstory: s, reasoning: }
+              workflow:
+                - {round: A, reviewers: [R1]}
+            """))
+        assert config.review.reviewers[0].reasoning == "brief"
+        assert config.review.batch_size == 100
+
+    def test_blank_extract_year_is_the_default_floor(self, tmp_path):
+        config = Config.load(_write(tmp_path, f"""
+            bib:
+              open_alex: {tmp_path}/corpus.csv
+              extract:
+                year:
+            """))
+        assert config.bib.extract.year == 1900
