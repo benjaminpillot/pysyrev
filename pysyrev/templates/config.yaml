@@ -460,7 +460,6 @@ topic_model:
 #   # run_dir:              # blank → auto-detect the latest topic_model run
 #
 #   # ---- PDF metadata (defaults shown) -------------------------------------
-#   # meta4 rue du puits vieux 34110 Vic la Gardiole:
 #   #   title: Bibliographic report — Pysyrev
 #   #   subtitle:
 #   #   author: Report generated with the pysyrev engine (v0.1)
