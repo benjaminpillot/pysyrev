@@ -1,6 +1,6 @@
 # Path to the .env file. Loaded at the very top of Config.load, so any
 # ${VAR} reference further down in this file is resolved against it.
-env: /home/benjaminpillot/Documents/PRO/ENERGY_TRANSITION_&_JUSTICE_MODEL/.env
+env: /home/benjaminpillot/Documents/PRO/SOLAR_COOKING/.env
 
 # Optional but recommended: one root folder for every result of the project.
 # Each section then exports to <output_dir>/<section>/ (bib/, review/,
@@ -54,6 +54,9 @@ bib:
       # queries are unioned into the pool. Prune or extend once you see what
       # they drag in.
       queries:
+        - solar cooking
+        - solar cooker
+        - clean cooking
       year_min: 2010                                          # aligns with extract.year below
       year_max: 2030
       use_forward: true                                       # papers citing the seeds
@@ -396,7 +399,7 @@ topic_model:
   # is auto-derived from the corpus size to aim at it, and only models with a
   # topic count in the band are kept. For ~200 docs, [5, 15] targets
   # min_topic_size ~[13, 40].
-  desired_topics : [10, 20]
+  desired_topics : [5, 15]
 
 # ---- HDBSCAN parameters -------------------------
   hdbscan:
@@ -506,7 +509,7 @@ topic_report:
        clustering: false
        dendrogram: false
      paper_selection:
-       min_year: 2020
+       min_year: 2015
        # Global reading budget, shared over the topics by eligible pool size; reviews
        # spend it too, so it is the number of papers actually read. Uncomment to use
        # it instead of proportion_per_topic below.
