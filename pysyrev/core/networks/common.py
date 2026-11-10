@@ -75,6 +75,7 @@ class NetworkResult:
     node_meta:  dict = field(default_factory=dict)   # {node_id: metadata} — see references.fetch_reference_metadata
     resolution: Optional[float] = None               # Leiden resolution actually used
     resolution_sweep: Optional[list] = None          # [(resolution, modularity, n_communities)]
+    counts:     Optional[np.ndarray] = None          # raw co-occurrence counts behind W, when W is normalised (collaboration)
 
     @property
     def n_nodes(self) -> int:

@@ -504,3 +504,34 @@ def test_actors_network_sized_by_config():
         ActorsSectionConfig(network={"size_by": "h_index"})
     with pytest.raises(ValueError):
         ActorsSectionConfig(network={"size_range": [40, 5]})
+
+
+def test_build_collaboration_keeps_raw_counts():
+    res = build_collaboration(_corpus(), "author", min_papers=1, min_size=1)
+    i = {k: n for n, k in enumerate(res.node_ids)}
+    assert res.counts[i["orcid:a"], i["orcid:b"]] == 1
+    assert res.W[i["orcid:a"], i["orcid:b"]] == pytest.approx(1 / np.sqrt(3 * 2))
+
+
+def test_sqrt_edge_widths_follow_values_not_weights():
+    from pysyrev.core.networks.plotting import _edge_traces, _EDGE_LEVELS
+    coords = np.zeros((3, 2))
+    bb = [(0, 1, 0.9), (1, 2, 0.1)]                # strong relative tie, weak one
+    counts = np.array([[0, 1, 0], [1, 0, 100], [0, 100, 0]], dtype=float)
+    traces = _edge_traces(coords, bb, values=counts, scale="sqrt", width_range=(0.5, 6.0))
+    widths = sorted(t.line.width for t in traces)
+    assert widths[-1] == pytest.approx(6.0)        # the 100-paper link is the thickest
+    assert widths[0] == pytest.approx(0.5 + 5.5 * round(0.1 * (_EDGE_LEVELS - 1)) / (_EDGE_LEVELS - 1))
+    # The tertile default is unchanged: three fixed widths at most.
+    assert {t.line.width for t in _edge_traces(coords, bb)} <= {0.6, 1.3, 2.2}
+
+
+def test_actors_edge_width_config():
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.report.sections.actors import _build_actors_section
+    cfg = ActorsSectionConfig(levels=["author"], network={"min_papers": 1, "min_size": 1})
+    fig = _blocks_of(_build_actors_section(_corpus(), cfg, None, 1), "plotly")[0]
+    assert "papers co-signed" in fig["caption"]
+    for bad in ({"edge_width_by": "jaccard"}, {"edge_width_range": [3, 1]}):
+        with pytest.raises(ValueError):
+            ActorsSectionConfig(network=bad)

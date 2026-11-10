@@ -151,6 +151,36 @@ def collaboration_matrix(df: pd.DataFrame, level: str, min_papers: int = 2,
     """
     if normalize not in ("count", "salton", "association"):
         raise ValueError(f"normalize must be count|salton|association, got {normalize!r}")
+    keys, C, p = cooccurrence_counts(df, level, min_papers=min_papers,
+                                     max_nodes=max_nodes, col=col)
+    return keys, normalize_cooccurrence(C, p, normalize), p
+
+
+def normalize_cooccurrence(C: np.ndarray, papers: np.ndarray,
+                           normalize: str = "salton") -> np.ndarray:
+    """Normalise a raw co-occurrence matrix — see :func:`collaboration_matrix`."""
+    C = np.array(C, dtype=float)
+    p = np.asarray(papers, dtype=float)
+    if C.size == 0:
+        return C
+    if normalize == "salton":
+        C = C / np.sqrt(np.outer(p, p))
+    elif normalize == "association":
+        C = C / np.outer(p, p)
+        nz = C[C > 0]
+        if nz.size:
+            C = C / nz.mean()
+    np.fill_diagonal(C, 0.0)
+    return C
+
+
+def cooccurrence_counts(df: pd.DataFrame, level: str, min_papers: int = 2,
+                        max_nodes: Optional[int] = 300, col: str = ACTORS):
+    """Raw actor × actor co-occurrence: ``C[i, j]`` = papers *i* and *j* share.
+
+    Same node selection as :func:`collaboration_matrix`; returns
+    ``(keys, C, papers)``.
+    """
     long = actor_frame(df, level, col=col)
     if long.empty:
         return [], np.zeros((0, 0)), np.zeros(0)
@@ -168,16 +198,7 @@ def collaboration_matrix(df: pd.DataFrame, level: str, min_papers: int = 2,
             for b in range(a + 1, len(idx)):
                 C[idx[a], idx[b]] += 1
                 C[idx[b], idx[a]] += 1
-    p = papers.to_numpy(dtype=float)
-    if normalize == "salton":
-        C = C / np.sqrt(np.outer(p, p))
-    elif normalize == "association":
-        C = C / np.outer(p, p)
-        nz = C[C > 0]
-        if nz.size:
-            C = C / nz.mean()
-    np.fill_diagonal(C, 0.0)
-    return keys, C, p
+    return keys, C, papers.to_numpy(dtype=float)
 
 
 def build_collaboration(df: pd.DataFrame, level: str, min_papers: int = 2,
@@ -193,11 +214,14 @@ def build_collaboration(df: pd.DataFrame, level: str, min_papers: int = 2,
     the best of a *resolution_range* sweep) → force layout on the same ``W``.
     ``node_meta[key]`` carries ``name``, ``papers``, ``fractional``,
     ``citations`` (and ``country`` for institutions), so the plot hover and
-    the report tables need nothing else.
+    the report tables need nothing else; ``counts`` holds the raw number of
+    co-signed papers behind each normalised link of ``W``.
     """
-    keys, W, _ = collaboration_matrix(df, level, min_papers=min_papers,
-                                      max_nodes=max_nodes, normalize=normalize,
-                                      col=col)
+    if normalize not in ("count", "salton", "association"):
+        raise ValueError(f"normalize must be count|salton|association, got {normalize!r}")
+    keys, counts, papers = cooccurrence_counts(df, level, min_papers=min_papers,
+                                               max_nodes=max_nodes, col=col)
+    W = normalize_cooccurrence(counts, papers, normalize)
     if len(keys) < 2:
         raise ValueError(f"{level} collaboration network needs at least 2 actors "
                          f"with >= {min_papers} papers (found {len(keys)})")
@@ -216,7 +240,8 @@ def build_collaboration(df: pd.DataFrame, level: str, min_papers: int = 2,
     node_meta = {k: ranking.loc[k, meta_cols].to_dict() for k in keys if k in ranking.index}
     return NetworkResult(node_ids=keys, W=W, labels=labels, coords=coords,
                          modularity=modularity, node_meta=node_meta,
-                         resolution=resolution, resolution_sweep=sweep)
+                         resolution=resolution, resolution_sweep=sweep,
+                         counts=counts)
 
 
 def collaboration_summary(df: pd.DataFrame, col: str = ACTORS) -> dict:

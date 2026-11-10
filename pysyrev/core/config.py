@@ -974,9 +974,21 @@ class ActorNetworkConfig(ConfigField):
     # value reads twice as big: "citations" | "papers" | "fractional".
     size_by:          str   = "citations"
     size_range:       List[float] = field(default_factory=lambda: [5.0, 45.0])  # [min, max] diameter, px
+    # What edge width shows — width proportional to its square root:
+    # "count" (raw co-signed papers: volume) | "weight" (the normalised link,
+    # as used for layout and communities: relative intensity).
+    edge_width_by:    str   = "count"
+    edge_width_range: List[float] = field(default_factory=lambda: [0.5, 6.0])  # [min, max] width, px
 
     def __post_init__(self):
         super().__post_init__()
+        if self.edge_width_by not in ("count", "weight"):
+            raise ValueError("actors.network.edge_width_by must be 'count' or "
+                             f"'weight', got {self.edge_width_by!r}")
+        if (len(self.edge_width_range) != 2
+                or not 0 < self.edge_width_range[0] < self.edge_width_range[1]):
+            raise ValueError("actors.network.edge_width_range must be [min, max] "
+                             "with 0 < min < max")
         if self.size_by not in ("citations", "papers", "fractional"):
             raise ValueError("actors.network.size_by must be 'citations', 'papers' "
                              f"or 'fractional', got {self.size_by!r}")

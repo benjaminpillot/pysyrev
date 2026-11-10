@@ -28,6 +28,8 @@ _PALETTE = [
 ]
 _TAIL_COLOR = "#D6D6D6"
 _EDGE_COLOR = "#CFCFCF"
+# Continuous edge scale: a mid grey, so the opacity ramp has room to show.
+_EDGE_COLOR_STRONG = "#8A8A8A"
 
 
 def _node_sizes(W: np.ndarray, size_min: float = 6.0, size_max: float = 22.0,
@@ -48,12 +50,46 @@ def _node_sizes(W: np.ndarray, size_min: float = 6.0, size_max: float = 22.0,
     return size_min + (size_max - size_min) * (lv / lmax) ** exponent
 
 
-def _edge_traces(coords, bb):
-    """Backbone edges as up to three width buckets (thicker = stronger)."""
+_EDGE_LEVELS = 8   # width steps of the continuous edge scale (one trace each)
+
+
+def _edge_traces(coords, bb, values: Optional[np.ndarray] = None,
+                 scale: str = "tertile", width_range: tuple = (0.5, 6.0)):
+    """Backbone edges, thicker = stronger.
+
+    ``scale="tertile"`` (default): three widths by tertile of the backbone
+    weights — a rank, not a magnitude. ``scale="sqrt"``: width proportional
+    to ``sqrt(value)`` over *width_range*, where *values* (a matrix aligned to
+    ``W``, e.g. raw co-signed paper counts) replaces the edge weight; widths
+    are binned into :data:`_EDGE_LEVELS` steps, opacity rising with width so
+    strong links stand out of the mesh.
+    """
     import plotly.graph_objects as go
 
     if not bb:
         return []
+    if scale == "sqrt":
+        v = np.array([float(values[a, b]) if values is not None else w for a, b, w in bb])
+        v = np.sqrt(np.clip(v, 0, None))
+        frac = v / (v.max() or 1.0)
+        levels = np.rint(frac * (_EDGE_LEVELS - 1)).astype(int)
+        lo, hi = width_range
+        traces = []
+        for lvl in range(_EDGE_LEVELS):
+            pairs = [(a, b) for (a, b, _), l in zip(bb, levels) if l == lvl]
+            if not pairs:
+                continue
+            t = lvl / (_EDGE_LEVELS - 1)
+            ex, ey = [], []
+            for a, b in pairs:
+                ex += [coords[a, 0], coords[b, 0], None]
+                ey += [coords[a, 1], coords[b, 1], None]
+            traces.append(go.Scatter(
+                x=ex, y=ey, mode="lines",
+                line=dict(width=lo + (hi - lo) * t, color=_EDGE_COLOR_STRONG),
+                opacity=0.25 + 0.45 * t, hoverinfo="none", showlegend=False,
+            ))
+        return traces
     weights = np.array([w for _, _, w in bb])
     # Tertile thresholds → 3 width levels; degenerate cases collapse gracefully.
     qs = np.quantile(weights, [1 / 3, 2 / 3]) if len(weights) >= 3 else [weights.max()] * 2
@@ -88,7 +124,10 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  size_by: Optional[np.ndarray] = None,
                  node_text: Optional[List[str]] = None,
                  size_scale: str = "log",
-                 size_range: tuple = (6.0, 22.0)):
+                 size_range: tuple = (6.0, 22.0),
+                 edge_values: Optional[np.ndarray] = None,
+                 edge_scale: str = "tertile",
+                 edge_width_range: tuple = (0.5, 6.0)):
     """Build a Plotly figure of a network: backbone edges under nodes.
 
     Two colouring modes:
@@ -107,7 +146,11 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     the size driver; ``node_text`` (row-aligned, ``""`` for none) writes a label
     beside the nodes that carry one. ``size_scale`` (``"log"`` | ``"sqrt"``,
     area-proportional) and ``size_range`` (min, max diameter in px) set how
-    those values map to marker size — see :func:`_node_sizes`.
+    those values map to marker size — see :func:`_node_sizes`. Edges likewise:
+    ``edge_scale`` (``"tertile"`` | ``"sqrt"``), ``edge_values`` (a matrix
+    aligned to *W* whose entries drive the width instead of *W*'s, e.g. raw
+    co-signed paper counts) and ``edge_width_range`` — see :func:`_edge_traces`.
+    Which edges are drawn (the backbone) is always decided on *W*.
 
     Returns a ``plotly.graph_objects.Figure`` — ready for the report's ``plotly``
     block (static PNG in the PDF + interactive HTML export).
@@ -121,7 +164,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                         values=size_by, scale=size_scale)
     hover = hover_text if hover_text is not None else [f"node {i}" for i in range(n)]
 
-    data = list(_edge_traces(coords, backbone_edges(W, labels, k=k)))
+    data = list(_edge_traces(coords, backbone_edges(W, labels, k=k),
+                             values=edge_values, scale=edge_scale,
+                             width_range=edge_width_range))
 
     def _marker_trace(idx, color, name):
         return go.Scatter(

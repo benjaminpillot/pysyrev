@@ -36,6 +36,12 @@ _SIZE_TEXT = {
 }
 
 
+_EDGE_TEXT = {
+    "count":  "the number of papers co-signed",
+    "weight": "the {norm}-normalised link strength",
+}
+
+
 def _pct(x) -> str:
     return "-" if pd.isna(x) else f"{x:.0%}"
 
@@ -163,7 +169,9 @@ def _network_blocks(df, level, cfg, export_to):
             f"Community: {'C%d' % comm if comm >= 0 else 'tail'}")
     fig = plot_network(result.coords, result.labels, result.W, k=net.backbone_k,
                        hover_text=hover, size_by=size, node_text=node_text,
-                       size_scale="sqrt", size_range=tuple(net.size_range))
+                       size_scale="sqrt", size_range=tuple(net.size_range),
+                       edge_values=(result.counts if net.edge_width_by == "count" else None),
+                       edge_scale="sqrt", edge_width_range=tuple(net.edge_width_range))
 
     connected = int((result.W.sum(axis=1) > 0).sum())
     kv = [
@@ -196,11 +204,14 @@ def _network_blocks(df, level, cfg, export_to):
     title = f"{_LEVEL_TITLES[level]} collaboration"
     blocks.append({
         "type": "plotly", "figure": fig, "filename_prefix": f"actors_{level}_network",
-        "caption": (f"Two {_PLURAL[level]} are linked when they sign papers together "
-                    f"({net.normalize} normalisation); colour is the Leiden community, "
-                    f"node area is proportional to {_SIZE_TEXT[net.size_by]}, and the "
-                    f"{net.n_labels} largest are named. *Papers summed over members: a "
-                    f"co-signed paper counts once per member."),
+        "caption": (f"Two {_PLURAL[level]} are linked when they sign papers together; "
+                    f"layout, communities and the {net.backbone_k} links drawn per node "
+                    f"follow the {net.normalize}-normalised link strength. Colour is the "
+                    f"Leiden community, node area is proportional to "
+                    f"{_SIZE_TEXT[net.size_by]} (the {net.n_labels} largest are named), "
+                    f"and edge width grows with the square root of "
+                    f"{_EDGE_TEXT[net.edge_width_by].format(norm=net.normalize)}. "
+                    f"*Papers summed over members: a co-signed paper counts once per member."),
     })
     html = _export_network_html(fig, export_to, title)
     if html is not None:

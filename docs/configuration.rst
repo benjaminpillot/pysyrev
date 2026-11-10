@@ -1446,6 +1446,25 @@ not here.
 
             Smallest and largest marker diameter, in pixels.
 
+         ``network.edge_width_by``
+            :Type: ``str``
+            :Default: ``count``
+            :Values: ``count``, ``weight``
+
+            What edge width shows, width proportional to its square root.
+            ``count`` is the raw number of co-signed papers — the volume of a
+            collaboration; ``weight`` is the normalised link (see
+            ``normalize``) — its intensity relative to the two actors' output,
+            which makes a tie between two small actors as thick as one between
+            two large ones.  Either way, layout, communities and *which* links
+            are drawn (``backbone_k``) follow the normalised weight.
+
+         ``network.edge_width_range``
+            :Type: ``[float, float]``
+            :Default: ``[0.5, 6.0]``
+
+            Thinnest and thickest edge, in pixels.
+
    ``sections.temporal``
 
       ``temporal.variants``
