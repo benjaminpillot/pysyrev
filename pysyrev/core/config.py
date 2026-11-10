@@ -969,10 +969,20 @@ class ActorNetworkConfig(ConfigField):
     resolution_step:  float = 0.1
     min_size:         int   = 3          # communities smaller than this → tail
     backbone_k:       int   = 3          # draw only each node's k strongest links
-    n_labels:         int   = 15         # name the n most productive nodes on the graph
+    n_labels:         int   = 15         # name the n largest nodes on the graph
+    # What node size shows — marker *area* proportional to it, so twice the
+    # value reads twice as big: "citations" | "papers" | "fractional".
+    size_by:          str   = "citations"
+    size_range:       List[float] = field(default_factory=lambda: [5.0, 45.0])  # [min, max] diameter, px
 
     def __post_init__(self):
         super().__post_init__()
+        if self.size_by not in ("citations", "papers", "fractional"):
+            raise ValueError("actors.network.size_by must be 'citations', 'papers' "
+                             f"or 'fractional', got {self.size_by!r}")
+        if len(self.size_range) != 2 or not 0 < self.size_range[0] < self.size_range[1]:
+            raise ValueError("actors.network.size_range must be [min, max] with "
+                             "0 < min < max")
         if self.normalize not in ("salton", "association", "count"):
             raise ValueError("actors.network.normalize must be 'salton', "
                              f"'association' or 'count', got {self.normalize!r}")

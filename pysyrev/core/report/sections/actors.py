@@ -29,6 +29,13 @@ _SORT_TEXT = {
 }
 
 
+_SIZE_TEXT = {
+    "citations":  "the citations its papers received",
+    "papers":     "its number of papers",
+    "fractional": "its fractional paper count",
+}
+
+
 def _pct(x) -> str:
     return "-" if pd.isna(x) else f"{x:.0%}"
 
@@ -139,8 +146,10 @@ def _network_blocks(df, level, cfg, export_to):
 
     meta = result.node_meta
     papers = np.array([float(meta.get(k, {}).get("papers", 0) or 0) for k in result.node_ids])
+    size = np.array([float(meta.get(k, {}).get(net.size_by, 0) or 0) for k in result.node_ids])
     names = [str(meta.get(k, {}).get("name") or k) for k in result.node_ids]
-    top = set(np.argsort(-papers)[:net.n_labels].tolist())
+    # Name the largest nodes — the ones the eye goes to first.
+    top = set(np.argsort(-size)[:net.n_labels].tolist())
     node_text = [names[i][:28] if i in top else "" for i in range(result.n_nodes)]
     hover = []
     for i, k in enumerate(result.node_ids):
@@ -153,7 +162,8 @@ def _network_blocks(df, level, cfg, export_to):
             f"Citations: {int(m.get('citations') or 0)}<br>"
             f"Community: {'C%d' % comm if comm >= 0 else 'tail'}")
     fig = plot_network(result.coords, result.labels, result.W, k=net.backbone_k,
-                       hover_text=hover, size_by=papers, node_text=node_text)
+                       hover_text=hover, size_by=size, node_text=node_text,
+                       size_scale="sqrt", size_range=tuple(net.size_range))
 
     connected = int((result.W.sum(axis=1) > 0).sum())
     kv = [
@@ -188,9 +198,9 @@ def _network_blocks(df, level, cfg, export_to):
         "type": "plotly", "figure": fig, "filename_prefix": f"actors_{level}_network",
         "caption": (f"Two {_PLURAL[level]} are linked when they sign papers together "
                     f"({net.normalize} normalisation); colour is the Leiden community, "
-                    f"node size the number of papers, and the {net.n_labels} most "
-                    f"productive are named. *Papers summed over members: a co-signed "
-                    f"paper counts once per member."),
+                    f"node area is proportional to {_SIZE_TEXT[net.size_by]}, and the "
+                    f"{net.n_labels} largest are named. *Papers summed over members: a "
+                    f"co-signed paper counts once per member."),
     })
     html = _export_network_html(fig, export_to, title)
     if html is not None:

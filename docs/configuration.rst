@@ -1430,7 +1430,21 @@ not here.
             :Type: ``int``
             :Default: ``15``
 
-            The *n* most productive actors are named on the graph.
+            The *n* largest nodes (by ``size_by``) are named on the graph.
+
+         ``network.size_by``
+            :Type: ``str``
+            :Default: ``citations``
+            :Values: ``citations``, ``papers``, ``fractional``
+
+            What node size shows.  The marker *area* is proportional to it, so
+            an actor with twice the citations reads twice as big.
+
+         ``network.size_range``
+            :Type: ``[float, float]``
+            :Default: ``[5.0, 45.0]``
+
+            Smallest and largest marker diameter, in pixels.
 
    ``sections.temporal``
 

@@ -31,11 +31,19 @@ _EDGE_COLOR = "#CFCFCF"
 
 
 def _node_sizes(W: np.ndarray, size_min: float = 6.0, size_max: float = 22.0,
-                exponent: float = 1.0, values: Optional[np.ndarray] = None) -> np.ndarray:
-    """Marker sizes from *values* (default: weighted degree, i.e. coupling
-    strength), log-scaled."""
-    strength = np.asarray(W).sum(axis=1) if values is None else np.asarray(values, dtype=float)
-    lv = np.log1p(strength)
+                exponent: float = 1.0, values: Optional[np.ndarray] = None,
+                scale: str = "log") -> np.ndarray:
+    """Marker diameters from *values* (default: weighted degree, i.e. coupling
+    strength).
+
+    ``scale="log"`` compresses the range (log1p) — right for a strength whose
+    tail would otherwise dwarf everything. ``scale="sqrt"`` makes the marker
+    *area* proportional to the value, so a node with twice the papers or
+    citations reads twice as big — right for counts the reader compares.
+    """
+    v = np.asarray(W).sum(axis=1) if values is None else np.asarray(values, dtype=float)
+    v = np.clip(np.nan_to_num(v), 0, None)
+    lv = np.sqrt(v) if scale == "sqrt" else np.log1p(v)
     lmax = float(lv.max()) or 1.0
     return size_min + (size_max - size_min) * (lv / lmax) ** exponent
 
@@ -78,7 +86,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  hover_text: Optional[List[str]] = None,
                  width: int = 900, height: int = 650,
                  size_by: Optional[np.ndarray] = None,
-                 node_text: Optional[List[str]] = None):
+                 node_text: Optional[List[str]] = None,
+                 size_scale: str = "log",
+                 size_range: tuple = (6.0, 22.0)):
     """Build a Plotly figure of a network: backbone edges under nodes.
 
     Two colouring modes:
@@ -95,7 +105,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     (row-aligned to *coords*) sets per-node hover; ``seed_mask`` rings seed nodes.
     ``size_by`` (row-aligned values, e.g. paper counts) replaces the strength as
     the size driver; ``node_text`` (row-aligned, ``""`` for none) writes a label
-    beside the nodes that carry one.
+    beside the nodes that carry one. ``size_scale`` (``"log"`` | ``"sqrt"``,
+    area-proportional) and ``size_range`` (min, max diameter in px) set how
+    those values map to marker size — see :func:`_node_sizes`.
 
     Returns a ``plotly.graph_objects.Figure`` — ready for the report's ``plotly``
     block (static PNG in the PDF + interactive HTML export).
@@ -105,7 +117,8 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     labels = np.asarray(labels)
     coords = np.asarray(coords)
     n = len(labels)
-    sizes = _node_sizes(W, values=size_by)
+    sizes = _node_sizes(W, size_min=size_range[0], size_max=size_range[1],
+                        values=size_by, scale=size_scale)
     hover = hover_text if hover_text is not None else [f"node {i}" for i in range(n)]
 
     data = list(_edge_traces(coords, backbone_edges(W, labels, k=k)))

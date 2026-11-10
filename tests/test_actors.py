@@ -482,3 +482,25 @@ def test_plot_network_size_by_and_node_text():
     assert len(texts) == 1 and list(texts[0].text) == ["B", "C"]
     sizes = [s for t in fig.data if t.mode == "markers" for s in t.marker.size]
     assert sizes == sorted(sizes)          # driven by size_by, not by degree
+
+
+def test_sqrt_node_sizes_are_area_proportional():
+    from pysyrev.core.networks.plotting import _node_sizes
+    d = _node_sizes(None, size_min=0.0, size_max=40.0,
+                    values=np.array([100.0, 400.0]), scale="sqrt")
+    assert d[1] == pytest.approx(40.0) and d[0] == pytest.approx(20.0)  # 4x value → 4x area
+    # The log scale (coupling default) is unchanged.
+    assert _node_sizes(np.ones((2, 2)))[0] == pytest.approx(22.0)
+
+
+def test_actors_network_sized_by_config():
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.report.sections.actors import _build_actors_section
+    cfg = ActorsSectionConfig(levels=["author"],
+                              network={"min_papers": 1, "min_size": 1, "size_by": "papers"})
+    fig = _blocks_of(_build_actors_section(_corpus(), cfg, None, 1), "plotly")[0]
+    assert "number of papers" in fig["caption"]
+    with pytest.raises(ValueError):
+        ActorsSectionConfig(network={"size_by": "h_index"})
+    with pytest.raises(ValueError):
+        ActorsSectionConfig(network={"size_range": [40, 5]})
