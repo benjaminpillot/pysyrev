@@ -24,6 +24,7 @@ from pysyrev.core.networks.common import (
     leiden_communities,
     reference_sets,
     resolution_grid,
+    salton_counts,
 )
 
 
@@ -114,4 +115,6 @@ def build_coupling(df, ref_col: str = REFS, resolution: float = 0.5,
     return NetworkResult(node_ids=node_ids, W=W, labels=labels,
                          coords=coords, modularity=modularity,
                          resolution=resolution, resolution_sweep=sweep,
-                         terms=terms)
+                         terms=terms,
+                         # shared references behind each Salton link
+                         counts=salton_counts(W, [len(r) for r in refsets]))

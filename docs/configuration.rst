@@ -1315,6 +1315,26 @@ not here.
                :Type: ``bool``
                :Default: ``false``
 
+      ``coupling.edge_scale`` / ``cocitation.edge_scale``
+         :Type: ``str``
+         :Default: ``tertile``
+         :Values: ``tertile``, ``linear``
+
+         How edge width shows the normalised link strength.  ``tertile`` draws
+         three widths by rank among the drawn edges; ``linear`` makes the width
+         proportional to the strength, so a link twice as strong is twice as
+         thick.  The width always shows the *normalised* strength: raw shared
+         references would favour reference-rich reviews, raw co-citation
+         counts any two widely cited classics.  The raw count — shared
+         references for coupling, documents citing both references for
+         co-citation — is in each edge's hover, in the interactive HTML.
+
+      ``coupling.edge_width_range`` / ``cocitation.edge_width_range``
+         :Type: ``[float, float]``
+         :Default: ``[0.4, 3.5]``
+
+         Thinnest and thickest edge, in pixels (``linear`` scale only).
+
       ``bib_network.connectivity``
 
          Inter-community and inter-topic connectivity matrices.  Each block is

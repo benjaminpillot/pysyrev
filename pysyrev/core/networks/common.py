@@ -75,7 +75,7 @@ class NetworkResult:
     node_meta:  dict = field(default_factory=dict)   # {node_id: metadata} — see references.fetch_reference_metadata
     resolution: Optional[float] = None               # Leiden resolution actually used
     resolution_sweep: Optional[list] = None          # [(resolution, modularity, n_communities)]
-    counts:     Optional[np.ndarray] = None          # raw co-occurrence counts behind W, when W is normalised (collaboration)
+    counts:     Optional[np.ndarray] = None          # raw co-occurrence counts behind the normalised W (shared refs / co-citing docs / co-signed papers)
 
     @property
     def n_nodes(self) -> int:
@@ -91,6 +91,20 @@ class NetworkResult:
         # top-level import here would be circular.
         from pysyrev.core.networks.plotting import plot_network
         return plot_network(self.coords, self.labels, self.W, **kwargs)
+
+
+def salton_counts(W: np.ndarray, sizes: Sequence[float]) -> np.ndarray:
+    """The raw co-occurrence counts behind a Salton-normalised matrix.
+
+    ``W[i,j] = c_ij / sqrt(s_i s_j)`` — so ``c_ij = W[i,j] * sqrt(s_i s_j)``,
+    an integer up to float error (rounded here). *sizes* are the ``s_i``
+    (reference-list lengths for coupling, citation frequencies for
+    co-citation).
+    """
+    s = np.asarray(sizes, dtype=float)
+    if np.asarray(W).size == 0:
+        return np.zeros_like(W, dtype=float)
+    return np.rint(np.asarray(W) * np.sqrt(np.outer(s, s)))
 
 
 # ---------------------------------------------------------------------------

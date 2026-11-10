@@ -841,14 +841,37 @@ class TopicsSectionConfig(ConfigField):
     n_repr_docs_per_topic: int = 5
 
 
+def _check_edge_style(cfg, where: str) -> None:
+    """Validate a panel's ``edge_scale`` / ``edge_width_range``."""
+    if cfg.edge_scale not in ("tertile", "linear"):
+        raise ValueError(f"{where}.edge_scale must be 'tertile' or 'linear', "
+                         f"got {cfg.edge_scale!r}")
+    r = cfg.edge_width_range
+    if len(r) != 2 or not 0 < r[0] < r[1]:
+        raise ValueError(f"{where}.edge_width_range must be [min, max] with 0 < min < max")
+
+
 @dataclass
 class CouplingPanelConfig(ConfigField):
-    """Coupling network panel (document × document)."""
+    """Coupling network panel (document × document).
+
+    Edge width always shows the Salton-normalised coupling (raw shared
+    references would favour reference-rich reviews); ``edge_scale`` picks how:
+    ``tertile`` (three widths by rank, the default) or ``linear`` (width
+    proportional to the strength, over ``edge_width_range`` px). The raw
+    number of shared references is in each edge's hover (HTML export).
+    """
     resolution_range: List[float] = field(default_factory=lambda: [0.4, 1.2])  # [min, max]: sweep and keep the best-modularity partition
     resolution_step:  float = 0.1  # step of the resolution sweep
     min_size:   int   = 5          # communities smaller than this → uncoupled tail
     backbone_k: int   = 3          # draw only each node's k strongest couplings
     color_by:   str   = "topic"    # "topic" | "community"
+    edge_scale: str   = "tertile"  # "tertile" | "linear"
+    edge_width_range: List[float] = field(default_factory=lambda: [0.4, 3.5])  # linear scale only
+
+    def __post_init__(self):
+        super().__post_init__()
+        _check_edge_style(self, "bib_network.coupling")
 
 
 @dataclass
@@ -894,7 +917,13 @@ class ReferenceMetadataConfig(ConfigField):
 
 @dataclass
 class CocitationPanelConfig(ConfigField):
-    """Co-citation network panel (reference × reference)."""
+    """Co-citation network panel (reference × reference).
+
+    Edge width always shows the Salton-normalised co-citation (raw counts
+    would link any two widely cited classics); ``edge_scale`` /
+    ``edge_width_range`` as for :class:`CouplingPanelConfig`. The raw number
+    of documents citing both references is in each edge's hover.
+    """
     min_ref_freq: int   = 2         # keep references cited by at least this many documents
     resolution_range: List[float] = field(default_factory=lambda: [0.4, 1.2])  # [min, max]: sweep and keep the best-modularity partition
     resolution_step:  float = 0.1   # step of the resolution sweep
@@ -902,9 +931,12 @@ class CocitationPanelConfig(ConfigField):
     backbone_k:   int   = 3         # draw only each node's k strongest co-citations
     color_by:     str   = "community"  # "topic" | "community"
     metadata:     Union[None, ReferenceMetadataConfig] = None  # resolve node ids to real works
+    edge_scale:   str   = "tertile"    # "tertile" | "linear"
+    edge_width_range: List[float] = field(default_factory=lambda: [0.4, 3.5])  # linear scale only
 
     def __post_init__(self):
         super().__post_init__()
+        _check_edge_style(self, "bib_network.cocitation")
         self.metadata = _build(ReferenceMetadataConfig, self.metadata, 'metadata')
 
 

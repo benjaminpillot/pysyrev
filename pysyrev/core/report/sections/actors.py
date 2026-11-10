@@ -167,7 +167,15 @@ def _network_blocks(df, level, cfg, export_to):
             + f"Papers: {int(papers[i])} (fractional {float(m.get('fractional') or 0):.1f})<br>"
             f"Citations: {int(m.get('citations') or 0)}<br>"
             f"Community: {'C%d' % comm if comm >= 0 else 'tail'}")
+    counts = result.counts
+
+    def _edge_hover(a, b, w):
+        n = f"Co-signed papers: {int(counts[a, b])}<br>" if counts is not None else ""
+        return (f"<b>{names[a]}</b> ↔ <b>{names[b]}</b><br>{n}"
+                f"{net.normalize.capitalize()} strength: {w:.3g}")
+
     fig = plot_network(result.coords, result.labels, result.W, k=net.backbone_k,
+                       edge_hover=_edge_hover,
                        hover_text=hover, size_by=size, node_text=node_text,
                        size_scale="sqrt", size_range=tuple(net.size_range),
                        edge_values=(result.counts if net.edge_width_by == "count" else None),

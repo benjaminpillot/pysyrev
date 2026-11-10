@@ -535,3 +535,81 @@ def test_actors_edge_width_config():
     for bad in ({"edge_width_by": "jaccard"}, {"edge_width_range": [3, 1]}):
         with pytest.raises(ValueError):
             ActorsSectionConfig(network=bad)
+
+
+# =============================================================================
+# Edge styling of the coupling / co-citation networks
+# =============================================================================
+
+def _refs_corpus():
+    refs = ["R1; R2; R3", "R1; R2; R4", "R1; R2; R3; R4", "R5; R6", "R5; R6; R1"]
+    return pd.DataFrame({"id": [f"W{i}" for i in range(len(refs))],
+                         "title": [f"Paper {i}" for i in range(len(refs))],
+                         "references": refs})
+
+
+def test_coupling_and_cocitation_keep_raw_counts():
+    from pysyrev.core.networks import build_coupling, build_cocitation
+    coup = build_coupling(_refs_corpus(), min_size=1)
+    i = {k: n for n, k in enumerate(coup.node_ids)}
+    assert coup.counts[i["W0"], i["W2"]] == 3      # R1, R2, R3
+    assert coup.counts[i["W0"], i["W3"]] == 0
+    coc = build_cocitation(_refs_corpus(), min_ref_freq=2, min_size=1)
+    j = {k: n for n, k in enumerate(coc.node_ids)}
+    assert coc.counts[j["R1"], j["R2"]] == 3       # co-cited by W0, W1, W2
+    assert coc.counts[j["R5"], j["R6"]] == 2
+
+
+def test_linear_edge_scale_is_proportional_to_weight():
+    from pysyrev.core.networks.plotting import _edge_traces
+    bb = [(0, 1, 1.0), (1, 2, 0.0)]
+    traces = _edge_traces(np.zeros((3, 2)), bb, scale="linear", width_range=(1.0, 3.0))
+    assert sorted(t.line.width for t in traces) == pytest.approx([1.0, 3.0])
+    with pytest.raises(ValueError):
+        _edge_traces(np.zeros((3, 2)), bb, scale="log")
+
+
+def test_edge_hover_marker_at_midpoints():
+    from pysyrev.core.networks import plot_network
+    coords = np.array([[0.0, 0.0], [2.0, 0.0], [2.0, 2.0]])
+    W = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float)
+    fig = plot_network(coords, np.array([0, 0, 0]), W,
+                       edge_hover=lambda a, b, w: f"{a}-{b}")
+    links = next(t for t in fig.data if t.name == "links")
+    assert sorted(links.hovertext) == ["0-1", "1-2"]
+    assert sorted(zip(links.x, links.y)) == [(1.0, 0.0), (2.0, 1.0)]
+    # Nodes are drawn above the hover markers.
+    names = [t.name for t in fig.data]
+    assert names.index("links") < max(i for i, t in enumerate(fig.data) if t.mode == "markers")
+
+
+def test_bib_network_edge_config():
+    from pysyrev.core.config import CocitationPanelConfig, CouplingPanelConfig
+    assert CouplingPanelConfig().edge_scale == "tertile"
+    assert CocitationPanelConfig(edge_scale="linear").edge_width_range == [0.4, 3.5]
+    for cls in (CouplingPanelConfig, CocitationPanelConfig):
+        with pytest.raises(ValueError):
+            cls(edge_scale="sqrt")
+        with pytest.raises(ValueError):
+            cls(edge_width_range=[2, 1])
+
+
+def test_network_sections_put_raw_counts_in_edge_hover():
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.networks import build_coupling
+    from pysyrev.core.report.sections.actors import _build_actors_section
+    from pysyrev.core.report.sections.networks import _build_network_subsection
+
+    df = _refs_corpus()
+    sub = _build_network_subsection(
+        build_coupling(df, min_size=1), df, None, None, title="Coupling",
+        filename_prefix="c", node_kind="document", count_label="Documents",
+        k=3, color_mode="community", export_to=None, edge_scale="linear")
+    fig = next(b for b in sub["blocks"] if b["type"] == "plotly")["figure"]
+    hover = next(t for t in fig.data if t.name == "links").hovertext
+    assert any("Shared references: 3" in h for h in hover)
+
+    cfg = ActorsSectionConfig(levels=["author"], network={"min_papers": 1, "min_size": 1})
+    fig = _blocks_of(_build_actors_section(_corpus(), cfg, None, 1), "plotly")[0]["figure"]
+    hover = next(t for t in fig.data if t.name == "links").hovertext
+    assert any("Co-signed papers: 1" in h for h in hover)

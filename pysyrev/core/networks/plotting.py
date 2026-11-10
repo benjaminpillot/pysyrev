@@ -15,7 +15,7 @@ with every other heatmap of the report.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 
@@ -58,9 +58,10 @@ def _edge_traces(coords, bb, values: Optional[np.ndarray] = None,
     """Backbone edges, thicker = stronger.
 
     ``scale="tertile"`` (default): three widths by tertile of the backbone
-    weights — a rank, not a magnitude. ``scale="sqrt"``: width proportional
-    to ``sqrt(value)`` over *width_range*, where *values* (a matrix aligned to
-    ``W``, e.g. raw co-signed paper counts) replaces the edge weight; widths
+    weights — a rank, not a magnitude. ``scale="linear"`` / ``"sqrt"``: width
+    proportional to the value (or its square root, for counts with a long
+    tail) over *width_range*, where *values* (a matrix aligned to ``W``, e.g.
+    raw co-signed paper counts) replaces the edge weight when given; widths
     are binned into :data:`_EDGE_LEVELS` steps, opacity rising with width so
     strong links stand out of the mesh.
     """
@@ -68,9 +69,13 @@ def _edge_traces(coords, bb, values: Optional[np.ndarray] = None,
 
     if not bb:
         return []
-    if scale == "sqrt":
+    if scale not in ("tertile", "linear", "sqrt"):
+        raise ValueError(f"edge scale must be tertile|linear|sqrt, got {scale!r}")
+    if scale in ("linear", "sqrt"):
         v = np.array([float(values[a, b]) if values is not None else w for a, b, w in bb])
-        v = np.sqrt(np.clip(v, 0, None))
+        v = np.clip(v, 0, None)
+        if scale == "sqrt":
+            v = np.sqrt(v)
         frac = v / (v.max() or 1.0)
         levels = np.rint(frac * (_EDGE_LEVELS - 1)).astype(int)
         lo, hi = width_range
@@ -127,7 +132,8 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  size_range: tuple = (6.0, 22.0),
                  edge_values: Optional[np.ndarray] = None,
                  edge_scale: str = "tertile",
-                 edge_width_range: tuple = (0.5, 6.0)):
+                 edge_width_range: tuple = (0.5, 6.0),
+                 edge_hover: Optional[Callable[[int, int, float], str]] = None):
     """Build a Plotly figure of a network: backbone edges under nodes.
 
     Two colouring modes:
@@ -151,6 +157,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     aligned to *W* whose entries drive the width instead of *W*'s, e.g. raw
     co-signed paper counts) and ``edge_width_range`` — see :func:`_edge_traces`.
     Which edges are drawn (the backbone) is always decided on *W*.
+    ``edge_hover(a, b, w)`` returns the hover text of the drawn edge between
+    nodes *a* and *b* (weight *w*); it is shown on an invisible marker at the
+    edge's midpoint — visible in the interactive HTML only.
 
     Returns a ``plotly.graph_objects.Figure`` — ready for the report's ``plotly``
     block (static PNG in the PDF + interactive HTML export).
@@ -164,9 +173,19 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                         values=size_by, scale=size_scale)
     hover = hover_text if hover_text is not None else [f"node {i}" for i in range(n)]
 
-    data = list(_edge_traces(coords, backbone_edges(W, labels, k=k),
-                             values=edge_values, scale=edge_scale,
+    bb = backbone_edges(W, labels, k=k)
+    data = list(_edge_traces(coords, bb, values=edge_values, scale=edge_scale,
                              width_range=edge_width_range))
+    if edge_hover is not None and bb:
+        # Plotly lines carry no per-segment hover: an invisible marker at each
+        # edge's midpoint does. Drawn before the nodes, so nodes keep priority.
+        data.append(go.Scatter(
+            x=[(coords[a, 0] + coords[b, 0]) / 2 for a, b, _ in bb],
+            y=[(coords[a, 1] + coords[b, 1]) / 2 for a, b, _ in bb],
+            mode="markers", marker=dict(size=7, color="rgba(0,0,0,0)"),
+            hovertext=[edge_hover(a, b, w) for a, b, w in bb], hoverinfo="text",
+            showlegend=False, name="links",
+        ))
 
     def _marker_trace(idx, color, name):
         return go.Scatter(

@@ -298,7 +298,8 @@ def _community_profile_blocks(result, node_meta) -> list:
 
 def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
                               title, filename_prefix, node_kind, count_label,
-                              k, color_mode, export_to, cluster_labels=None):
+                              k, color_mode, export_to, cluster_labels=None,
+                              edge_scale="tertile", edge_width_range=(0.4, 3.5)):
     """Render one computed network (coupling or co-citation) as a subsection.
 
     *result* is a :class:`NetworkResult`; *df* supplies node metadata
@@ -399,11 +400,26 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
             f"Topic: {tlabel}<br>Strength: {st:.3g}"
         )
 
+    # Edge hover (HTML only): the two endpoints, the raw count behind the link
+    # — shared references for coupling, co-citing documents for co-citation —
+    # and the normalised strength the width and the layout use.
+    counts = getattr(result, "counts", None)
+    count_text = ("Shared references" if node_kind == "document"
+                  else "Documents citing both")
+    short = [_title_doi(nid)[0][:50] for nid in result.node_ids]
+
+    def _edge_hover(a, b, w):
+        n = (f"{count_text}: {int(counts[a, b])}<br>"
+             if counts is not None and counts.size else "")
+        return f"<b>{short[a]}</b><br>↔ <b>{short[b]}</b><br>{n}Strength: {w:.3g}"
+
     color_by = topics if color_mode == "topic" else None
     fig = plot_network(
         result.coords, result.labels, result.W, k=k,
         color_by=color_by, color_labels=color_labels,
         hover_text=hover, title=None,
+        edge_scale=edge_scale, edge_width_range=tuple(edge_width_range),
+        edge_hover=_edge_hover,
     )
 
     # ── Stats + top-10 nodes by strength ───────────────────────────────────
@@ -865,6 +881,8 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         node_kind="document", count_label="Documents",
         k=cfg.coupling.backbone_k, color_mode=cfg.coupling.color_by,
         export_to=export_to, cluster_labels=cluster_labels,
+        edge_scale=cfg.coupling.edge_scale,
+        edge_width_range=cfg.coupling.edge_width_range,
     )
     if coupling_sub is not None:
         sub_blocks.append(coupling_sub)
@@ -880,6 +898,8 @@ def _build_networks_section(df, coupling_result, cocitation_result,
         node_kind="reference", count_label="References",
         k=cfg.cocitation.backbone_k, color_mode=cfg.cocitation.color_by,
         export_to=export_to, cluster_labels=cocitation_labels,
+        edge_scale=cfg.cocitation.edge_scale,
+        edge_width_range=cfg.cocitation.edge_width_range,
     )
     if cocitation_sub is not None:
         sub_blocks.append(cocitation_sub)
