@@ -31,6 +31,13 @@ from pysyrev.core.networks.connectivity import (
     coupling_inout,
     groups_from_labels,
 )
+from pysyrev.core.networks.collaboration import (
+    actor_frame,
+    build_collaboration,
+    collaboration_matrix,
+    collaboration_summary,
+    rank_actors,
+)
 from pysyrev.core.networks.plotting import plot_network
 # The matrix panels moved to the report-wide figure module; re-exported here so
 # the networks package keeps offering the figures its analyses feed.
@@ -60,6 +67,11 @@ __all__ = [
     "corpus_baseline",
     "coupling_inout",
     "groups_from_labels",
+    "actor_frame",
+    "rank_actors",
+    "collaboration_matrix",
+    "build_collaboration",
+    "collaboration_summary",
     "plot_connectivity_matrix",
     "plot_crosstab_heatmap",
 ]

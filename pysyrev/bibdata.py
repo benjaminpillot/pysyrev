@@ -2,6 +2,7 @@ from functools import partial
 
 from rapidfuzz import fuzz
 
+from pysyrev.core.actors import harmonize_actors
 from pysyrev.core.api import OpenAlexClient, WosClient
 from pysyrev.core.bib import (fetch_citations, generate_bib, generate_oa_bib,
                                extract_documents, check_bib_dataset)
@@ -446,6 +447,11 @@ class BibDataset:
                 scorer                = _SCORER_MAP[cfg_merge.scorer],
             )
         )
+
+        # Actors: re-key a name-only author/institution (WoS file, Scopus…) onto
+        # the ORCID/ROR/OpenAlex identity another source gave the same name —
+        # cheap, source-agnostic, and a no-op on a single identified source.
+        merged._bib_dataset = harmonize_actors(merged._bib_dataset)
 
         # Corpus-level abstract completion: recover abstracts any source left
         # bare (looked up by DOI from an external provider) before clean_and_drop

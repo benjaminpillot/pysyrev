@@ -8,6 +8,9 @@ from pandas.core.dtypes.common import is_string_dtype, is_numeric_dtype, is_obje
 from rapidfuzz import process as rf_process
 from tqdm import tqdm
 
+from pysyrev.core.actors import (ACTORS, OA_CSV_ACTOR_COLUMNS,
+                                 actors_from_addresses, actors_from_openalex_csv,
+                                 actors_from_wos_file, split_addresses, split_authors)
 from pysyrev.core.parsers.read_bib import read_bib
 
 ID: str = "id"
@@ -311,7 +314,27 @@ def generate_bib(bibfile, db, del_duplicated, print_log):
         for line in log:
             print(line)
 
-    return data[list(DEFAULT_FIELDS)]
+    # An upstream adapter may have built the actors already (the OpenAlex CSV
+    # passes through here); only fill them from the raw fields otherwise.
+    if ACTORS not in data.columns or data[ACTORS].isna().all():
+        data[ACTORS] = _file_actors(data, db)
+
+    return data[list(DEFAULT_FIELDS) + [ACTORS]]
+
+
+def _file_actors(data, db):
+    """The :data:`ACTORS` column of a file read by :func:`read_bib` — the WoS
+    adapter for WoS, the address-based fallback for every other source."""
+    def col(name):
+        return data[name] if name in data.columns else pd.Series(None, index=data.index)
+
+    if db == 'wos':
+        return [actors_from_wos_file(a, raw, orgs, orcids)
+                for a, raw, orgs, orcids in zip(col(AUTHOR), col('affiliation_raw'),
+                                                col('organizations_raw'),
+                                                col('orcid_numbers'))]
+    return [actors_from_addresses(split_authors(a), split_addresses(raw))
+            for a, raw in zip(col(AUTHOR), col('affiliation_raw'))]
 
 
 def generate_oa_bib(bibfile):
@@ -322,6 +345,12 @@ def generate_oa_bib(bibfile):
                                 lineterminator='\n')
     except TypeError:
         dataframe = bibfile.copy()
+
+    # Actors are read from the raw authorship columns, before the rename below
+    # keeps only the flattened author names / affiliation strings.
+    if any(c in dataframe.columns for c in OA_CSV_ACTOR_COLUMNS):
+        dataframe[ACTORS] = [actors_from_openalex_csv(row)
+                             for row in dataframe.to_dict('records')]
 
     dataframe.rename(FROM_OA,
                      inplace=True,
