@@ -1342,6 +1342,96 @@ not here.
             Deprecated and ignored: the observed/expected ratio needs no
             rescaling.  Kept so existing configs still load.
 
+   ``sections.actors``
+
+      Who drives the literature: the most involved countries, institutions and
+      authors, and their collaboration networks.  Read from the reviewed
+      dataset's ``actors`` column, which the ``bib`` stage builds for every
+      source (OpenAlex API/CSV, WoS API/file, Scopus, PubMed) and unifies on
+      shared identifiers — ORCID for people, ROR for institutions, ISO codes
+      for countries.  The section renders whenever that column is present; a
+      corpus exported before it existed needs its ``bib`` stage re-run.
+
+      ``actors.levels``
+         :Type: list of ``str``
+         :Default: ``[country, institution, author]``
+         :Values: any subset of ``country``, ``institution``, ``author``
+
+         Levels rendered, in order — one subsection (ranking + network) each.
+
+      ``actors.top_n``
+         :Type: ``int``
+         :Default: ``15``
+
+         Actors listed in each ranking table.
+
+      ``actors.sort_by``
+         :Type: ``str``
+         :Default: ``papers``
+         :Values: ``papers``, ``fractional``, ``citations``
+
+         Ranking criterion.  ``papers`` is full counting (1 per paper the actor
+         appears on); ``fractional`` splits each paper among its actors of the
+         level (1/n), so a large consortium paper does not outweigh many small
+         ones; ``citations`` sums the citations of the actor's papers.  All
+         three are shown in the table whichever is chosen.
+
+      ``actors.network``
+
+         Collaboration network of each level: two actors are linked by the
+         papers they sign together; Leiden communities and a force layout on
+         the same matrix, as for the coupling network.
+
+         ``network.enabled``
+            :Type: ``bool``
+            :Default: ``true``
+
+         ``network.min_papers``
+            :Type: ``int``
+            :Default: ``2``
+
+            Actors with fewer papers are left out of the network.
+
+         ``network.max_nodes``
+            :Type: ``int``
+            :Default: ``150``
+
+            The most productive actors drawn (past a few hundred nodes an
+            author network is unreadable).
+
+         ``network.normalize``
+            :Type: ``str``
+            :Default: ``salton``
+            :Values: ``salton``, ``association``, ``count``
+
+            Link weight: shared papers over ``sqrt(p_i p_j)`` (``salton``),
+            observed over expected (``association``, VOSviewer's association
+            strength), or the raw number of shared papers (``count``).
+
+         ``network.resolution_range`` / ``network.resolution_step``
+            :Type: ``[float, float]`` / ``float``
+            :Default: ``[0.6, 1.4]`` / ``0.1``
+
+            Leiden resolution sweep; the best-modularity partition is kept.
+
+         ``network.min_size``
+            :Type: ``int``
+            :Default: ``3``
+
+            Communities smaller than this join the grey tail.
+
+         ``network.backbone_k``
+            :Type: ``int``
+            :Default: ``3``
+
+            Only each node's *k* strongest links are drawn.
+
+         ``network.n_labels``
+            :Type: ``int``
+            :Default: ``15``
+
+            The *n* most productive actors are named on the graph.
+
    ``sections.temporal``
 
       ``temporal.variants``

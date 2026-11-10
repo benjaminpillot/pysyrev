@@ -15,6 +15,8 @@ from typing import Tuple
 
 import pandas as pd
 
+from pysyrev.core.actors import ACTORS
+from pysyrev.core.report.sections.actors import _build_actors_section
 from pysyrev.core.report.sections.common import _FIXED_METRIC_COLS
 from pysyrev.core.report.sections.networks import (
     _build_networks_section, _cocitation_metadata,
@@ -146,17 +148,19 @@ def build_report_data(run_dir: str,
     # Compute the coupling and co-citation networks once from the reviewed
     # dataset's raw references — shared by the networks section and by
     # network-based paper selection.
-    _networks_df = _coupling_result = _cocitation_result = None
+    _doc_df = _networks_df = _coupling_result = _cocitation_result = None
     if not coupling_dataset:
         print("[report] networks skipped: no coupling dataset was provided "
               "(topic_model.doc_dataset is empty/unresolved) — the networks, "
-              "connectivity and composite sections will be absent.")
+              "connectivity, actors and composite sections will be absent.")
     if coupling_dataset:
         try:
-            _networks_df = pd.read_csv(coupling_dataset, low_memory=False)
+            _doc_df = pd.read_csv(coupling_dataset, low_memory=False)
         except Exception as e:
             print(f"[report] networks skipped: cannot read {coupling_dataset!r} ({e!r})")
-            _networks_df = None
+            _doc_df = None
+        # The actors section reads the same reviewed dataset, references or not.
+        _networks_df = _doc_df
         if _networks_df is not None and not {"references", "id"}.issubset(_networks_df.columns):
             print(f"[report] networks skipped: dataset has no 'references'/'id' "
                   f"columns (found {list(_networks_df.columns)}).")
@@ -217,7 +221,19 @@ def build_report_data(run_dir: str,
             report_data["sections"].append(section)
             n += 1
 
-    # 3. Temporal dynamics
+    # 3. Actors — countries, institutions, authors (rankings + collaboration
+    # networks), from the reviewed dataset's canonical `actors` column.
+    if _doc_df is not None and ACTORS not in _doc_df.columns:
+        print("[report] actors section skipped: the reviewed dataset has no "
+              f"{ACTORS!r} column (rebuild it with the `bib` stage).")
+    section = _optional_section(
+        "actors", _build_actors_section,
+        _doc_df, sec.actors, export_to, n)
+    if section is not None:
+        report_data["sections"].append(section)
+        n += 1
+
+    # 4. Temporal dynamics
     section = _optional_section(
         "temporal", _build_temporal_section,
         bertopic_results, nb_topics, sec.temporal, n,

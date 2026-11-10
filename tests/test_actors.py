@@ -399,3 +399,86 @@ def test_collaboration_summary():
     assert s["n_papers"] == 5 and s["with_author"] == 4 and s["n_country"] == 3
     assert s["single_author_share"] == pytest.approx(1 / 4)
     assert s["international_share"] == pytest.approx(2 / 4)
+
+
+# =============================================================================
+# Report section & config
+# =============================================================================
+
+def _blocks_of(section, btype):
+    out = []
+    for b in section["blocks"]:
+        if b.get("type") == btype:
+            out.append(b)
+        if b.get("type") == "subsection":
+            out.extend(x for x in b["blocks"] if x.get("type") == btype)
+    return out
+
+
+def test_actors_section_renders_rankings_and_networks(tmp_path):
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.report.sections.actors import _build_actors_section
+
+    cfg = ActorsSectionConfig(network={"min_papers": 1, "min_size": 1})
+    section = _build_actors_section(_corpus(), cfg, str(tmp_path), 3)
+    assert section["title"].startswith("3. Actors")
+    subs = [b["title"] for b in section["blocks"] if b.get("type") == "subsection"]
+    assert subs == ["Countries", "Institutions", "Authors"]
+    tables = _blocks_of(section, "table")
+    countries = next(t for t in tables if "countries" in t["title"])
+    assert countries["rows"][0][1] == "France"
+    assert len(countries["headers"]) == len(countries["rows"][0]) == len(countries["col_widths"])
+    assert len(_blocks_of(section, "plotly")) == 3
+    # Every actor carries an identifier here: no caveat about name matching.
+    callout = _blocks_of(section, "callout")[0]
+    assert "100% of authors" in callout["text"] and "homonyms" not in callout["text"]
+    assert (tmp_path / "authors_collaboration_network.html").exists()
+
+
+def test_actors_section_without_network_or_column():
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.report.sections.actors import _build_actors_section
+
+    cfg = ActorsSectionConfig(levels=["country"], network={"enabled": False})
+    section = _build_actors_section(_corpus(), cfg, None, 1)
+    assert not _blocks_of(section, "plotly")
+    assert _build_actors_section(pd.DataFrame({"id": [1]}), cfg, None, 1) is None
+    assert _build_actors_section(None, cfg, None, 1) is None
+
+
+def test_actors_section_explains_a_missing_network():
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.report.sections.actors import _build_actors_section
+
+    cfg = ActorsSectionConfig(levels=["author"], network={"min_papers": 50})
+    section = _build_actors_section(_corpus(), cfg, None, 1)
+    texts = [b["text"] for b in _blocks_of(section, "paragraph")]
+    assert any("No author collaboration network" in t for t in texts)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"levels": ["country", "lab"]}, {"sort_by": "h_index"}, {"top_n": 0},
+    {"network": {"normalize": "jaccard"}}, {"network": {"max_nodes": 1}},
+])
+def test_actors_config_rejects_bad_values(kwargs):
+    from pysyrev.core.config import ActorsSectionConfig
+    with pytest.raises(ValueError):
+        ActorsSectionConfig(**kwargs)
+
+
+def test_report_sections_config_has_actors_defaults():
+    from pysyrev.core.config import ReportSectionsConfig
+    cfg = ReportSectionsConfig()
+    assert cfg.actors.levels == ["country", "institution", "author"]
+    assert cfg.actors.network.normalize == "salton"
+
+
+def test_plot_network_size_by_and_node_text():
+    from pysyrev.core.networks import plot_network
+    W = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float)
+    fig = plot_network(np.random.RandomState(0).rand(3, 2), np.array([0, 0, 0]), W,
+                       size_by=np.array([1, 10, 100]), node_text=["", "B", "C"])
+    texts = [t for t in fig.data if t.mode == "text"]
+    assert len(texts) == 1 and list(texts[0].text) == ["B", "C"]
+    sizes = [s for t in fig.data if t.mode == "markers" for s in t.marker.size]
+    assert sizes == sorted(sizes)          # driven by size_by, not by degree

@@ -1013,6 +1013,39 @@ class TestBuildReportData:
         titles = [s["title"] for s in sections]
         assert not any("network" in t.lower() for t in titles)
 
+    def test_actors_section_present_without_references(
+        self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+        tmp_path,
+    ):
+        # The actors section reads the `actors` column, not the references: a
+        # dataset without references still gets it (and no network section).
+        from pysyrev.core.actors import make_actors
+        cells = [make_actors([{"key": f"orcid:{a}", "name": a} for a in authors],
+                             [{"key": f"ror:{c}", "name": f"U{c}", "country": c}
+                              for c in countries])
+                 for authors, countries in [(["a", "b"], ["FR", "SN"]),
+                                            (["a", "c"], ["FR"]),
+                                            (["b", "c"], ["SN", "US"])]]
+        p = tmp_path / "actors.csv"
+        pd.DataFrame({"id": ["w1", "w2", "w3"], "year": [2019, 2020, 2021],
+                      "cited_by": [3, 1, 0], "actors": cells}).to_csv(p, index=False)
+        titles = [s["title"] for s in self._run(
+            tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+            coupling_dataset=str(p))["sections"]]
+        assert any("Actors" in t for t in titles)
+        assert not any("network" in t.lower() for t in titles)
+
+    def test_actors_section_skipped_without_actors_column(
+        self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+        tmp_path,
+    ):
+        p = tmp_path / "no_actors.csv"
+        pd.DataFrame({"id": ["a", "b"], "title": ["A", "B"]}).to_csv(p, index=False)
+        titles = [s["title"] for s in self._run(
+            tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+            coupling_dataset=str(p))["sections"]]
+        assert not any("Actors" in t for t in titles)
+
     def test_networks_section_present_with_dataset(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
         reviewed_dataset_path,

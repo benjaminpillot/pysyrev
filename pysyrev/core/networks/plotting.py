@@ -31,9 +31,10 @@ _EDGE_COLOR = "#CFCFCF"
 
 
 def _node_sizes(W: np.ndarray, size_min: float = 6.0, size_max: float = 22.0,
-                exponent: float = 1.0) -> np.ndarray:
-    """Marker sizes from weighted degree (coupling strength), log-scaled."""
-    strength = np.asarray(W).sum(axis=1)
+                exponent: float = 1.0, values: Optional[np.ndarray] = None) -> np.ndarray:
+    """Marker sizes from *values* (default: weighted degree, i.e. coupling
+    strength), log-scaled."""
+    strength = np.asarray(W).sum(axis=1) if values is None else np.asarray(values, dtype=float)
     lv = np.log1p(strength)
     lmax = float(lv.max()) or 1.0
     return size_min + (size_max - size_min) * (lv / lmax) ** exponent
@@ -75,7 +76,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  color_by: Optional[np.ndarray] = None,
                  color_labels: Optional[dict] = None,
                  hover_text: Optional[List[str]] = None,
-                 width: int = 900, height: int = 650):
+                 width: int = 900, height: int = 650,
+                 size_by: Optional[np.ndarray] = None,
+                 node_text: Optional[List[str]] = None):
     """Build a Plotly figure of a network: backbone edges under nodes.
 
     Two colouring modes:
@@ -90,6 +93,9 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
 
     Node size scales with coupling strength (weighted degree, log). ``hover_text``
     (row-aligned to *coords*) sets per-node hover; ``seed_mask`` rings seed nodes.
+    ``size_by`` (row-aligned values, e.g. paper counts) replaces the strength as
+    the size driver; ``node_text`` (row-aligned, ``""`` for none) writes a label
+    beside the nodes that carry one.
 
     Returns a ``plotly.graph_objects.Figure`` — ready for the report's ``plotly``
     block (static PNG in the PDF + interactive HTML export).
@@ -99,7 +105,7 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     labels = np.asarray(labels)
     coords = np.asarray(coords)
     n = len(labels)
-    sizes = _node_sizes(W)
+    sizes = _node_sizes(W, values=size_by)
     hover = hover_text if hover_text is not None else [f"node {i}" for i in range(n)]
 
     data = list(_edge_traces(coords, backbone_edges(W, labels, k=k)))
@@ -140,6 +146,16 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                 marker=dict(size=[sizes[i] + 8 for i in sm], color="rgba(0,0,0,0)",
                             line=dict(width=1.4, color="#111")),
                 hoverinfo="none",
+            ))
+
+    if node_text is not None:
+        lab = [i for i in range(n) if node_text[i]]
+        if lab:
+            data.append(go.Scatter(
+                x=coords[lab, 0], y=coords[lab, 1], mode="text",
+                text=[node_text[i] for i in lab], textposition="top center",
+                textfont=dict(size=10, color="#333"),
+                hoverinfo="none", showlegend=False,
             ))
 
     fig = go.Figure(data=data, layout=go.Layout(

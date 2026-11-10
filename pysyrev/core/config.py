@@ -951,6 +951,65 @@ class BibNetworkSectionConfig(ConfigField):
 
 
 @dataclass
+class ActorNetworkConfig(ConfigField):
+    """Collaboration network of one actor level (``…actors.network``).
+
+    Two actors are linked by the papers they share; the strongest
+    *max_nodes* actors with at least *min_papers* papers are drawn (the
+    matrix is dense, and an author network past a few hundred nodes is
+    unreadable anyway). ``normalize``: ``salton`` (shared / sqrt(p_i p_j), as
+    the coupling network), ``association`` (observed / expected, VOSviewer's
+    association strength) or ``count`` (raw shared papers).
+    """
+    enabled:          bool  = True
+    min_papers:       int   = 2
+    max_nodes:        int   = 150
+    normalize:        str   = "salton"   # "salton" | "association" | "count"
+    resolution_range: List[float] = field(default_factory=lambda: [0.6, 1.4])
+    resolution_step:  float = 0.1
+    min_size:         int   = 3          # communities smaller than this → tail
+    backbone_k:       int   = 3          # draw only each node's k strongest links
+    n_labels:         int   = 15         # name the n most productive nodes on the graph
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.normalize not in ("salton", "association", "count"):
+            raise ValueError("actors.network.normalize must be 'salton', "
+                             f"'association' or 'count', got {self.normalize!r}")
+        if self.min_papers < 1 or self.max_nodes < 2:
+            raise ValueError("actors.network needs min_papers >= 1 and max_nodes >= 2")
+
+
+@dataclass
+class ActorsSectionConfig(ConfigField):
+    """Actors section: who drives the literature (authors, institutions, countries).
+
+    Read from the reviewed dataset's ``actors`` column (built at the ``bib``
+    stage, whatever the source); renders whenever that column is present. Per
+    level in *levels*: the *top_n* most involved actors (ranked by *sort_by*:
+    ``papers`` — full counting —, ``fractional`` — each paper split among its
+    actors — or ``citations``) and, unless disabled, their collaboration network.
+    """
+    levels:  List[str] = field(default_factory=lambda: ["country", "institution", "author"])
+    top_n:   int = 15
+    sort_by: str = "papers"              # "papers" | "fractional" | "citations"
+    network: ActorNetworkConfig = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.network = _with_defaults(ActorNetworkConfig, self.network, 'network')
+        bad = [lv for lv in self.levels if lv not in ("author", "institution", "country")]
+        if bad:
+            raise ValueError(f"actors.levels: unknown level(s) {bad}; "
+                             "expected author, institution, country")
+        if self.sort_by not in ("papers", "fractional", "citations"):
+            raise ValueError("actors.sort_by must be 'papers', 'fractional' or "
+                             f"'citations', got {self.sort_by!r}")
+        if self.top_n < 1:
+            raise ValueError("actors.top_n must be >= 1")
+
+
+@dataclass
 class TemporalSectionConfig(ConfigField):
     # "trajectory" draws the per-year curves (counts and share of the year);
     # the other three are cumulative.
@@ -1093,6 +1152,7 @@ class PaperSelectionConfig(ConfigField):
 class ReportSectionsConfig(ConfigField):
     topics:                TopicsSectionConfig       = None
     bib_network:           BibNetworkSectionConfig   = None
+    actors:                ActorsSectionConfig       = None
     temporal:              TemporalSectionConfig     = None
     topic_characteristics: TopicCharacteristicsConfig = None
     topic_similarity:      TopicSimilarityConfig     = None
@@ -1103,7 +1163,8 @@ class ReportSectionsConfig(ConfigField):
         super().__post_init__()
         self.topics      = _with_defaults(TopicsSectionConfig, self.topics, 'topics')
         self.bib_network = _with_defaults(BibNetworkSectionConfig, self.bib_network, 'bib_network')
-        self.temporal    = _with_defaults(TemporalSectionConfig, self.temporal, 'temporal')
+        self.actors      = _with_defaults(ActorsSectionConfig, self.actors, 'actors')
+        self.temporal   = _with_defaults(TemporalSectionConfig, self.temporal, 'temporal')
         self.topic_characteristics = _with_defaults(
             TopicCharacteristicsConfig, self.topic_characteristics, 'topic_characteristics')
         self.topic_similarity = _with_defaults(
