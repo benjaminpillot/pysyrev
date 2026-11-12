@@ -175,7 +175,7 @@ def _network_blocks(df, level, cfg, export_to):
                 f"{net.normalize.capitalize()} strength: {w:.3g}")
 
     fig = plot_network(result.coords, result.labels, result.W, k=net.backbone_k,
-                       edge_hover=_edge_hover,
+                       edge_hover=_edge_hover, node_opacity=net.node_opacity,
                        hover_text=hover, size_by=size, node_text=node_text,
                        size_scale="sqrt", size_range=tuple(net.size_range),
                        edge_values=(result.counts if net.edge_width_by == "count" else None),

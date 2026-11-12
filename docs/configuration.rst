@@ -1485,6 +1485,14 @@ not here.
 
             Thinnest and thickest edge, in pixels.
 
+         ``network.node_opacity``
+            :Type: ``float``
+            :Default: ``1.0``
+
+            Node opacity, in ``(0, 1]``.  Nodes are always drawn above the
+            edges; at ``1.0`` they hide them, below it the edges show through
+            (Plotly's own default for sized markers is ``0.7``).
+
    ``sections.temporal``
 
       ``temporal.variants``

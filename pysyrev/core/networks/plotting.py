@@ -133,7 +133,8 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  edge_values: Optional[np.ndarray] = None,
                  edge_scale: str = "tertile",
                  edge_width_range: tuple = (0.5, 6.0),
-                 edge_hover: Optional[Callable[[int, int, float], str]] = None):
+                 edge_hover: Optional[Callable[[int, int, float], str]] = None,
+                 node_opacity: Optional[float] = None):
     """Build a Plotly figure of a network: backbone edges under nodes.
 
     Two colouring modes:
@@ -160,6 +161,12 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
     ``edge_hover(a, b, w)`` returns the hover text of the drawn edge between
     nodes *a* and *b* (weight *w*); it is shown on an invisible marker at the
     edge's midpoint — visible in the interactive HTML only.
+
+    Nodes are always drawn above the edges. ``node_opacity`` sets their
+    opacity; ``None`` keeps Plotly's default, which is 0.7 for markers sized
+    per point (a "bubble" trace) — so the edges underneath show *through* the
+    nodes. ``1.0`` hides them. Within each trace larger nodes are drawn first,
+    so an opaque large node never covers a smaller one.
 
     Returns a ``plotly.graph_objects.Figure`` — ready for the report's ``plotly``
     block (static PNG in the PDF + interactive HTML export).
@@ -188,11 +195,14 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
         ))
 
     def _marker_trace(idx, color, name):
+        idx = sorted(idx, key=lambda i: -sizes[i])     # large first, small on top
+        marker = dict(size=[sizes[i] for i in idx], color=color,
+                      line=dict(width=0.5, color="white"))
+        if node_opacity is not None:
+            marker["opacity"] = node_opacity
         return go.Scatter(
             x=coords[idx, 0], y=coords[idx, 1], mode="markers", name=name,
-            hovertext=[hover[i] for i in idx], hoverinfo="text",
-            marker=dict(size=[sizes[i] for i in idx], color=color,
-                        line=dict(width=0.5, color="white")),
+            hovertext=[hover[i] for i in idx], hoverinfo="text", marker=marker,
         )
 
     if color_by is None:

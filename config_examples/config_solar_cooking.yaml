@@ -525,6 +525,7 @@ topic_report:
          size_range: [5, 45]    # node diameter, px
          edge_width_by: count   # edge width ∝ sqrt(co-signed papers) | weight (normalised strength)
          edge_width_range: [0.5, 6.0]
+         node_opacity: 1.0      # 1 = opaque nodes hide the edges under them; < 1 lets them show through
 #     temporal:
 #       variants: [trajectory, absolute, normalized, weighted]
 #       smoothing_window: 3   # years of the centred rolling mean beside the per-year curves (1 = raw only)

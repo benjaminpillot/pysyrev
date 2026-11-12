@@ -480,8 +480,30 @@ def test_plot_network_size_by_and_node_text():
                        size_by=np.array([1, 10, 100]), node_text=["", "B", "C"])
     texts = [t for t in fig.data if t.mode == "text"]
     assert len(texts) == 1 and list(texts[0].text) == ["B", "C"]
-    sizes = [s for t in fig.data if t.mode == "markers" for s in t.marker.size]
-    assert sizes == sorted(sizes)          # driven by size_by, not by degree
+    node = next(t for t in fig.data if t.name == "C0")
+    size_of = dict(zip(node.hovertext, node.marker.size))
+    # Driven by size_by, not by degree (node 1 has the highest degree).
+    assert size_of["node 0"] < size_of["node 1"] < size_of["node 2"]
+    # Large nodes drawn first, so an opaque one never covers a smaller one.
+    assert list(node.marker.size) == sorted(node.marker.size, reverse=True)
+
+
+def test_node_opacity_option():
+    from pysyrev.core.config import ActorsSectionConfig
+    from pysyrev.core.networks import plot_network
+    from pysyrev.core.report.sections.actors import _build_actors_section
+    W = np.array([[0, 1], [1, 0]], dtype=float)
+    args = (np.array([[0.0, 0.0], [1.0, 1.0]]), np.array([0, 0]), W)
+    assert plot_network(*args).data[-1].marker.opacity is None      # Plotly default kept
+    assert plot_network(*args, node_opacity=1.0).data[-1].marker.opacity == 1.0
+    cfg = ActorsSectionConfig(levels=["author"], network={"min_papers": 1, "min_size": 1})
+    assert cfg.network.node_opacity == 1.0
+    fig = _blocks_of(_build_actors_section(_corpus(), cfg, None, 1), "plotly")[0]["figure"]
+    assert all(t.marker.opacity == 1.0 for t in fig.data
+               if t.mode == "markers" and t.name not in ("links",))
+    for bad in (0, 1.5):
+        with pytest.raises(ValueError):
+            ActorsSectionConfig(network={"node_opacity": bad})
 
 
 def test_sqrt_node_sizes_are_area_proportional():

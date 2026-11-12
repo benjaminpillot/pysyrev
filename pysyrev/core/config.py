@@ -1011,9 +1011,15 @@ class ActorNetworkConfig(ConfigField):
     # as used for layout and communities: relative intensity).
     edge_width_by:    str   = "count"
     edge_width_range: List[float] = field(default_factory=lambda: [0.5, 6.0])  # [min, max] width, px
+    # Node opacity: 1 hides the edges under the nodes; below 1 they show
+    # through (Plotly's own default for sized markers is 0.7).
+    node_opacity:     float = 1.0
 
     def __post_init__(self):
         super().__post_init__()
+        if not 0 < self.node_opacity <= 1:
+            raise ValueError("actors.network.node_opacity must be in (0, 1], "
+                             f"got {self.node_opacity!r}")
         if self.edge_width_by not in ("count", "weight"):
             raise ValueError("actors.network.edge_width_by must be 'count' or "
                              f"'weight', got {self.edge_width_by!r}")
