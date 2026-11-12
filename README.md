@@ -22,7 +22,8 @@
 - **Automatic deduplication** — fuzzy title matching across sources, with a configurable source priority (OpenAlex wins by default, keeping its stable IDs; duplicates are aliased so references still resolve)
 - **Canonical reference keys** — optionally remap every reference onto a shared DOI key space so bibliographic coupling holds across merged sources regardless of merge order: intra-corpus and DOI-bearing references map for free, extra-corpus OpenAlex ids are resolved to DOIs via the OpenAlex API and cached (skipped automatically when there is no other-source DOI to bridge to)
 - **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…) or by [Albert](https://albert.api.etalab.gouv.fr), the French State's sovereign gateway (`provider: albert`, key in `ALBERT_API_KEY`) — useful when the corpus may not leave French public infrastructure
-- **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report
+- **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report; the raw counts behind each link (shared references, co-citing documents) are in the edge hover of the interactive HTML
+- **Actors: who drives the literature** — every record's authors, institutions and countries, read from whatever its source knows (OpenAlex authorships, WoS addresses and unified organisations, Scopus/PubMed addresses) and unified on shared identifiers (ORCID for people, ROR for institutions, ISO codes for countries); the report ranks the most involved actors (full and fractional counting, citations, active years) and draws their collaboration networks
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **Reading-list selection** — rank the most relevant papers per topic by citations, network centrality, or a three-axis composite (coupling centrality + citation impact + thematic representativeness)
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
@@ -36,10 +37,10 @@
 
 | Stage | Key | Description |
 |---|---|---|
-| Bibliography | `bib` | Fetch, clean, filter, deduplicate, and optionally resolve references |
+| Bibliography | `bib` | Fetch, clean, filter, deduplicate, and optionally resolve references; record each paper's authors, institutions and countries (`actors` column) |
 | LLM review | `review` | Screen documents against inclusion/exclusion criteria with one or more LLM reviewers |
 | Topic modelling | `topic-model` | Cluster documents into topics using BERTopic; rank configurations by coherence |
-| Report | `topic-report` | Generate a PDF report from the selected topic model run, including the bibliographic coupling, co-citation and topic-connectivity network panels (recomputed from the reviewed corpus' references) |
+| Report | `topic-report` | Generate a PDF report from the selected topic model run, including the bibliographic coupling, co-citation and topic-connectivity network panels (recomputed from the reviewed corpus' references) and the actors section (top countries, institutions, authors and their collaboration networks) |
 
 All sections are optional — only the stages declared in the config file are executed. Each stage auto-detects the most recent output of the previous one when run standalone.
 
@@ -162,6 +163,27 @@ Which model configuration is rendered comes from `topic_model.best_model_index` 
 ```bash
 pysyrev report_only.yaml
 ```
+
+### Actors: who drives the literature
+
+The `bib` stage gives every record an `actors` column — its authors, institutions and countries, each keyed by the strongest identity its source offers (`orcid:` > OpenAlex/WoS id > normalised name for authors, `ror:` > OpenAlex id > name for institutions, ISO 3166 codes for countries). ORCID and ROR are shared across sources, so OpenAlex and WoS records of the same person or institution meet on them; after the merge, a name-only actor is re-keyed onto the identified one bearing the same unambiguous name.
+
+The report's actors section renders whenever the reviewed corpus carries that column (tune it under `topic_report.sections.actors`). The same analyses are available from Python, whatever the source of the corpus:
+
+```python
+import pandas as pd
+from pysyrev.core.networks import build_collaboration, collaboration_summary, rank_actors
+
+df = pd.read_csv("reviewed_included.csv")
+
+collaboration_summary(df)                               # coverage, team size, international share…
+rank_actors(df, "country", top=15)                      # papers (full / fractional), citations, active years
+rank_actors(df, "institution", sort_by="fractional")
+collab = build_collaboration(df, "author", min_papers=2)  # Leiden communities + layout
+collab.plot()
+```
+
+A corpus exported before the column existed has no actors section: re-run its `bib` stage.
 
 ---
 
