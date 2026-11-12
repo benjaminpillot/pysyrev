@@ -76,6 +76,9 @@ def _dedupe(entries: Iterable[dict]) -> List[dict]:
     for e in entries:
         if not e or not e.get("key"):
             continue
+        if isinstance(e.get("name"), str):
+            # Exports wrap long fields: "El Omri,   Abdelfatteh" → one space.
+            e = dict(e, name=" ".join(e["name"].split()))
         kept = out.get(e["key"])
         if kept is None:
             out[e["key"]] = dict(e)

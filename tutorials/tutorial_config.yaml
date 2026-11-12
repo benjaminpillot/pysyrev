@@ -1,36 +1,28 @@
 # tutorial_config.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 # Minimal config for the 01_full_pipeline.ipynb tutorial.
-# Uses the pre-screened bib_dataset from tests/data/ — no LLM API key needed.
+# Uses the pre-screened dataset in tests/data/ (58 ABM articles merged from
+# Web of Science and OpenAlex) — no API key and no LLM needed, so the `bib` and
+# `review` stages are skipped and the pipeline starts at `topic-model`.
 #
 # Run from the project root:
 #   python -m pysyrev tutorials/tutorial_config.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 
-bib_network:
-  doc_dataset: tests/data/bib_dataset.csv
-  citation_network:
-  coupling_network:
-    min_shared: 1
-  cocitation_network:
-    min_cocitations: 1
-  export:
-    export_dir: tutorials/outputs/bib_network/
-    run_name: tutorial_run
+# Every stage exports under <output_dir>/<section>/ (topic_model/, topic_report/).
+output_dir: tutorials/outputs/
 
 topic_model:
+  # The screened corpus. The report reads it too: its references feed the
+  # coupling / co-citation networks, its `actors` column the actors section.
   doc_dataset: tests/data/bib_dataset.csv
   export:
-    export_dir: tutorials/outputs/topic_model/
-    run_name: tutorial_run
+    run_name:                 # blank → a timestamp, so re-running never collides
   distance: euclidean
   keep_n_results: 5
-  best_model_index: 0
+  desired_topics: [3, 8]      # topic-count band; the HDBSCAN grid is derived from it
   hdbscan:
-    min_topic_size_range: [4, 8]
     min_sample_range: [2, 2]
-    topic_size_step: 2
-    min_sample_step: 1
   umap:
     n_neighbors: [5, 10]
     n_components: [3, 5]
@@ -38,9 +30,28 @@ topic_model:
     transformer_model: all-MiniLM-L6-v2   # lightweight; swap for allenai/specter2_base in production
     n_gram_range: bigram
 
-topic_report:
-  export_to: tutorials/outputs/report/
+topic_report:                 # run_dir blank → the latest topic_model run
   meta:
     title: ABM Literature Review — Tutorial
     author: pysyrev tutorial
-
+  sections:
+    # Small corpus: smaller communities than the defaults (5) are still communities.
+    bib_network:
+      coupling:
+        min_size: 3
+        color_by: topic       # topic | community
+        edge_scale: linear    # tertile | linear — edge width ∝ normalised coupling
+      cocitation:
+        min_size: 3
+    # Top countries / institutions / authors and their collaboration networks,
+    # from the dataset's `actors` column (built by the bib stage for every source).
+    actors:
+      levels: [country, institution, author]
+      top_n: 10
+      sort_by: papers         # papers | fractional | citations
+      network:
+        min_papers: 1         # 58 papers: few actors sign two of them
+        max_nodes: 120
+        min_size: 2
+        size_by: citations    # node area ∝ citations | papers | fractional
+        edge_width_by: count  # edge width ∝ sqrt(co-signed papers)

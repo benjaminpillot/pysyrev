@@ -635,3 +635,10 @@ def test_network_sections_put_raw_counts_in_edge_hover():
     fig = _blocks_of(_build_actors_section(_corpus(), cfg, None, 1), "plotly")[0]["figure"]
     hover = next(t for t in fig.data if t.name == "links").hovertext
     assert any("Co-signed papers: 1" in h for h in hover)
+
+
+def test_make_actors_collapses_whitespace_in_names():
+    p = parse_actors(make_actors([{"key": "name:el omri a", "name": "El Omri,   Abdelfatteh"}],
+                                 [{"key": "ror:1", "name": " Univ\n  Tokyo ", "country": "JP"}]))
+    assert p["authors"][0]["name"] == "El Omri, Abdelfatteh"
+    assert p["institutions"][0]["name"] == "Univ Tokyo"
