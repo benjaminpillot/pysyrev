@@ -2,8 +2,9 @@
 Runtime model for the topic-report pipeline.
 
 TopicReport reads the pre-exported outputs of a TopicModel run and builds a
-PDF report for the selected model. It mirrors TopicModel/LLMReview: pure
-runtime, no YAML knowledge, built from parsed configs via `from_config`.
+report for the selected model — a PDF and its interactive HTML twin. It
+mirrors TopicModel/LLMReview: pure runtime, no YAML knowledge, built from
+parsed configs via `from_config`.
 
 Business logic lives in pysyrev/core/report/. This class only
 coordinates the core functions and holds instance-level lazy-loaded state.
@@ -12,7 +13,8 @@ Typical usage
 -------------
     cfg    = Config.load("config.yaml")
     report = TopicReport.from_config(cfg)
-    report.generate_report()
+    report.generate_report()    # the PDF and the HTML page
+    report.serve()              # the page, live, with a settings panel
 """
 
 import os
@@ -26,6 +28,7 @@ import pandas as pd
 from pysyrev.core.config import Config
 from pysyrev.core.llm import label_topics
 from pysyrev.core.report import (
+    HTMLReportEngine,
     PDFReportEngine,
     build_file_prefix,
     build_report_data,
@@ -33,6 +36,7 @@ from pysyrev.core.report import (
     load_bertopic_results,
     load_topic_info,
 )
+from pysyrev.core.report.live import LiveReport
 from pysyrev.core.topic_labels import (labels_are_cacheable,
                                        load_cached_labels, save_labels)
 
@@ -135,20 +139,8 @@ class TopicReport:
 
     # ---- public API -------------------------------------------------------
 
-    def generate_report(self, output_file: Union[None, str] = None) -> str:
-        """Generate the PDF report. Returns the path of the written file."""
-        if output_file is None:
-            if self.export_to is None:
-                raise ValueError(
-                    "Provide output_file, or set topic_report.export.export_dir "
-                    "(or a root-level output_dir) in the config."
-                )
-            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            run_subdir = os.path.join(self.export_to, f"report_{ts}")
-            output_file = os.path.join(run_subdir, f"topic_report_{ts}.pdf")
-
-        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-
+    def _topic_labels(self):
+        """The topics' LLM labels — cached ones when the run has them."""
         topic_labels = None
         if self.labeler_config is not None:
             file_prefix = self._file_prefix()
@@ -174,17 +166,79 @@ class TopicReport:
                     print("[report] topic labels incomplete — used for this "
                           "report but not cached.")
 
-        report_data = build_report_data(
+        return topic_labels
+
+    def _build_report_data(self, export_to, rebuilders: dict = None) -> dict:
+        return build_report_data(
             self.run_dir,
             self.best_model_index,
             self.best_results,
             self.topic_info,
             self.bertopic_results,
             self.report_config,
-            topic_labels          = topic_labels,
-            export_to             = str(Path(output_file).parent),
+            topic_labels          = self._topic_labels(),
+            export_to             = export_to,
             coupling_dataset      = self.coupling_dataset,
             cluster_labeler_config = self.labeler_config,
+            rebuilders            = rebuilders,
         )
-        PDFReportEngine().generate(report_data, output_file)
-        return output_file
+
+    @property
+    def formats(self) -> list:
+        """The formats to write — ``topic_report.export.formats``, both by default."""
+        export = getattr(self.report_config, "export", None)
+        return list(getattr(export, "formats", None) or ("pdf", "html"))
+
+    def generate_report(self, output_file: Union[None, str] = None) -> str:
+        """Generate the report, once per configured format.
+
+        *output_file* names the report; each format is written beside it under
+        its own extension (``.pdf``, ``.html``). Returns the path of the PDF,
+        or of the HTML page when no PDF was asked for.
+        """
+        if output_file is None:
+            if self.export_to is None:
+                raise ValueError(
+                    "Provide output_file, or set topic_report.export.export_dir "
+                    "(or a root-level output_dir) in the config."
+                )
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            run_subdir = os.path.join(self.export_to, f"report_{ts}")
+            output_file = os.path.join(run_subdir, f"topic_report_{ts}.pdf")
+
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+
+        report_data = self._build_report_data(str(Path(output_file).parent))
+        formats = self.formats
+        written = []
+        if "pdf" in formats:
+            pdf_file = str(Path(output_file).with_suffix(".pdf"))
+            PDFReportEngine().generate(report_data, pdf_file)
+            written.append(pdf_file)
+        if "html" in formats:
+            html_file = str(Path(output_file).with_suffix(".html"))
+            try:
+                HTMLReportEngine().generate(report_data, html_file)
+                written.append(html_file)
+                print(f"Interactive report written to: {html_file}")
+            except Exception as e:
+                # Beside a PDF the page is an addition: losing it must not cost
+                # the report. On its own it is the report.
+                if not written:
+                    raise
+                print(f"[report] HTML report skipped (PDF still generated): {e!r}")
+        return written[0]
+
+    def live(self) -> LiveReport:
+        """The report as a :class:`~pysyrev.core.report.live.LiveReport`: built
+        once, in memory — no file is written — with the sections that have live
+        settings ready to be rebuilt."""
+        rebuilders = {}
+        report_data = self._build_report_data(None, rebuilders)
+        return LiveReport(report_data, self.report_config.sections, rebuilders)
+
+    def serve(self, host: str = "127.0.0.1", port: int = 8765,
+              open_browser: bool = True) -> None:
+        """Serve the interactive report locally, with its settings panel, until
+        interrupted."""
+        self.live().serve(host=host, port=port, open_browser=open_browser)

@@ -459,6 +459,7 @@ topic_model:
 # topic_report:
 #   export:
 #     export_dir:           # blank → <output_dir>/topic_report/
+#     # formats: [pdf, html]  # pdf = printable document | html = one self-contained interactive page
 #   # run_dir:              # blank → auto-detect the latest topic_model run
 #
 #   # ---- PDF metadata (defaults shown) -------------------------------------

@@ -1263,9 +1263,24 @@ class TopicLabelerConfig(ConfigField):
 class TopicReportExportConfig(ConfigField):
     """Output configuration for the topic-report stage.
 
-    Each report is written to ``<export_dir>/report_<timestamp>/``.
+    Each report is written to ``<export_dir>/report_<timestamp>/``, once per
+    entry of ``formats``: ``pdf`` (the printable document) and/or ``html`` (one
+    self-contained interactive page — sections in a sidebar, live figures,
+    sortable tables).
     """
     export_dir: str
+    formats:    List[str] = field(default_factory=lambda: ["pdf", "html"])
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.formats is None:
+            self.formats = ["pdf", "html"]
+        if isinstance(self.formats, str):
+            self.formats = [self.formats]
+        bad = [f for f in self.formats if f not in ("pdf", "html")]
+        if bad or not self.formats:
+            raise ValueError("topic_report.export.formats must list 'pdf' and/or "
+                             f"'html', got {self.formats!r}")
 
 
 @dataclass

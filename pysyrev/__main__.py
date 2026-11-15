@@ -16,6 +16,9 @@ Usage
   # Download full-text papers for a list of candidates
   pysyrev download liste.csv output_folder [--config download_config.yaml]
 
+  # Explore the report live: the interactive page plus a settings panel
+  pysyrev serve config.yaml [--port 8765] [--no-browser]
+
   # Price the review stage before paying for it (no model call)
   pysyrev estimate config.yaml [--calibrate reviewed.csv] [--sweep]
 
@@ -343,6 +346,40 @@ def _run_check(argv):
 
 
 # =============================================================================
+# Serve sub-command
+# =============================================================================
+
+def _run_serve(argv):
+    parser = argparse.ArgumentParser(
+        prog='pysyrev serve',
+        description=(
+            'Serve the topic report as a live page: the interactive HTML report\n'
+            'plus a panel of settings. Changing one rebuilds its section in place;\n'
+            'the panel shows the changed settings as YAML to paste back into the\n'
+            'config. Reads the latest topic-model run; writes nothing.'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('config', help='Path to the YAML pipeline config file.')
+    parser.add_argument('--host', default='127.0.0.1',
+                        help='Address to listen on (default: 127.0.0.1, this machine only).')
+    parser.add_argument('--port', type=int, default=8765,
+                        help='Port to listen on (default: 8765; a free one if taken).')
+    parser.add_argument('--no-browser', action='store_true',
+                        help='Do not open the page in the browser.')
+    args = parser.parse_args(argv)
+
+    from pysyrev.core.config import Config
+    from pysyrev.topic_report import TopicReport
+
+    config = Config.load(args.config)
+    config.require_stages(['topic-report'])
+    print("Building the report…")
+    TopicReport.from_config(config).serve(
+        host=args.host, port=args.port, open_browser=not args.no_browser)
+
+
+# =============================================================================
 # Entry point
 # =============================================================================
 
@@ -355,6 +392,8 @@ def main():
         _run_estimate(sys.argv[2:])
     elif len(sys.argv) > 1 and sys.argv[1] == 'check':
         _run_check(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == 'serve':
+        _run_serve(sys.argv[2:])
     else:
         _run_pipeline(sys.argv[1:])
 

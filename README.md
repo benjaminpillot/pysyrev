@@ -12,7 +12,7 @@
 
 </div>
 
-**pysyrev** (PYthon SYstematic REView) is an automated, LLM-assisted PRISMA workflow for systematic literature reviews. It covers the full pipeline — from raw bibliographic records to screened, deduplicated, and thematically structured corpora — and produces a PDF report at the end.
+**pysyrev** (PYthon SYstematic REView) is an automated, LLM-assisted PRISMA workflow for systematic literature reviews. It covers the full pipeline — from raw bibliographic records to screened, deduplicated, and thematically structured corpora — and produces a PDF report, and its interactive HTML twin, at the end.
 
 ---
 
@@ -27,6 +27,8 @@
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **Reading-list selection** — rank the most relevant papers per topic by citations, network centrality, or a three-axis composite (coupling centrality + citation impact + thematic representativeness)
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
+- **Interactive HTML report** — the same report as one self-contained page: sections in a sidebar, live Plotly figures (zoom, hover, legend toggling), sortable and filterable tables; written beside the PDF (`topic_report.export.formats: [pdf, html]`)
+- **Live report** — `pysyrev serve config.yaml` serves that page locally with a settings panel: change a ranking criterion, a node size or an edge scale and the section is rebuilt in place; the changed settings are shown as YAML to paste back into the config
 - **Download full-text PDFs** — retrieve full-text PDFs for a list of candidates, e.g. the reading-list selection
 - **Token cost estimation** — price review stage before running it when calling external API (anthropic, OpenAI, etc.)
 - **Deferred batch reviewing** — screen the corpus through the provider's batch endpoint (`review.use_batch_api`): same prompts, results within 24 h, half price on input and output; interrupted runs re-attach to the batch already paid for
@@ -102,6 +104,10 @@ pysyrev config.yaml --stage topic-model topic-report
 pysyrev config.yaml --from topic-model
 pysyrev config.yaml --from topic-report
 
+# Explore the report live: the interactive page plus a settings panel (writes nothing)
+pysyrev serve config.yaml
+pysyrev serve config.yaml --port 8765 --no-browser
+
 # Download full-text PDFs for a list of candidates (Unpaywall → OpenAlex → Elsevier TDM)
 pysyrev download candidates.csv output_folder/
 pysyrev download candidates.csv output_folder/ --config download_config.yaml
@@ -133,7 +139,7 @@ pipeline.run()
 
 # Run specific stages (always executed in canonical order)
 pipeline.run(stages=["bib", "review"])
-pipeline.run(stages=["topic-report"])  # generates the PDF report
+pipeline.run(stages=["topic-report"])  # generates the PDF report and its HTML twin
 
 # Run from a given stage to the end
 start = ALL_STAGES.index("topic-model")

@@ -133,15 +133,28 @@ def _ranking_table(df, level, cfg):
     }
 
 
-def _network_blocks(df, level, cfg, export_to):
-    from pysyrev.core.networks import build_collaboration, plot_network, backbone_edges
+def _collaboration(df, level, net, cache):
+    """The collaboration network of *level*, built once per set of the
+    settings it depends on when a *cache* dict is given."""
+    from pysyrev.core.networks import build_collaboration
+
+    params = dict(min_papers=net.min_papers, max_nodes=net.max_nodes,
+                  normalize=net.normalize, resolution_range=net.resolution_range,
+                  resolution_step=net.resolution_step, min_size=net.min_size)
+    if cache is None:
+        return build_collaboration(df, level, **params)
+    key = (level, repr(sorted(params.items())))
+    if key not in cache:
+        cache[key] = build_collaboration(df, level, **params)
+    return cache[key]
+
+
+def _network_blocks(df, level, cfg, export_to, network_cache=None):
+    from pysyrev.core.networks import plot_network, backbone_edges
 
     net = cfg.network
     try:
-        result = build_collaboration(
-            df, level, min_papers=net.min_papers, max_nodes=net.max_nodes,
-            normalize=net.normalize, resolution_range=net.resolution_range,
-            resolution_step=net.resolution_step, min_size=net.min_size)
+        result = _collaboration(df, level, net, network_cache)
     except Exception as e:
         return [{"type": "paragraph",
                  "text": f"No {_LEVEL_NOUNS[level]} collaboration network: {e}."}]
@@ -227,11 +240,14 @@ def _network_blocks(df, level, cfg, export_to):
     return blocks
 
 
-def _build_actors_section(df, section_cfg, export_to, section_n):
+def _build_actors_section(df, section_cfg, export_to, section_n,
+                          network_cache=None):
     """Section — authors, institutions and countries of the literature.
 
     *df* is the reviewed dataset; returns ``None`` when it has no ``actors``
     column (a corpus built before the column existed) or no actor at all.
+    *network_cache*, a dict the caller keeps, spares rebuilding a collaboration
+    network when the section is built again with the same network settings.
     """
     if df is None or ACTORS not in df.columns or df[ACTORS].isna().all():
         return None
@@ -244,7 +260,7 @@ def _build_actors_section(df, section_cfg, export_to, section_n):
             continue
         sub.append(table)
         if cfg.network.enabled:
-            sub.extend(_network_blocks(df, level, cfg, export_to))
+            sub.extend(_network_blocks(df, level, cfg, export_to, network_cache))
         blocks.append({"type": "subsection", "title": _LEVEL_TITLES[level], "blocks": sub})
     return {"title": f"{section_n}. Actors: countries, institutions, authors",
             "blocks": blocks}

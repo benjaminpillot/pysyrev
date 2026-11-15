@@ -3,8 +3,7 @@ Loading a topic-model run, and assembling the report from it.
 
 :func:`build_report_data` is the single entry point: it reads one run\'s
 outputs, computes the networks the sections share, and returns the declarative
-``report_data`` dict :class:`~pysyrev.core.report.engine.PDFReportEngine`
-renders. Each section lives in :mod:`pysyrev.core.report.sections`.
+``report_data`` dict the report engines render. Each section lives in :mod:`pysyrev.core.report.sections`.
 """
 
 import glob
@@ -118,8 +117,19 @@ def build_report_data(run_dir: str,
                       topic_labels: dict = None,
                       export_to: str = None,
                       coupling_dataset: str = None,
-                      cluster_labeler_config=None) -> dict:
-    """Build the declarative report_data dict consumed by PDFReportEngine."""
+                      cluster_labeler_config=None,
+                      rebuilders: dict = None) -> dict:
+    """Build the declarative report_data dict the report engines render.
+
+    Every section carries a ``key`` — the name of its block under
+    ``topic_report.sections`` — beside its title and blocks.
+
+    *rebuilders*, when a dict is passed, is filled with one
+    ``key -> build(section_config)`` callable per section that can be built
+    again from the data already loaded here (the networks are not recomputed).
+    That is what the live report calls when a setting changes; such a rebuild
+    writes no file.
+    """
     meta = report_config.meta
     sec  = report_config.sections
     nb_topics = int(best_results.iloc[best_model_index]["nb_topics"])
@@ -138,11 +148,16 @@ def build_report_data(run_dir: str,
 
     n = 1  # running section counter
 
+    def _add(key, section, rebuild=None):
+        section["key"] = key
+        report_data["sections"].append(section)
+        if rebuilders is not None and rebuild is not None:
+            rebuilders[key] = rebuild
+
     # 1. Topics
-    report_data["sections"].append(
-        _build_topics_section(topic_info, sec, topic_labels, nb_topics, n,
-                              bertopic_results=bertopic_results)
-    )
+    _add("topics", _build_topics_section(
+        topic_info, sec, topic_labels, nb_topics, n,
+        bertopic_results=bertopic_results))
     n += 1
 
     # Compute the coupling and co-citation networks once from the reviewed
@@ -211,14 +226,16 @@ def build_report_data(run_dir: str,
     # 2. Bibliographic networks (coupling + co-citation) — rendered whenever the
     # reviewed dataset yielded a coupling network (i.e. it carried references).
     if _coupling_result is not None:
-        section = _optional_section(
-            "networks", _build_networks_section,
-            _networks_df, _coupling_result, _cocitation_result,
-            bertopic_results, topic_labels, sec.bib_network, export_to, n,
-            cluster_labels=_cluster_labels,
-            cocitation_labels=_cocitation_labels)
+        def _networks(cfg, export_to=None, n=n):
+            return _build_networks_section(
+                _networks_df, _coupling_result, _cocitation_result,
+                bertopic_results, topic_labels, cfg, export_to, n,
+                cluster_labels=_cluster_labels,
+                cocitation_labels=_cocitation_labels)
+
+        section = _optional_section("networks", _networks, sec.bib_network, export_to)
         if section is not None:
-            report_data["sections"].append(section)
+            _add("bib_network", section, _networks)
             n += 1
 
     # 3. Actors — countries, institutions, authors (rankings + collaboration
@@ -226,11 +243,17 @@ def build_report_data(run_dir: str,
     if _doc_df is not None and ACTORS not in _doc_df.columns:
         print("[report] actors section skipped: the reviewed dataset has no "
               f"{ACTORS!r} column (rebuild it with the `bib` stage).")
-    section = _optional_section(
-        "actors", _build_actors_section,
-        _doc_df, sec.actors, export_to, n)
+    # The collaboration networks depend on a few of the section's settings
+    # only: a rebuild that leaves those alone reuses them.
+    _actor_networks = {}
+
+    def _actors(cfg, export_to=None, n=n):
+        return _build_actors_section(_doc_df, cfg, export_to, n,
+                                     network_cache=_actor_networks)
+
+    section = _optional_section("actors", _actors, sec.actors, export_to)
     if section is not None:
-        report_data["sections"].append(section)
+        _add("actors", section, _actors)
         n += 1
 
     # 4. Temporal dynamics
@@ -239,7 +262,7 @@ def build_report_data(run_dir: str,
         bertopic_results, nb_topics, sec.temporal, n,
         topic_labels=topic_labels)
     if section is not None:
-        report_data["sections"].append(section)
+        _add("temporal", section)
         n += 1
 
     # 4. Topic characteristics
@@ -248,7 +271,7 @@ def build_report_data(run_dir: str,
         bertopic_results, topic_labels, sec.topic_characteristics, n
     )
     if section is not None:
-        report_data["sections"].append(section)
+        _add("topic_characteristics", section)
         n += 1
 
     # 5. Topic similarity
@@ -257,7 +280,7 @@ def build_report_data(run_dir: str,
         bertopic_results, topic_labels, sec.topic_similarity, n
     )
     if section is not None:
-        report_data["sections"].append(section)
+        _add("topic_similarity", section)
         n += 1
 
     # 6. Paper selection
@@ -268,13 +291,12 @@ def build_report_data(run_dir: str,
         cocitation_result=_cocitation_result,
     )
     if section is not None:
-        report_data["sections"].append(section)
+        _add("paper_selection", section)
         n += 1
 
     # 7. Technical appendix
-    report_data["sections"].append(
-        _build_overview_section(run_dir, best_model_index, best_results, n)
-    )
+    _add("overview", _build_overview_section(
+        run_dir, best_model_index, best_results, n))
 
     # Extra user-defined sections
     if sec.extra:
