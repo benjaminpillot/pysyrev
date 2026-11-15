@@ -134,13 +134,15 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
                  edge_scale: str = "tertile",
                  edge_width_range: tuple = (0.5, 6.0),
                  edge_hover: Optional[Callable[[int, int, float], str]] = None,
-                 node_opacity: Optional[float] = None):
+                 node_opacity: Optional[float] = None,
+                 community_labels: Optional[dict] = None):
     """Build a Plotly figure of a network: backbone edges under nodes.
 
     Two colouring modes:
 
     * **By community** (default, ``color_by=None``) — nodes coloured by their
-      Leiden community; the ``-1`` tail is faint.
+      Leiden community; the ``-1`` tail is faint. ``community_labels`` maps a
+      community to its legend name (default ``C<id>``).
     * **By external attribute** (``color_by`` = array row-aligned to *coords*,
       e.g. BERTopic topics) — nodes coloured by that attribute, so you read the
       *topic composition of each bibliographic community*. The spatial clusters
@@ -212,7 +214,8 @@ def plot_network(coords: np.ndarray, labels: np.ndarray, W: np.ndarray,
             data.append(_marker_trace(tail, _TAIL_COLOR, "uncoupled / tail"))
         for i, c in enumerate(sorted(x for x in set(labels.tolist()) if x >= 0)):
             m = np.where(labels == c)[0]
-            data.append(_marker_trace(m, _PALETTE[i % len(_PALETTE)], f"C{c}"))
+            name = (community_labels or {}).get(c, f"C{c}")
+            data.append(_marker_trace(m, _PALETTE[i % len(_PALETTE)], name))
     else:
         # ── Colour by external attribute (e.g. BERTopic topic) ──────────────
         color_by = np.asarray(color_by)

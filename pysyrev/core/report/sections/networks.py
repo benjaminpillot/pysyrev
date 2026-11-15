@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pysyrev.core.report.sections.common import _topic_label
+from pysyrev.core.report.sections.common import _short_label, _topic_label
 
 
 def _slug(label: str) -> str:
@@ -63,6 +63,8 @@ def _export_network_html(fig, export_to, label):
     file_uri = Path(html_path).resolve().as_uri()
     return {
         "type":  "callout",
+        # The HTML report embeds the live figure itself.
+        "only":  "pdf",
         "title": "Interactive version",
         "text":  (f'Open the interactive graph: '
                   f'<link href="{file_uri}" color="#0B63CE">{html_name}</link>'),
@@ -235,6 +237,32 @@ def _label_cocitation_communities(run_dir, cocitation_result, config):
         kind="co-citation")
 
 
+def _ref_doi(tok):
+    """Normalized DOI of a token (raw citation, doi.org URL, or bare DOI),
+    or None when it carries no DOI (e.g. an opaque OpenAlex id)."""
+    from pysyrev.core.references import (
+        _extract_ref_doi, _normalize_doi_value, _BARE_DOI_RE)
+
+    if tok is None or (isinstance(tok, float) and np.isnan(tok)):
+        return None
+    tok = str(tok).strip()
+    if not tok:
+        return None
+    d = _extract_ref_doi(tok)
+    if d:
+        return _normalize_doi_value(d)
+    if _BARE_DOI_RE.match(tok.lower()):
+        return _normalize_doi_value(tok)
+    return None
+
+
+def _community_name(comm: int, cluster_labels) -> str:
+    """How a community is named on a figure: its id, and its label when the
+    communities were labelled — the id is what the tables refer to."""
+    label = (cluster_labels or {}).get(int(comm))
+    return f"C{comm} · {_short_label(label, 40)}" if label else f"C{comm}"
+
+
 def _community_profile_blocks(result, node_meta) -> list:
     """Who and when each community is made of — for a network of references.
 
@@ -284,14 +312,15 @@ def _community_profile_blocks(result, node_meta) -> list:
                 first,
                 str(w.get("year") or "-"),
                 f"{w['strength']:.3g}",
+                _ref_doi(w.get("key")) or _ref_doi(w.get("doi")) or "—",
             ])
     if work_rows:
         blocks.append({
             "type": "table",
             "title": "Most co-cited works per community",
-            "headers": ["Community", "Title", "First author", "Year", "Strength"],
+            "headers": ["Community", "Title", "First author", "Year", "Strength", "DOI"],
             "rows": work_rows,
-            "col_widths": [1.3, 7.4, 3.2, 1.0, 1.4],
+            "col_widths": [1.3, 6.3, 2.6, 1.0, 1.4, 3.4],
         })
     return blocks
 
@@ -325,9 +354,6 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
     color_labels = {t: _topic_label(t, topic_labels)
                     for t in set(topics.tolist()) if t != -1}
 
-    from pysyrev.core.references import (
-        _extract_ref_doi, _normalize_doi_value, _BARE_DOI_RE)
-
     meta = df.drop_duplicates("id").set_index("id") if df is not None else None
 
     def _meta(nid, col, default="-"):
@@ -336,21 +362,6 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
             if v is not None and not (isinstance(v, float) and np.isnan(v)):
                 return v
         return default
-
-    def _ref_doi(tok):
-        """Normalized DOI of a token (raw citation, doi.org URL, or bare DOI),
-        or None when it carries no DOI (e.g. an opaque OpenAlex id)."""
-        if tok is None or (isinstance(tok, float) and np.isnan(tok)):
-            return None
-        tok = str(tok).strip()
-        if not tok:
-            return None
-        d = _extract_ref_doi(tok)
-        if d:
-            return _normalize_doi_value(d)
-        if _BARE_DOI_RE.match(tok.lower()):
-            return _normalize_doi_value(tok)
-        return None
 
     # In-corpus works keyed by their normalized DOI → title, so a reference node
     # expressed as a DOI (canonical reference_keys) resolves to its corpus title.
@@ -386,6 +397,10 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
             y = (node_meta.get(nid) or {}).get("year")
         return y if y is not None else "-"
 
+    # Legend and hover name a community by its label, when it has one.
+    community_names = {int(c): _community_name(int(c), cluster_labels)
+                       for c in set(result.labels.tolist()) if c >= 0}
+
     strength = result.W.sum(axis=1)
     hover = []
     for nid, comm, tp, st in zip(result.node_ids, result.labels, topics, strength):
@@ -396,7 +411,7 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
             f"<b>{title_txt}</b><br>"
             + (f"{authors}<br>" if authors else "")
             + f"DOI: {doi_txt}<br>Year: {_year(nid)}<br>"
-            f"Community: {'C%d' % comm if comm >= 0 else 'tail'}<br>"
+            f"Community: {community_names.get(int(comm), 'tail')}<br>"
             f"Topic: {tlabel}<br>Strength: {st:.3g}"
         )
 
@@ -419,7 +434,7 @@ def _build_network_subsection(result, df, bertopic_results, topic_labels, *,
         color_by=color_by, color_labels=color_labels,
         hover_text=hover, title=None,
         edge_scale=edge_scale, edge_width_range=tuple(edge_width_range),
-        edge_hover=_edge_hover,
+        edge_hover=_edge_hover, community_labels=community_names,
     )
 
     # ── Stats + top-10 nodes by strength ───────────────────────────────────

@@ -1232,6 +1232,46 @@ class TestCommunityLLMLabelColumn:
         tbl = self._theme_table(sub)
         assert tbl["headers"] == ["Community", "Docs", "Top terms"]
 
+    def _legend(self, sub):
+        fig = next(b for b in sub["blocks"] if b.get("type") == "plotly")["figure"]
+        return [t.name for t in fig.data if t.name and t.name.startswith("C")]
+
+    def test_legend_and_hover_name_the_communities_by_their_label(self):
+        sub = self._subsection(
+            {0: ["solar"], 1: ["wind"]},
+            {0: "Solar photovoltaic deployment", 1: "Onshore wind integration"})
+        assert self._legend(sub) == ["C0 · Solar photovoltaic deployment",
+                                     "C1 · Onshore wind integration"]
+        fig = next(b for b in sub["blocks"] if b.get("type") == "plotly")["figure"]
+        c0 = next(t for t in fig.data if t.name and t.name.startswith("C0"))
+        assert "Community: C0 · Solar photovoltaic deployment" in c0.hovertext[0]
+
+    def test_legend_keeps_the_id_alone_without_a_label(self):
+        assert self._legend(self._subsection({0: ["solar"], 1: ["wind"]},
+                                             {0: "Solar"})) == ["C0 · Solar", "C1"]
+        assert self._legend(self._subsection({}, None)) == ["C0", "C1"]
+
+
+class TestCoCitedWorksTable:
+    """The works each co-citation community is built on come with their DOI."""
+
+    def test_doi_column(self):
+        from pysyrev.core.report.sections.networks import _community_profile_blocks
+        from pysyrev.core.networks.common import NetworkResult
+        ids = ["10.1000/aaa", "https://openalex.org/W2"]
+        res = NetworkResult(node_ids=ids, W=np.array([[0, 1], [1, 0]], float),
+                            labels=np.array([0, 0]), coords=np.zeros((2, 2)),
+                            modularity=0.0)
+        meta = {ids[0]: {"title": "Keyed by its DOI", "year": 2020, "authors": ["A"]},
+                ids[1]: {"title": "Resolved DOI", "year": 2021, "authors": ["B"],
+                         "doi": "https://doi.org/10.1000/BBB"}}
+        works = next(b for b in _community_profile_blocks(res, meta)
+                     if b["title"].startswith("Most co-cited works"))
+        assert works["headers"][-1] == "DOI"
+        assert len(works["col_widths"]) == len(works["headers"])
+        assert {r[1]: r[-1] for r in works["rows"]} == {
+            "Keyed by its DOI": "10.1000/aaa", "Resolved DOI": "10.1000/bbb"}
+
 
 class TestCommunityTopicMapping:
     """The community × topic heatmap crosses Leiden communities with BERTopic topics."""
