@@ -493,6 +493,8 @@ topic_report:
          min_size: 5            # communities smaller than this fall into the uncoupled tail
          backbone_k: 3          # draw only each node's k strongest couplings
          color_by: community    # topic | community
+         edge_scale: tertile    # edge width = normalised coupling: tertile (3 widths by rank) | linear
+         edge_width_range: [0.4, 3.5]  # px, linear only — raw shared references are in the edge hover
        cocitation:              # reference × reference (Salton + Leiden)
          min_ref_freq: 2        # keep references cited by at least this many documents
          resolution_range: [0.4, 1.2]
@@ -500,6 +502,8 @@ topic_report:
          min_size: 5
          backbone_k: 3
          color_by: community    # topic | community
+         edge_scale: tertile    # tertile | linear — documents citing both references are in the edge hover
+         edge_width_range: [0.4, 3.5]
          metadata:               # resolve the reference nodes to real works — without it the
                                  # clusters cannot be named (they are extra-corpus works the
                                  # corpus knows nothing about). Omit the block to skip the step.
@@ -510,8 +514,32 @@ topic_report:
            include_abstracts: false    # richer TF-IDF terms, much larger payload/cache (default: false)
        connectivity:            # mean coupling between groups (both topic AND community panels are rendered)
          scale: 1000            # rescales the tiny coupling values for readability
+     # Top countries / institutions / authors and their collaboration networks.
+     # Rendered whenever the reviewed corpus carries the `actors` column (built
+     # by the bib stage for every source — re-run bib on an older corpus). All
+     # values below are the defaults — comment the whole block to use them.
+     actors:
+       levels: [country, institution, author]
+       top_n: 15
+       sort_by: papers          # papers (full counting) | fractional (1/n per paper) | citations
+       network:
+         enabled: true
+         min_papers: 2          # actors with fewer papers are left out
+         max_nodes: 150         # most productive actors drawn
+         normalize: salton      # link strength for layout/communities: salton | association | count
+         resolution_range: [0.6, 1.4]
+         resolution_step: 0.1
+         min_size: 3
+         backbone_k: 3
+         n_labels: 15           # name the n largest nodes
+         size_by: citations     # node area ∝ citations | papers | fractional
+         size_range: [5, 45]    # node diameter, px
+         edge_width_by: count   # edge width ∝ sqrt(co-signed papers) | weight (normalised strength)
+         edge_width_range: [0.5, 6.0]
+         node_opacity: 1.0      # 1 = opaque nodes hide the edges under them; < 1 lets them show through
 #     temporal:
-#       variants: [absolute, normalized, weighted]
+#       variants: [trajectory, absolute, normalized, weighted]
+#       smoothing_window: 3   # years of the centred rolling mean beside the per-year curves (1 = raw only)
 #     topic_characteristics:
 #       n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
 #       n_top_cited_global: 50     # N most-cited papers globally used for topic distribution

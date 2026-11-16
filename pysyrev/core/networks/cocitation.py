@@ -38,6 +38,7 @@ from pysyrev.core.networks.common import (
     leiden_communities,
     reference_sets,
     resolution_grid,
+    salton_counts,
 )
 
 
@@ -238,9 +239,12 @@ def build_cocitation(df, ref_col: str = REFS, min_ref_freq: int = 2,
         sweep = None
     coords = force_layout(W, seed=seed, niter=layout_niter)
     terms = _reference_subthemes(ref_ids, labels, ref_meta)
+    _, freq = frequent_references(refsets, min_ref_freq=min_ref_freq)
     return NetworkResult(node_ids=ref_ids, W=W, labels=labels,
                          coords=coords, modularity=modularity,
                          resolution=resolution, resolution_sweep=sweep,
                          terms=terms,
+                         # documents citing both references behind each link
+                         counts=salton_counts(W, [freq[r] for r in ref_ids]),
                          node_meta={k: v for k, v in ref_meta.items()
                                     if k in set(ref_ids)})

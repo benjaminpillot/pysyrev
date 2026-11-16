@@ -12,7 +12,7 @@
 
 </div>
 
-**pysyrev** (PYthon SYstematic REView) is an automated, LLM-assisted PRISMA workflow for systematic literature reviews. It covers the full pipeline — from raw bibliographic records to screened, deduplicated, and thematically structured corpora — and produces a PDF report at the end.
+**pysyrev** (PYthon SYstematic REView) is an automated, LLM-assisted PRISMA workflow for systematic literature reviews. It covers the full pipeline — from raw bibliographic records to screened, deduplicated, and thematically structured corpora — and produces a PDF report, and its interactive HTML twin, at the end.
 
 ---
 
@@ -22,10 +22,13 @@
 - **Automatic deduplication** — fuzzy title matching across sources, with a configurable source priority (OpenAlex wins by default, keeping its stable IDs; duplicates are aliased so references still resolve)
 - **Canonical reference keys** — optionally remap every reference onto a shared DOI key space so bibliographic coupling holds across merged sources regardless of merge order: intra-corpus and DOI-bearing references map for free, extra-corpus OpenAlex ids are resolved to DOIs via the OpenAlex API and cached (skipped automatically when there is no other-source DOI to bridge to)
 - **LLM-based title/abstract screening** — multi-reviewer workflows with majority or mean voting, powered by any provider supported by LiteLLM (Anthropic, OpenAI, Ollama, LiteLLM proxy…) or by [Albert](https://albert.api.etalab.gouv.fr), the French State's sovereign gateway (`provider: albert`, key in `ALBERT_API_KEY`) — useful when the corpus may not leave French public infrastructure
-- **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report
+- **Bibliographic network panels** — bibliographic coupling and co-citation networks (Salton similarity + Leiden communities, readable backbone layout) cross-coloured by BERTopic topic, plus an inter-topic connectivity matrix (mean coupling between topics), all rendered in the report; the raw counts behind each link (shared references, co-citing documents) are in the edge hover of the interactive HTML
+- **Actors: who drives the literature** — every record's authors, institutions and countries, read from whatever its source knows (OpenAlex authorships, WoS addresses and unified organisations, Scopus/PubMed addresses) and unified on shared identifiers (ORCID for people, ROR for institutions, ISO codes for countries); the report ranks the most involved actors (full and fractional counting, citations, active years) and draws their collaboration networks
 - **Topic modelling** — BERTopic-based clustering with UMAP + HDBSCAN grid search, ranked by coherence scores
 - **Reading-list selection** — rank the most relevant papers per topic by citations, network centrality, or a three-axis composite (coupling centrality + citation impact + thematic representativeness)
 - **PDF report generation** — declarative, theme-aware PDF engine built on ReportLab
+- **Interactive HTML report** — the same report as one self-contained page: sections in a sidebar, live Plotly figures (zoom, hover, legend toggling), sortable and filterable tables; written beside the PDF (`topic_report.export.formats: [pdf, html]`)
+- **Live report** — `pysyrev serve config.yaml` serves that page locally with a settings panel: change a ranking criterion, a node size or an edge scale and the section is rebuilt in place; the changed settings are shown as YAML to paste back into the config
 - **Download full-text PDFs** — retrieve full-text PDFs for a list of candidates, e.g. the reading-list selection
 - **Token cost estimation** — price review stage before running it when calling external API (anthropic, OpenAI, etc.)
 - **Deferred batch reviewing** — screen the corpus through the provider's batch endpoint (`review.use_batch_api`): same prompts, results within 24 h, half price on input and output; interrupted runs re-attach to the batch already paid for
@@ -36,10 +39,10 @@
 
 | Stage | Key | Description |
 |---|---|---|
-| Bibliography | `bib` | Fetch, clean, filter, deduplicate, and optionally resolve references |
+| Bibliography | `bib` | Fetch, clean, filter, deduplicate, and optionally resolve references; record each paper's authors, institutions and countries (`actors` column) |
 | LLM review | `review` | Screen documents against inclusion/exclusion criteria with one or more LLM reviewers |
 | Topic modelling | `topic-model` | Cluster documents into topics using BERTopic; rank configurations by coherence |
-| Report | `topic-report` | Generate a PDF report from the selected topic model run, including the bibliographic coupling, co-citation and topic-connectivity network panels (recomputed from the reviewed corpus' references) |
+| Report | `topic-report` | Generate a PDF report from the selected topic model run, including the bibliographic coupling, co-citation and topic-connectivity network panels (recomputed from the reviewed corpus' references) and the actors section (top countries, institutions, authors and their collaboration networks) |
 
 All sections are optional — only the stages declared in the config file are executed. Each stage auto-detects the most recent output of the previous one when run standalone.
 
@@ -101,6 +104,10 @@ pysyrev config.yaml --stage topic-model topic-report
 pysyrev config.yaml --from topic-model
 pysyrev config.yaml --from topic-report
 
+# Explore the report live: the interactive page plus a settings panel (writes nothing)
+pysyrev serve config.yaml
+pysyrev serve config.yaml --port 8765 --no-browser
+
 # Download full-text PDFs for a list of candidates (Unpaywall → OpenAlex → Elsevier TDM)
 pysyrev download candidates.csv output_folder/
 pysyrev download candidates.csv output_folder/ --config download_config.yaml
@@ -109,6 +116,11 @@ pysyrev download candidates.csv output_folder/ --config download_config.yaml
 pysyrev estimate config.yaml
 pysyrev estimate config.yaml --sweep            # what other items_per_call would cost
 pysyrev estimate config.yaml --calibrate previous_run/reviewed_total.csv
+
+# List the mandatory sections/keys, and check which stages a config can run
+pysyrev check
+pysyrev check config.yaml
+pysyrev check config.yaml --stage bib
 ```
 
 Valid stage names: `bib` | `review` | `topic-model` | `topic-report`.
@@ -127,7 +139,7 @@ pipeline.run()
 
 # Run specific stages (always executed in canonical order)
 pipeline.run(stages=["bib", "review"])
-pipeline.run(stages=["topic-report"])  # generates the PDF report
+pipeline.run(stages=["topic-report"])  # generates the PDF report and its HTML twin
 
 # Run from a given stage to the end
 start = ALL_STAGES.index("topic-model")
@@ -148,7 +160,8 @@ A config containing only the `topic_report` (and optionally `report` and `llm`) 
 # report_only.yaml
 topic_report:
   run_dir: /path/to/topic_modeling/run_2026-05-01T120000/  # or leave blank to auto-detect
-  export_to: /path/to/output/report/
+  export:
+    export_dir: /path/to/output/report/
 ```
 
 Which model configuration is rendered comes from `topic_model.best_model_index` (default `0`, the highest-ranked one), not from the `topic_report` section.
@@ -157,11 +170,47 @@ Which model configuration is rendered comes from `topic_model.best_model_index` 
 pysyrev report_only.yaml
 ```
 
+### Actors: who drives the literature
+
+The `bib` stage gives every record an `actors` column — its authors, institutions and countries, each keyed by the strongest identity its source offers (`orcid:` > OpenAlex/WoS id > normalised name for authors, `ror:` > OpenAlex id > name for institutions, ISO 3166 codes for countries). ORCID and ROR are shared across sources, so OpenAlex and WoS records of the same person or institution meet on them; after the merge, a name-only actor is re-keyed onto the identified one bearing the same unambiguous name.
+
+The report's actors section renders whenever the reviewed corpus carries that column (tune it under `topic_report.sections.actors`). The same analyses are available from Python, whatever the source of the corpus:
+
+```python
+import pandas as pd
+from pysyrev.core.networks import build_collaboration, collaboration_summary, rank_actors
+
+df = pd.read_csv("reviewed_included.csv")
+
+collaboration_summary(df)                               # coverage, team size, international share…
+rank_actors(df, "country", top=15)                      # papers (full / fractional), citations, active years
+rank_actors(df, "institution", sort_by="fractional")
+collab = build_collaboration(df, "author", min_papers=2)  # Leiden communities + layout
+collab.plot()
+```
+
+A corpus exported before the column existed has no actors section: re-run its `bib` stage.
+
 ---
 
 ## Configuration
 
 A single YAML file controls all stages. Copy `pysyrev/templates/config.yaml` and fill in the sections you need — or start from one of the fuller, annotated files in `config_examples/`. Sections not present in the file are simply skipped.
+
+Set a root-level `output_dir:` to keep every result of a project in one folder: each section then exports to `<output_dir>/<section>/` (`bib/`, `review/`, `topic_model/`, `topic_report/`), and its own `export.export_dir` becomes an optional override — relative to `output_dir`, or absolute.
+
+### Mandatory sections and keys
+
+Each stage reads its own section, and only its own: an incomplete `topic_model:` cannot stop `--stage bib`. Loading reports such a section and keeps going; the error is raised when a stage that needs it runs. Run `pysyrev check` for the authoritative, always-current list, and `pysyrev check config.yaml` to see which stages your file can run.
+
+| Stage | Needs | Mandatory keys | Also reads when valid |
+|---|---|---|---|
+| `bib` | `bib:` | at least one source among `wos:` / `open_alex:` / `scopus:` / `pubmed:` | — |
+| `review` | `review:` | `export.export_dir` (or a root `output_dir`), `text_inputs`, `inclusion_criteria`, `exclusion_criteria`, `reviewers[]` (`name`, `model_id`, `provider`, `backstory`), `workflow` | `topic_model:` |
+| `topic-model` | `topic_model:` | `export.export_dir` (or a root `output_dir`) | `llm:`, `topic_report:` |
+| `topic-report` | `topic_report:` | none | `topic_model:`, `llm:` |
+
+The `llm:` section (topic labelling) is optional everywhere, but needs `provider` and `model_id` once declared.
 
 Key auto-detection rules (when fields are left blank):
 

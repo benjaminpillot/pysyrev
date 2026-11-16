@@ -14,7 +14,9 @@
 #   topic_model  — BERTopic-based topic modelling
 #   topic_report — PDF report generation (model selection); the coupling and
 #                  co-citation network panels are computed here from the reviewed
-#                  dataset (see topic_report.sections.bib_network)
+#                  dataset (see topic_report.sections.bib_network), and so are the
+#                  actors panels — top countries / institutions / authors and their
+#                  collaboration networks (see topic_report.sections.actors)
 #   llm          — LLM topic labelling (optional, used with topic_report)
 #   report       — PDF layout and section parameters
 #
@@ -30,6 +32,13 @@
 # Optional: path to a .env file.  Any ${VAR} reference in this file is
 # resolved against it at load time.
 # env: /path/to/.env
+
+# Optional but recommended: one root folder for every result of the project.
+# Each section then exports to <output_dir>/<section>/ (bib/, review/,
+# topic_model/, topic_report/) and its own export.export_dir may be left blank.
+# A section's export_dir still overrides it: a relative path is taken under
+# output_dir, an absolute one is used as is.
+output_dir: /path/to/output/my_project/
 
 
 # =============================================================================
@@ -160,7 +169,7 @@ bib:
   # Leave run_name blank to auto-generate a timestamp (YYYY-MM-DDTHHMMSS).
   # The review section will automatically pick up the most recent run.
   export:
-    export_dir: /path/to/output/bib_results/
+    export_dir:             # blank → <output_dir>/bib/
     run_name:               # blank → auto-timestamp; or e.g. "may_2026_wos_oa"
 
 
@@ -181,7 +190,7 @@ review:
   # The topic_model section auto-detects the most recent run (its dataset also
   # feeds the report's network panels).
   export:
-    export_dir: /path/to/output/review_results/
+    export_dir:             # blank → <output_dir>/review/
     run_name:               # blank → auto-timestamp; or e.g. "pilot_run_1"
     cache_dir:              # blank → <export_dir>/<run_name>/cache/
 
@@ -358,7 +367,7 @@ topic_model:
   doc_dataset:
 
   export:
-    export_dir: /path/to/output/topic_modeling/
+    export_dir:                   # blank → <output_dir>/topic_model/
     run_name:                     # blank → auto-timestamp
 
   # ---- Distance metric used to rank configurations -----------------------
@@ -448,11 +457,12 @@ topic_model:
 # Remove this section entirely to skip report generation.
 #
 # topic_report:
-#   export_to: /path/to/output/report/
+#   export:
+#     export_dir:           # blank → <output_dir>/topic_report/
+#     # formats: [pdf, html]  # pdf = printable document | html = one self-contained interactive page
 #   # run_dir:              # blank → auto-detect the latest topic_model run
 #
 #   # ---- PDF metadata (defaults shown) -------------------------------------
-#   # meta4 rue du puits vieux 34110 Vic la Gardiole:
 #   #   title: Bibliographic report — Pysyrev
 #   #   subtitle:
 #   #   author: Report generated with the pysyrev engine (v0.1)
@@ -472,6 +482,10 @@ topic_model:
 #   #       min_size: 5             # communities smaller than this fall into the uncoupled tail (default: 5)
 #   #       backbone_k: 3           # draw only each node's k strongest couplings (default: 3)
 #   #       color_by: topic         # topic | community (default: topic)
+#   #       edge_scale: tertile     # edge width = normalised coupling: tertile (3 widths by rank)
+#   #                               # | linear (proportional) (default: tertile). The raw number of
+#   #                               # shared references is in each edge's hover (HTML export).
+#   #       edge_width_range: [0.4, 3.5]  # thinnest / thickest edge in px, linear only (default: [0.4, 3.5])
 #   #     cocitation:               # reference × reference (Salton + Leiden)
 #   #       min_ref_freq: 2         # keep references cited by at least this many documents (default: 2)
 #   #       resolution_range: [0.4, 1.2]  # sweep Leiden resolutions and keep the best-modularity partition (default: [0.4, 1.2])
@@ -479,7 +493,10 @@ topic_model:
 #   #       min_size: 5             # communities smaller than this fall into the tail (default: 5)
 #   #       backbone_k: 3           # draw only each node's k strongest co-citations (default: 3)
 #   #       color_by: community     # topic | community (default: community)
-#   #       metadata:               # resolve the reference nodes to real works — without it the
+#   #       edge_scale: tertile     # tertile | linear, as for coupling; hover gives the number of
+#   #                               # documents citing both references (default: tertile)
+#   #       edge_width_range: [0.4, 3.5]  # linear only (default: [0.4, 3.5])
+#   #       metadata:              # resolve the reference nodes to real works — without it the
 #   #                               # clusters cannot be named (they are extra-corpus works the
 #   #                               # corpus knows nothing about). Omit the block to skip the step.
 #   #         provider: openalex    # openalex (default; the only backend today)
@@ -487,11 +504,34 @@ topic_model:
 #   #         email: you@example.com      # polite pool (optional, recommended)
 #   #         cache: cache/reference_metadata.csv  # persists across runs (default: none)
 #   #         include_abstracts: false    # richer TF-IDF terms, much larger payload/cache (default: false)
-#   #     connectivity:             # mean coupling between groups (both topic AND community panels are rendered)
-#   #       by: topic               # deprecated / ignored — both groupings are shown
-#   #       scale: 1000             # rescales the tiny coupling values for readability (default: 1000)
+#   #     connectivity:             # observed/expected coupling between groups (topic AND community panels)
+#   #       min_support: 10         # observations needed before a group's internal ratio is reported (default: 10)
+#   #       # by / scale: deprecated and ignored — kept only so older configs still load
+#   #   actors:                     # who drives the literature — rendered whenever the reviewed
+#   #                               # dataset carries the `actors` column (built by the bib stage
+#   #                               # for every source; re-run bib on an older corpus)
+#   #     levels: [country, institution, author]  # subsections, in order (default: all three)
+#   #     top_n: 15                 # actors listed per ranking table (default: 15)
+#   #     sort_by: papers           # papers (full counting) | fractional (1/n per paper) | citations
+#   #     network:                  # collaboration network per level (Salton + Leiden, as coupling)
+#   #       enabled: true
+#   #       min_papers: 2           # actors with fewer papers are left out (default: 2)
+#   #       max_nodes: 150          # most productive actors drawn (default: 150)
+#   #       normalize: salton       # link strength for layout/communities: salton | association | count
+#   #       resolution_range: [0.6, 1.4]  # Leiden sweep, best modularity kept (default: [0.6, 1.4])
+#   #       resolution_step: 0.1
+#   #       min_size: 3             # communities smaller than this fall into the tail (default: 3)
+#   #       backbone_k: 3           # draw only each node's k strongest links (default: 3)
+#   #       n_labels: 15            # name the n largest nodes on the graph (default: 15)
+#   #       size_by: citations      # node area ∝ citations | papers | fractional (default: citations)
+#   #       size_range: [5, 45]     # min / max node diameter in px (default: [5, 45])
+#   #       edge_width_by: count    # edge width ∝ sqrt of co-signed papers (count) or of the
+#   #                               # normalised strength (weight) (default: count)
+#   #       edge_width_range: [0.5, 6.0]  # thinnest / thickest edge in px (default: [0.5, 6.0])
+#   #       node_opacity: 1.0       # 1 = opaque nodes hide the edges under them; < 1 lets them show through (default: 1.0)
 #   #   temporal:
-#   #     variants: [absolute, normalized, weighted]
+#   #     variants: [trajectory, absolute, normalized, weighted]
+#   #     smoothing_window: 3       # years of the centred rolling mean beside the per-year curves (1 = raw only)
 #   #   topic_characteristics:
 #   #     n_top_cited_per_topic: 5   # N most-cited papers per topic used for citation impact
 #   #     n_top_cited_global: 50     # N most-cited papers globally used for topic distribution

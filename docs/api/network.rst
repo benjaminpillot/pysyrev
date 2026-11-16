@@ -47,6 +47,9 @@ Inter-community connectivity
 ----------------------------
 
 .. autofunction:: pysyrev.core.networks.inter_cluster_matrix
+.. autofunction:: pysyrev.core.networks.configuration_null
+.. autofunction:: pysyrev.core.networks.inter_cluster_enrichment
+.. autofunction:: pysyrev.core.networks.internal_support
 .. autofunction:: pysyrev.core.networks.corpus_baseline
 .. autofunction:: pysyrev.core.networks.coupling_inout
 .. autofunction:: pysyrev.core.networks.groups_from_labels

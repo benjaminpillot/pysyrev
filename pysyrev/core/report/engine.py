@@ -11,6 +11,9 @@ paragraph, rich_text, spacer, line, link, image, plotly,
 table, bullets, numbered_list, key_value, callout, code,
 page_break, subsection
 
+Any block may carry ``"only": "pdf"`` or ``"only": "html"`` to be rendered by
+one engine only (the HTML twin lives in :mod:`pysyrev.core.report.html`).
+
 The `plotly` block type expects a pre-built ``plotly.graph_objects.Figure``
 passed as ``block["figure"]``. plotly/kaleido must be installed separately.
 """
@@ -418,6 +421,16 @@ class _ReportDoc(BaseDocTemplate):
         ])
 
 
+def validate_report_data(report_data: Dict[str, Any]) -> None:
+    """Raise unless *report_data* has the shape every report engine reads."""
+    if "meta" not in report_data:
+        raise ValueError("report_data must contain a 'meta' key")
+    if "title" not in report_data["meta"]:
+        raise ValueError("report_data['meta'] must contain 'title'")
+    if "sections" not in report_data:
+        raise ValueError("report_data must contain a 'sections' key")
+
+
 # =============================================================================
 # PDF engine
 # =============================================================================
@@ -491,12 +504,7 @@ class PDFReportEngine:
     # -------------------------------------------------------------------------
     @staticmethod
     def _validate(report_data: Dict[str, Any]):
-        if "meta" not in report_data:
-            raise ValueError("report_data must contain a 'meta' key")
-        if "title" not in report_data["meta"]:
-            raise ValueError("report_data['meta'] must contain 'title'")
-        if "sections" not in report_data:
-            raise ValueError("report_data must contain a 'sections' key")
+        validate_report_data(report_data)
 
     # -------------------------------------------------------------------------
     # High-level renderers
@@ -534,6 +542,9 @@ class PDFReportEngine:
         return story
 
     def _render_block(self, block: Dict[str, Any]) -> list:
+        # A block may be addressed to one engine only (see core/report/html.py).
+        if block.get("only") not in (None, "pdf"):
+            return []
         renderer = self._renderers.get(block.get("type"))
         if not renderer:
             return [Paragraph(

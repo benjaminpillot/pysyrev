@@ -72,7 +72,8 @@ class TestFromOpenAlexResult:
     def test_all_columns_present_and_typed(self):
         result = types.SimpleNamespace(records=[_oa_record()])
         df = M.from_openalex_result(result)
-        assert list(df.columns) == list(DEFAULT_FIELDS.keys())
+        # DEFAULT_FIELDS, plus the canonical actors column (pysyrev.core.actors).
+        assert list(df.columns) == list(DEFAULT_FIELDS.keys()) + ["actors"]
         # The regression that broke the pipeline: all-empty text columns were
         # inferred as float64 and rejected by check_bib_dataset. author/affiliations
         # must now be string-like.

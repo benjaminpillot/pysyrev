@@ -411,6 +411,9 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
         except Exception:
             return "-"
 
+    def _fmt_doi(v):
+        return str(v).strip() if isinstance(v, str) and v.strip() else "-"
+
     def _fmt_axis(v):
         try:
             return "-" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{float(v):.2f}"
@@ -419,8 +422,8 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
 
     if is_composite:
         headers    = ["Topic", "Label", "Title", "Year", "Cit.",
-                      "Score", "Cent.", "Rel.", "Typ.", "Selection"]
-        col_widths = [1.0, 2.2, 5.2, 0.9, 0.9, 1.1, 1.1, 1.1, 1.1, 2.4]  # 17 cm
+                      "Score", "Cent.", "Rel.", "Typ.", "DOI", "Selection"]
+        col_widths = [0.9, 1.9, 4.2, 0.8, 0.8, 1.0, 1.0, 1.0, 1.0, 2.5, 1.9]  # 17 cm
     else:
         headers    = ["Topic", "Label", "Title", "Type", "Year", "Cit.", "DOI", "Selection"]
         col_widths = [1.0, 2.5, 5.5, 1.5, 1.0, 1.0, 2.5, 2.0]  # 17 cm
@@ -436,12 +439,12 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                 _fmt_year(row.get("year")), _fmt_cit(row.get("cited_by")),
                 _fmt_axis(row.get("composite_score")), _fmt_axis(row.get("centrality")),
                 rel, _fmt_axis(row.get("representativeness")),
-                str(row.get("_selection", "-")),
+                _fmt_doi(row.get("doi")), str(row.get("_selection", "-")),
             ]
         else:
             cells += [
                 str(row.get("document_type", "-")), _fmt_year(row.get("year")),
-                _fmt_cit(row.get("cited_by")), str(row.get("doi", "-")),
+                _fmt_cit(row.get("cited_by")), _fmt_doi(row.get("doi")),
                 str(row.get("_selection", "-")),
             ]
         table_rows.append(cells)
@@ -495,15 +498,16 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                 _fmt_axis(row.get("composite_score")),
                 _fmt_axis(row.get("centrality")),
                 _fmt_axis(row.get("representativeness")),
+                _fmt_doi(row.get("doi")),
             ])
         if front_rows:
             blocks.append({
                 "type":       "table",
                 "title":      f"Research fronts — current-year papers ({len(front_rows)})",
                 "headers":    ["Topic", "Label", "Title", "Year", "Cit.",
-                               "Score", "Cent.", "Typ."],
+                               "Score", "Cent.", "Typ.", "DOI"],
                 "rows":       front_rows,
-                "col_widths": [1.0, 2.6, 6.0, 0.9, 0.9, 1.2, 1.2, 1.2],
+                "col_widths": [1.0, 2.4, 5.2, 0.9, 0.9, 1.1, 1.1, 1.1, 2.8],
             })
             blocks.append({"type": "paragraph", "text": (
                 "Research fronts are the current (incomplete) year's papers, ranked on "

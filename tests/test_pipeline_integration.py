@@ -197,6 +197,26 @@ class TestTopicReportIntegration:
         assert Path(result).exists()
         assert Path(result).stat().st_size > 1024
 
+    def test_live_report_rebuilds_its_sections(self, tmp_path, topic_model_outputs):
+        report = TopicReport(
+            run_dir=topic_model_outputs["run_dir"],
+            report_config=_minimal_report_config(),
+            best_model_index=0,
+            export_to=str(tmp_path),
+            coupling_dataset=str(Path(__file__).parent / "data" / "bib_dataset.csv"),
+        )
+        live = report.live()
+        assert live.keys == ["actors", "bib_network"]
+        assert 'id="settings"' in live.page()
+        out = live.update("bib_network", {"coupling.color_by": "community",
+                                          "cocitation.backbone_k": 2})
+        assert "Bibliographic coupling" in out["html"]
+        out = live.update("actors", {"top_n": 3, "sort_by": "fractional"})
+        assert "fractional count" in out["html"]
+        assert "color_by: community" in out["yaml"] and "top_n: 3" in out["yaml"]
+        # Live: nothing is written.
+        assert list(tmp_path.iterdir()) == []
+
     def test_no_annex_when_disabled(self, tmp_path, topic_model_outputs):
         cfg = TopicReportConfig(
             meta=ReportMetaConfig(

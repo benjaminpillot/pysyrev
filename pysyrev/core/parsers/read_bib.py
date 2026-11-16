@@ -192,7 +192,7 @@ PUBMED_MULTIVALUE_PREFIXES = {
     'FAU - ': '; ',
     'AU  - ': ' and ',
     'AUID- ': '; ',
-    'AD  - ': '',
+    'AD  - ': '; ',   # one address per author: kept apart for the ';' split downstream
     'PT  - ': None,   # PT: no aggregation, just marked as consumed
 }
 
@@ -675,12 +675,23 @@ def read_bib(path, db='scopus', del_duplicated=True) -> tuple[pd.DataFrame, list
         if mask.any() and 'da' in data.columns:
             data.loc[mask, 'year'] = data.loc[mask, 'da'].str[:4]
 
+    # Raw affiliation fields, kept before the rewrites below flatten them: the
+    # actors adapters (pysyrev.core.actors) parse the structure those lose —
+    # WoS address blocks ("Names, Org, ..., Country.") and its
+    # organisation-enhanced names, one address per ';' elsewhere.
+    if db == 'wos':
+        data['affiliation_raw'] = data['affiliation_'].copy()
+        data['organizations_raw'] = data['affiliation'].copy()
+
     if 'affiliation' in data.columns and 'affiliation_' in data.columns:
         data = _rebuild_affiliation_from_affiliation_(data)
 
     if 'affiliation' in data.columns and 'affiliations' in data.columns:
         mask = data['affiliation'].isna() & data['affiliations'].notna()
         data.loc[mask, 'affiliation'] = data.loc[mask, 'affiliations']
+
+    if db != 'wos':
+        data['affiliation_raw'] = data['affiliation'].copy()
 
     if db == 'scopus':
         # 'Corresponding Author ' + NaN → NaN (pandas propagates NaN).

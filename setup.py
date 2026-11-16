@@ -34,6 +34,8 @@ setup(
         # a figure into the PNG the PDF embeds.
         "kaleido>=0.2",
         # Leiden communities for the coupling / co-citation networks.
+        # Actor countries (pysyrev.core.actors): names and codes → ISO 3166 alpha-2.
+        "pycountry>=22.3",
         "python-igraph>=0.11",
         "leidenalg>=0.10",
         "bertopic>=0.16",

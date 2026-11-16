@@ -33,6 +33,10 @@ automatically propagates outputs between stages:
 - ``review.export.export_dir``      → ``topic_model.doc_dataset``
 - ``topic_model.export.export_dir`` → ``topic_report.run_dir``
 
+With a root-level ``output_dir``, a stage finds its input under
+``<output_dir>/<upstream section>/`` even when the upstream section is absent
+from the config.
+
 .. note::
    ``topic_model.doc_dataset`` is also the file the report's bibliographic
    network panels are recomputed from, so it must carry the corpus' reference
@@ -62,6 +66,27 @@ Root level
         wos:
           api:
             api_key: ${WOS_API_KEY}
+
+``output_dir``
+   :Type: ``str``
+   :Default: —
+   :Required: no (but then every section needs its own ``export.export_dir``)
+
+   Root folder for every result of the project.  Each section exports to
+   ``<output_dir>/<section>/`` — ``bib/``, ``review/``, ``topic_model/``,
+   ``topic_report/`` — so their ``export.export_dir`` may be left blank.  A
+   section's ``export.export_dir`` still overrides it: a relative path is taken
+   under ``output_dir``, an absolute one is used as is.  API caches
+   (``cache_dir`` of the sources) are not placed under it, so they can be
+   shared across projects.
+
+   .. code-block:: yaml
+
+      output_dir: /path/to/output/solar_cooking/
+
+      topic_model:
+        export:
+          export_dir: specter2     # → /path/to/output/solar_cooking/specter2/
 
 
 ----
@@ -1129,11 +1154,15 @@ configurations to ``best_results.csv``.
 ----
 
 
-``topic_report`` — PDF report generation
-------------------------------------------
+``topic_report`` — report generation
+--------------------------------------
 
 Selects one model configuration from the topic-model results and generates the
-PDF report. Optionally uses the ``llm`` section for topic and community labels.
+report, as a PDF and as an interactive HTML page (see :doc:`report`).
+Optionally uses the ``llm`` section for topic and community labels.
+
+The drawing settings listed in :doc:`report` can also be tried in the browser
+with ``pysyrev serve config.yaml``, without regenerating the report.
 
 Which configuration is rendered is decided by ``topic_model.best_model_index``,
 not here.
@@ -1145,12 +1174,24 @@ not here.
    Path to a specific topic-model run directory.  Leave blank to use
    the most recent run in ``topic_model.export.export_dir``.
 
-``topic_report.export_to``
+``topic_report.export.export_dir``
    :Type: ``str``
-   :Required: yes
+   :Default: ``<output_dir>/topic_report/``
 
-   Directory where the generated PDF is written.  Interactive HTML versions of
-   the network figures and the paper-selection annex are written here too.
+   Directory where each report is written, in its own ``report_<timestamp>/``
+   sub-directory.  Interactive HTML versions of the network figures and the
+   paper-selection annex are written there too.  The former flat key
+   ``topic_report.export_to`` is still accepted, with a deprecation warning.
+
+``topic_report.export.formats``
+   :Type: list of ``str`` (a single ``str`` is accepted)
+   :Default: ``[pdf, html]``
+   :Values: ``pdf`` | ``html``
+
+   Formats to write, side by side under the same file name.  ``pdf`` is the
+   printable document; ``html`` is one self-contained page with interactive
+   figures, sortable tables and clickable DOIs.  When both are asked for, a
+   failing HTML export is reported and the PDF is kept.
 
 ``topic_report.meta``
    :Type: mapping
@@ -1288,26 +1329,204 @@ not here.
                :Type: ``bool``
                :Default: ``false``
 
+      ``coupling.edge_scale`` / ``cocitation.edge_scale``
+         :Type: ``str``
+         :Default: ``tertile``
+         :Values: ``tertile``, ``linear``
+
+         How edge width shows the normalised link strength.  ``tertile`` draws
+         three widths by rank among the drawn edges; ``linear`` makes the width
+         proportional to the strength, so a link twice as strong is twice as
+         thick.  The width always shows the *normalised* strength: raw shared
+         references would favour reference-rich reviews, raw co-citation
+         counts any two widely cited classics.  The raw count — shared
+         references for coupling, documents citing both references for
+         co-citation — is in each edge's hover, in the interactive HTML.
+
+      ``coupling.edge_width_range`` / ``cocitation.edge_width_range``
+         :Type: ``[float, float]``
+         :Default: ``[0.4, 3.5]``
+
+         Thinnest and thickest edge, in pixels (``linear`` scale only).
+
       ``bib_network.connectivity``
 
-         Inter-community and inter-topic connectivity matrices (mean coupling
-         between groups).
+         Inter-community and inter-topic connectivity matrices.  Each block is
+         scored as **observed / expected** against a degree-preserving null
+         model, which makes groups of different sizes comparable; ``1.00`` is
+         the expected level.
+
+         ``connectivity.min_support``
+            :Type: ``int``
+            :Default: ``10``
+
+            Observations required before a group's internal ratio is reported.
+            Below it the table cell is left blank and the heatmap's diagonal
+            cell is a gap: a ratio computed from two or three observations is
+            not a small ratio but an unknown one, and printing it would let it
+            rank against ratios that are known.  Only the diagonal is withheld —
+            outward figures rest on their own, far larger, evidence.  Raise it
+            on a large corpus, where a community backed by ten documents is
+            still thin.
 
          ``connectivity.scale``
             :Type: ``float``
             :Default: ``1000.0``
 
-            Rescales the very small coupling values so the matrix is readable.
+            Deprecated and ignored: the observed/expected ratio needs no
+            rescaling.  Kept so existing configs still load.
+
+   ``sections.actors``
+
+      Who drives the literature: the most involved countries, institutions and
+      authors, and their collaboration networks.  Read from the reviewed
+      dataset's ``actors`` column, which the ``bib`` stage builds for every
+      source (OpenAlex API/CSV, WoS API/file, Scopus, PubMed) and unifies on
+      shared identifiers — ORCID for people, ROR for institutions, ISO codes
+      for countries.  The section renders whenever that column is present; a
+      corpus exported before it existed needs its ``bib`` stage re-run.
+
+      ``actors.levels``
+         :Type: list of ``str``
+         :Default: ``[country, institution, author]``
+         :Values: any subset of ``country``, ``institution``, ``author``
+
+         Levels rendered, in order — one subsection (ranking + network) each.
+
+      ``actors.top_n``
+         :Type: ``int``
+         :Default: ``15``
+
+         Actors listed in each ranking table.
+
+      ``actors.sort_by``
+         :Type: ``str``
+         :Default: ``papers``
+         :Values: ``papers``, ``fractional``, ``citations``
+
+         Ranking criterion.  ``papers`` is full counting (1 per paper the actor
+         appears on); ``fractional`` splits each paper among its actors of the
+         level (1/n), so a large consortium paper does not outweigh many small
+         ones; ``citations`` sums the citations of the actor's papers.  All
+         three are shown in the table whichever is chosen.
+
+      ``actors.network``
+
+         Collaboration network of each level: two actors are linked by the
+         papers they sign together; Leiden communities and a force layout on
+         the same matrix, as for the coupling network.
+
+         ``network.enabled``
+            :Type: ``bool``
+            :Default: ``true``
+
+         ``network.min_papers``
+            :Type: ``int``
+            :Default: ``2``
+
+            Actors with fewer papers are left out of the network.
+
+         ``network.max_nodes``
+            :Type: ``int``
+            :Default: ``150``
+
+            The most productive actors drawn (past a few hundred nodes an
+            author network is unreadable).
+
+         ``network.normalize``
+            :Type: ``str``
+            :Default: ``salton``
+            :Values: ``salton``, ``association``, ``count``
+
+            Link weight: shared papers over ``sqrt(p_i p_j)`` (``salton``),
+            observed over expected (``association``, VOSviewer's association
+            strength), or the raw number of shared papers (``count``).
+
+         ``network.resolution_range`` / ``network.resolution_step``
+            :Type: ``[float, float]`` / ``float``
+            :Default: ``[0.6, 1.4]`` / ``0.1``
+
+            Leiden resolution sweep; the best-modularity partition is kept.
+
+         ``network.min_size``
+            :Type: ``int``
+            :Default: ``3``
+
+            Communities smaller than this join the grey tail.
+
+         ``network.backbone_k``
+            :Type: ``int``
+            :Default: ``3``
+
+            Only each node's *k* strongest links are drawn.
+
+         ``network.n_labels``
+            :Type: ``int``
+            :Default: ``15``
+
+            The *n* largest nodes (by ``size_by``) are named on the graph.
+
+         ``network.size_by``
+            :Type: ``str``
+            :Default: ``citations``
+            :Values: ``citations``, ``papers``, ``fractional``
+
+            What node size shows.  The marker *area* is proportional to it, so
+            an actor with twice the citations reads twice as big.
+
+         ``network.size_range``
+            :Type: ``[float, float]``
+            :Default: ``[5.0, 45.0]``
+
+            Smallest and largest marker diameter, in pixels.
+
+         ``network.edge_width_by``
+            :Type: ``str``
+            :Default: ``count``
+            :Values: ``count``, ``weight``
+
+            What edge width shows, width proportional to its square root.
+            ``count`` is the raw number of co-signed papers — the volume of a
+            collaboration; ``weight`` is the normalised link (see
+            ``normalize``) — its intensity relative to the two actors' output,
+            which makes a tie between two small actors as thick as one between
+            two large ones.  Either way, layout, communities and *which* links
+            are drawn (``backbone_k``) follow the normalised weight.
+
+         ``network.edge_width_range``
+            :Type: ``[float, float]``
+            :Default: ``[0.5, 6.0]``
+
+            Thinnest and thickest edge, in pixels.
+
+         ``network.node_opacity``
+            :Type: ``float``
+            :Default: ``1.0``
+
+            Node opacity, in ``(0, 1]``.  Nodes are always drawn above the
+            edges; at ``1.0`` they hide them, below it the edges show through
+            (Plotly's own default for sized markers is ``0.7``).
 
    ``sections.temporal``
 
       ``temporal.variants``
          :Type: list of ``str``
-         :Default: ``[absolute, normalized, weighted]``
-         :Values: any subset of ``absolute``, ``cumulative``, ``normalized``, ``weighted``
+         :Default: ``[trajectory, absolute, normalized, weighted]``
+         :Values: any subset of ``trajectory``, ``absolute``, ``normalized``, ``weighted``
 
          Publication-trend chart variants included in the temporal
-         analysis section.
+         analysis section.  ``trajectory`` draws the per-year curves — annual
+         document count per topic, its rolling mean, and each topic's share of
+         the year — which is where an acceleration or a slowdown is visible;
+         the other three are cumulative and only ever rise.
+
+      ``temporal.smoothing_window``
+         :Type: ``int``
+         :Default: ``3``
+
+         Width, in years, of the centred rolling mean drawn beside the raw
+         ``trajectory`` curves.  ``1`` disables the smoothing and keeps the raw
+         counts alone.
 
    ``sections.topic_characteristics``
 

@@ -13,13 +13,18 @@ vs UmapModel).
 Environment variables: any string in the YAML may contain ${VAR} references.
 They are resolved at load time using the environment, augmented with the
 contents of the .env file pointed to by the root-level `env:` key (if any).
+
+Validation is per stage: loading only records what is wrong with a section
+(see :attr:`Config.errors`), so a section no stage asked for cannot stop a run.
+The error is raised when a stage that needs that section is run.
 """
 import dataclasses
 import datetime
 import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, fields, field
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Set, Union, get_args, get_origin
 
 import yaml
 from dotenv import load_dotenv
@@ -27,6 +32,89 @@ from dotenv import load_dotenv
 
 # Pattern to resolve ${ENV_VAR} references inside YAML string values.
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}]+)\}')
+
+
+# =============================================================================
+# Config errors, dotted paths, and mandatory keys
+# =============================================================================
+
+class ConfigError(ValueError):
+    """A bad config node, named by its dotted YAML path (``review.export``)."""
+
+    def __init__(self, message: str, path: str = ''):
+        self.path = path
+        self.section = path.split('.')[0].split('[')[0] if path else ''
+        super().__init__(message)
+
+
+#: Dotted path of the node currently being built. Loading is synchronous, so a
+#: module-level stack is enough for a sub-block to name itself.
+_PATH: List[str] = []
+
+
+@contextmanager
+def _at(key: str):
+    _PATH.append(key)
+    try:
+        yield
+    finally:
+        _PATH.pop()
+
+
+def _dotted(*extra: str) -> str:
+    """The dotted path of the node being built, plus *extra* keys under it."""
+    return '.'.join([*_PATH, *extra])
+
+
+def _is_mandatory(field_) -> bool:
+    """True for a field the YAML must fill: no default, no default factory."""
+    return (isinstance(field_.default, dataclasses._MISSING_TYPE)
+            and isinstance(field_.default_factory, dataclasses._MISSING_TYPE))
+
+
+def _instantiate(cls, block: dict):
+    """Build *cls* from the YAML mapping *block*, naming bad keys by path."""
+    renamed = getattr(cls, 'RENAMED_KEYS', {})
+    block = {renamed.get(k, k): v for k, v in block.items()}
+
+    known = {f.name for f in fields(cls)}
+    unknown = sorted(k for k in block if k not in known)
+    if unknown:
+        raise ConfigError(
+            f"unknown key(s) {', '.join(_dotted(k) for k in unknown)}. "
+            f"Keys accepted here: {', '.join(sorted(known))}.",
+            path=_dotted())
+
+    missing = [f.name for f in fields(cls)
+               if _is_mandatory(f) and block.get(f.name) is None]
+    if missing:
+        raise ConfigError(
+            f"mandatory key(s) missing or left empty: "
+            f"{', '.join(_dotted(k) for k in missing)}",
+            path=_dotted())
+
+    # A key written but left blank (`reasoning:`) reads as None in YAML, which
+    # would override the field's default rather than fall back to it. Blank
+    # means "use the default", as the template's comments promise.
+    optional = {f.name for f in fields(cls) if not _is_mandatory(f)}
+    block = {k: v for k, v in block.items() if not (v is None and k in optional)}
+
+    return cls(**block)
+
+
+def _build(cls, value, key: str):
+    """Parse the sub-block under *key* into *cls*; anything already parsed, or
+    blank, is returned untouched."""
+    if not isinstance(value, dict):
+        return value
+    with _at(key):
+        return _instantiate(cls, value)
+
+
+def _with_defaults(cls, value, key: str):
+    """Like :func:`_build`, but an absent block falls back to *cls*'s defaults."""
+    built = _build(cls, value, key)
+    return cls() if built is None else built
 
 
 def _make_run_dir(export_dir: str, run_name: Union[str, None]) -> tuple:
@@ -71,6 +159,72 @@ def _find_latest_file(export_dir: str, filename: str) -> Union[str, None]:
         return None
     candidate = os.path.join(latest_dir, filename)
     return candidate if os.path.isfile(candidate) else None
+
+
+#: Sections that write results, in stage order. Under a root-level
+#: ``output_dir``, each one exports to ``<output_dir>/<section>/`` by default.
+OUTPUT_SECTIONS = ('bib', 'review', 'topic_model', 'topic_report')
+
+
+def _resolve_export_dirs(resolved: dict) -> dict:
+    """Fill every section's ``export.export_dir`` from the root ``output_dir``.
+
+    - blank ``export_dir``    → ``<output_dir>/<section>``
+    - relative ``export_dir`` → ``<output_dir>/<export_dir>``
+    - absolute ``export_dir`` → kept as is (an explicit override)
+
+    Without ``output_dir`` the sections are left as written. The legacy flat
+    ``topic_report.export_to`` is folded into ``topic_report.export.export_dir``.
+    Returns a new mapping; *resolved* is not modified.
+    """
+    out = dict(resolved)
+    output_dir = out.get('output_dir')
+    if output_dir:
+        output_dir = os.path.expanduser(output_dir)
+        out['output_dir'] = output_dir
+
+    report = out.get('topic_report')
+    if isinstance(report, dict) and 'export_to' in report:
+        print("[config] `topic_report.export_to` is deprecated — use "
+              "`topic_report.export.export_dir`, or a root-level `output_dir`.")
+        report = dict(report)
+        legacy = report.pop('export_to')
+        export = dict(report.get('export') or {})
+        if legacy and not export.get('export_dir'):
+            export['export_dir'] = legacy
+        if export:
+            report['export'] = export
+        out['topic_report'] = report
+
+    if not output_dir:
+        return out
+
+    for name in OUTPUT_SECTIONS:
+        data = out.get(name)
+        if not isinstance(data, dict) or not data:
+            continue
+        export = data.get('export')
+        if export is not None and not isinstance(export, dict):
+            continue  # malformed: let the section's own parsing name it
+        export = dict(export or {})
+        export_dir = export.get('export_dir')
+        if not export_dir:
+            export['export_dir'] = os.path.join(output_dir, name)
+        elif not os.path.isabs(os.path.expanduser(export_dir)):
+            export['export_dir'] = os.path.join(output_dir, export_dir)
+        out[name] = {**data, 'export': export}
+    return out
+
+
+def _export_dir_of(resolved: dict, section: str) -> Union[None, str]:
+    """Where *section* exports: its own ``export.export_dir`` when declared,
+    else ``<output_dir>/<section>`` — so a stage finds its input under the
+    project root even when the upstream section is absent from this config."""
+    export = (resolved.get(section) or {}).get('export')
+    if isinstance(export, dict) and export.get('export_dir'):
+        return export['export_dir']
+    output_dir = resolved.get('output_dir')
+    return os.path.join(output_dir, section) if output_dir else None
 
 
 
@@ -123,10 +277,13 @@ class WosSourceConfig(ConfigField):
     file:   Union[None, str] = None
     api:    Union[None, WosApiConfig] = None
 
+    #: Keys mandatory only under some `source:` — reported by `pysyrev check`.
+    CONDITIONAL = ("`file:` when source is 'file'", "`api:` when source is 'api'")
+
     def __post_init__(self):
         super().__post_init__()
-        if self.source == 'api' and isinstance(self.api, dict):
-            self.api = WosApiConfig(**self.api)
+        if self.source == 'api':
+            self.api = _build(WosApiConfig, self.api, 'api')
         if self.source == 'file' and not self.file:
             raise ValueError("WoS source is 'file' but no `file:` path is set")
         if self.source == 'api' and self.api is None:
@@ -154,6 +311,8 @@ class AbstractCompletionConfig(ConfigField):
     provider:  Union[None, str] = None   # 'wos' today; 'scopus' / 'pubmed' planned
     api_key:   Union[None, str] = None    # typically `${WOS_API_KEY}` etc.
     cache_dir: Union[None, str] = None    # optional provider session cache
+
+    CONDITIONAL = ("`provider:` and `api_key:` in every entry",)
 
     def __post_init__(self):
         super().__post_init__()
@@ -216,6 +375,8 @@ class SeedExpansionConfig(ConfigField):
     #: provider would be.
     RENAMED_KEYS = {'phrases': 'queries', 'max_per_phrase': 'max_per_query'}
 
+    CONDITIONAL = ("`file:` or `seeds:` — at least one of the two",)
+
     @classmethod
     def from_dict(cls, block: dict) -> 'SeedExpansionConfig':
         """Build from a YAML block, accepting the pre-rename key spellings."""
@@ -272,12 +433,16 @@ class OpenAlexSourceConfig(ConfigField):
     api:            Union[None, OpenAlexApiConfig] = None
     seed:           Union[None, OpenAlexSeedConfig] = None
 
+    #: Keys mandatory only under some `source:` — reported by `pysyrev check`.
+    CONDITIONAL = ("`file:` when source is 'file'", "`api:` when source is 'api'",
+                   "`seed:` when source is 'seed'")
+
     def __post_init__(self):
         super().__post_init__()
-        if self.source == 'api' and isinstance(self.api, dict):
-            self.api = OpenAlexApiConfig(**self.api)
-        if self.source == 'seed' and isinstance(self.seed, dict):
-            self.seed = OpenAlexSeedConfig.from_dict(self.seed)
+        if self.source == 'api':
+            self.api = _build(OpenAlexApiConfig, self.api, 'api')
+        if self.source == 'seed':
+            self.seed = _build(OpenAlexSeedConfig, self.seed, 'seed')
         if self.source == 'file' and not self.file:
             raise ValueError("OpenAlex source is 'file' but no `file:` path is set")
         if self.source == 'api' and self.api is None:
@@ -422,60 +587,41 @@ class BibConfig(ConfigField):
     reference_keys:      Union[None, ReferenceKeysConfig]              = None
     abstract_completion: Union[None, List[AbstractCompletionConfig]]   = None
 
+    CONDITIONAL = ("at least one source among `wos:`, `open_alex:`, `scopus:`, `pubmed:`",)
+
     def __post_init__(self):
         super().__post_init__()
         # Backwards compatibility: a string under `wos:` / `open_alex:` is
         # treated as a file path. A dict is parsed as a structured source config.
-        if isinstance(self.wos, dict):
-            if not self.wos["source"]:
-                self.wos = None
+        # A blank `source:` is how a config file parks a source it is not using.
+        for name, source_cls in (('wos', WosSourceConfig),
+                                 ('open_alex', OpenAlexSourceConfig)):
+            value = getattr(self, name)
+            if isinstance(value, str):
+                setattr(self, name, source_cls(source='file', file=value))
+            elif isinstance(value, dict) and 'source' in value and not value['source']:
+                setattr(self, name, None)
             else:
-                self.wos = WosSourceConfig(**self.wos)
-        elif isinstance(self.wos, str):
-            self.wos = WosSourceConfig(source='file', file=self.wos)
+                setattr(self, name, _build(source_cls, value, name))
 
-        if isinstance(self.open_alex, dict):
-            if not self.open_alex["source"]:
-                self.open_alex = None
-            else:
-                self.open_alex = OpenAlexSourceConfig(**self.open_alex)
-        elif isinstance(self.open_alex, str):
-            self.open_alex = OpenAlexSourceConfig(source='file', file=self.open_alex)
+        self.export = _build(BibExportConfig, self.export, 'export')
 
-        if isinstance(self.export, dict):
-            self.export = BibExportConfig(**self.export)
-
-        if isinstance(self.clean, dict):
-            self.clean = CleanConfig(**self.clean)
-        elif self.clean is None:
-            self.clean = CleanConfig()
-
-        if isinstance(self.extract, dict):
-            self.extract = ExtractConfig(**self.extract)
-        elif self.extract is None:
-            self.extract = ExtractConfig()
-
-        if isinstance(self.resolve_references, dict):
-            self.resolve_references = ResolveReferencesConfig(**self.resolve_references)
-        elif self.resolve_references is None:
-            self.resolve_references = ResolveReferencesConfig()
-
-        if isinstance(self.merge, dict):
-            self.merge = MergeConfig(**self.merge)
-        elif self.merge is None:
-            self.merge = MergeConfig()
+        self.clean   = _with_defaults(CleanConfig, self.clean, 'clean')
+        self.extract = _with_defaults(ExtractConfig, self.extract, 'extract')
+        self.merge   = _with_defaults(MergeConfig, self.merge, 'merge')
+        self.resolve_references = _with_defaults(
+            ResolveReferencesConfig, self.resolve_references, 'resolve_references')
 
         # Presence of the block enables the canonical-key step; absence = None.
-        if isinstance(self.reference_keys, dict):
-            self.reference_keys = ReferenceKeysConfig(**self.reference_keys)
+        self.reference_keys = _build(
+            ReferenceKeysConfig, self.reference_keys, 'reference_keys')
 
         # Corpus-level abstract completion: a list of provider steps run on the
         # merged corpus. Presence enables it; absence leaves it None.
         if self.abstract_completion is not None:
             self.abstract_completion = [
-                c if isinstance(c, AbstractCompletionConfig)
-                else AbstractCompletionConfig(**c)
-                for c in self.abstract_completion
+                _build(AbstractCompletionConfig, c, f'abstract_completion[{i}]')
+                for i, c in enumerate(self.abstract_completion)
             ]
 
 
@@ -578,15 +724,18 @@ class ReviewerConfig(ConfigField):
     Cross-section fields like inclusion_criteria are NOT here — they live
     at the ReviewConfig level and are wired together by the runtime layer."""
     model_id:                str
-    host:                    str
     provider:                str
     name:                    str
-    max_tokens:              int
-    temperature:             float
-    reasoning_effort:        str
     backstory:               str
-    additional_context:      str
-    reasoning:               str              = 'brief'
+    # Every model knob below is routinely left blank, and the runtime simply
+    # omits the ones it is not given: a hosted provider needs no host, and
+    # max_tokens / temperature / reasoning_effort are not offered by every model.
+    host:                    Union[None, str]   = None
+    max_tokens:              Union[None, int]   = None
+    temperature:             Union[None, float] = None
+    reasoning_effort:        Union[None, str]   = None
+    additional_context:      Union[None, str]   = None
+    reasoning:               str                = 'brief'
     max_retries:             Union[None, int] = None  # None → falls back to ReviewConfig value
     max_concurrent_requests: Union[None, int] = None  # None → falls back to ReviewConfig value
     items_per_call:          Union[None, int] = None  # None → falls back to ReviewConfig value
@@ -627,9 +776,9 @@ class ReviewConfig(ConfigField):
 
     def __post_init__(self):
         super().__post_init__()
-        if isinstance(self.export, dict):
-            self.export = ReviewExportConfig(**self.export)
-        self.reviewers = [ReviewerConfig(**r) for r in self.reviewers]
+        self.export = _build(ReviewExportConfig, self.export, 'export')
+        self.reviewers = [_build(ReviewerConfig, r, f'reviewers[{i}]')
+                          for i, r in enumerate(self.reviewers)]
 
 
 @dataclass
@@ -675,43 +824,16 @@ class TopicModelConfig(ConfigField):
                 f"got {self.desired_topics!r}")
         self.desired_topics = band
 
-        if isinstance(self.export, dict):
-            self.export = TopicExportConfig(**self.export)
-
-        if isinstance(self.hdbscan, dict):
-            self.hdbscan = HDBSCANConfig(**self.hdbscan)
-        elif self.hdbscan is None:
-            self.hdbscan = HDBSCANConfig()
-
-        if isinstance(self.umap, dict):
-            self.umap = UMAPConfig(**self.umap)
-        elif self.umap is None:
-            self.umap = UMAPConfig()
-
-        if isinstance(self.bertopic, dict):
-            self.bertopic = BertopicConfig(**self.bertopic)
-        elif self.bertopic is None:
-            self.bertopic = BertopicConfig()
-
-        if isinstance(self.berteley, dict):
-            self.berteley = BerteleyConfig(**self.berteley)
-        elif self.berteley is None:
-            self.berteley = BerteleyConfig()
-
-        if isinstance(self.ctfidf, dict):
-            self.ctfidf = CTFIDFConfig(**self.ctfidf)
-        elif self.ctfidf is None:
-            self.ctfidf = CTFIDFConfig()
-
-        if isinstance(self.topic_distribution, dict):
-            self.topic_distribution = TopicDistributionConfig(**self.topic_distribution)
-        elif self.topic_distribution is None:
-            self.topic_distribution = TopicDistributionConfig()
-
-        if isinstance(self.coherence_scorer, dict):
-            self.coherence_scorer = CoherenceScorerConfig(**self.coherence_scorer)
-        elif self.coherence_scorer is None:
-            self.coherence_scorer = CoherenceScorerConfig()
+        self.export   = _build(TopicExportConfig, self.export, 'export')
+        self.hdbscan  = _with_defaults(HDBSCANConfig, self.hdbscan, 'hdbscan')
+        self.umap     = _with_defaults(UMAPConfig, self.umap, 'umap')
+        self.bertopic = _with_defaults(BertopicConfig, self.bertopic, 'bertopic')
+        self.berteley = _with_defaults(BerteleyConfig, self.berteley, 'berteley')
+        self.ctfidf   = _with_defaults(CTFIDFConfig, self.ctfidf, 'ctfidf')
+        self.topic_distribution = _with_defaults(
+            TopicDistributionConfig, self.topic_distribution, 'topic_distribution')
+        self.coherence_scorer = _with_defaults(
+            CoherenceScorerConfig, self.coherence_scorer, 'coherence_scorer')
 
 
 @dataclass
@@ -719,14 +841,37 @@ class TopicsSectionConfig(ConfigField):
     n_repr_docs_per_topic: int = 5
 
 
+def _check_edge_style(cfg, where: str) -> None:
+    """Validate a panel's ``edge_scale`` / ``edge_width_range``."""
+    if cfg.edge_scale not in ("tertile", "linear"):
+        raise ValueError(f"{where}.edge_scale must be 'tertile' or 'linear', "
+                         f"got {cfg.edge_scale!r}")
+    r = cfg.edge_width_range
+    if len(r) != 2 or not 0 < r[0] < r[1]:
+        raise ValueError(f"{where}.edge_width_range must be [min, max] with 0 < min < max")
+
+
 @dataclass
 class CouplingPanelConfig(ConfigField):
-    """Coupling network panel (document × document)."""
+    """Coupling network panel (document × document).
+
+    Edge width always shows the Salton-normalised coupling (raw shared
+    references would favour reference-rich reviews); ``edge_scale`` picks how:
+    ``tertile`` (three widths by rank, the default) or ``linear`` (width
+    proportional to the strength, over ``edge_width_range`` px). The raw
+    number of shared references is in each edge's hover (HTML export).
+    """
     resolution_range: List[float] = field(default_factory=lambda: [0.4, 1.2])  # [min, max]: sweep and keep the best-modularity partition
     resolution_step:  float = 0.1  # step of the resolution sweep
     min_size:   int   = 5          # communities smaller than this → uncoupled tail
     backbone_k: int   = 3          # draw only each node's k strongest couplings
     color_by:   str   = "topic"    # "topic" | "community"
+    edge_scale: str   = "tertile"  # "tertile" | "linear"
+    edge_width_range: List[float] = field(default_factory=lambda: [0.4, 3.5])  # linear scale only
+
+    def __post_init__(self):
+        super().__post_init__()
+        _check_edge_style(self, "bib_network.coupling")
 
 
 @dataclass
@@ -761,6 +906,8 @@ class ReferenceMetadataConfig(ConfigField):
     cache:             Union[None, str] = None
     include_abstracts: bool = False
 
+    CONDITIONAL = ("`api_key:` once the block is declared",)
+
     def __post_init__(self):
         super().__post_init__()
         if not self.api_key:
@@ -770,7 +917,13 @@ class ReferenceMetadataConfig(ConfigField):
 
 @dataclass
 class CocitationPanelConfig(ConfigField):
-    """Co-citation network panel (reference × reference)."""
+    """Co-citation network panel (reference × reference).
+
+    Edge width always shows the Salton-normalised co-citation (raw counts
+    would link any two widely cited classics); ``edge_scale`` /
+    ``edge_width_range`` as for :class:`CouplingPanelConfig`. The raw number
+    of documents citing both references is in each edge's hover.
+    """
     min_ref_freq: int   = 2         # keep references cited by at least this many documents
     resolution_range: List[float] = field(default_factory=lambda: [0.4, 1.2])  # [min, max]: sweep and keep the best-modularity partition
     resolution_step:  float = 0.1   # step of the resolution sweep
@@ -778,19 +931,33 @@ class CocitationPanelConfig(ConfigField):
     backbone_k:   int   = 3         # draw only each node's k strongest co-citations
     color_by:     str   = "community"  # "topic" | "community"
     metadata:     Union[None, ReferenceMetadataConfig] = None  # resolve node ids to real works
+    edge_scale:   str   = "tertile"    # "tertile" | "linear"
+    edge_width_range: List[float] = field(default_factory=lambda: [0.4, 3.5])  # linear scale only
 
     def __post_init__(self):
         super().__post_init__()
-        if isinstance(self.metadata, dict):
-            self.metadata = ReferenceMetadataConfig(**self.metadata)
+        _check_edge_style(self, "bib_network.cocitation")
+        self.metadata = _build(ReferenceMetadataConfig, self.metadata, 'metadata')
 
 
 @dataclass
 class ConnectivityConfig(ConfigField):
     """Inter-group connectivity matrix panels (rendered for BOTH topic and
-    community groupings)."""
+    community groupings).
+
+    Blocks are scored as observed/expected against a degree-preserving null, a
+    ratio whose baseline is 1 and which therefore needs no rescaling — *by* and
+    *scale* are inert, kept so existing configs still load.
+    """
     by:    str   = "topic"          # deprecated / ignored — both topic and community panels are rendered
-    scale: float = 1000.0           # rescales the tiny coupling values for readability
+    scale: float = 1000.0           # deprecated / ignored — the obs/exp ratio needs no rescaling
+
+    # Observations required before a group's internal ratio is reported at all.
+    # Below it the cell is left blank rather than filled with a number no amount
+    # of evidence backs: a ratio computed from two or three observations is not
+    # a small ratio, it is an unknown one. Raise it on a large corpus, where a
+    # community backed by ten documents is still thin.
+    min_support: int = 10
 
 
 @dataclass
@@ -810,25 +977,116 @@ class BibNetworkSectionConfig(ConfigField):
 
     def __post_init__(self):
         super().__post_init__()
-        if isinstance(self.coupling, dict):
-            self.coupling = CouplingPanelConfig(**self.coupling)
-        elif self.coupling is None:
-            self.coupling = CouplingPanelConfig()
-        if isinstance(self.cocitation, dict):
-            self.cocitation = CocitationPanelConfig(**self.cocitation)
-        elif self.cocitation is None:
-            self.cocitation = CocitationPanelConfig()
-        if isinstance(self.connectivity, dict):
-            self.connectivity = ConnectivityConfig(**self.connectivity)
-        elif self.connectivity is None:
-            self.connectivity = ConnectivityConfig()
+        self.coupling     = _with_defaults(CouplingPanelConfig, self.coupling, 'coupling')
+        self.cocitation   = _with_defaults(CocitationPanelConfig, self.cocitation, 'cocitation')
+        self.connectivity = _with_defaults(ConnectivityConfig, self.connectivity, 'connectivity')
+
+
+@dataclass
+class ActorNetworkConfig(ConfigField):
+    """Collaboration network of one actor level (``…actors.network``).
+
+    Two actors are linked by the papers they share; the strongest
+    *max_nodes* actors with at least *min_papers* papers are drawn (the
+    matrix is dense, and an author network past a few hundred nodes is
+    unreadable anyway). ``normalize``: ``salton`` (shared / sqrt(p_i p_j), as
+    the coupling network), ``association`` (observed / expected, VOSviewer's
+    association strength) or ``count`` (raw shared papers).
+    """
+    enabled:          bool  = True
+    min_papers:       int   = 2
+    max_nodes:        int   = 150
+    normalize:        str   = "salton"   # "salton" | "association" | "count"
+    resolution_range: List[float] = field(default_factory=lambda: [0.6, 1.4])
+    resolution_step:  float = 0.1
+    min_size:         int   = 3          # communities smaller than this → tail
+    backbone_k:       int   = 3          # draw only each node's k strongest links
+    n_labels:         int   = 15         # name the n largest nodes on the graph
+    # What node size shows — marker *area* proportional to it, so twice the
+    # value reads twice as big: "citations" | "papers" | "fractional".
+    size_by:          str   = "citations"
+    size_range:       List[float] = field(default_factory=lambda: [5.0, 45.0])  # [min, max] diameter, px
+    # What edge width shows — width proportional to its square root:
+    # "count" (raw co-signed papers: volume) | "weight" (the normalised link,
+    # as used for layout and communities: relative intensity).
+    edge_width_by:    str   = "count"
+    edge_width_range: List[float] = field(default_factory=lambda: [0.5, 6.0])  # [min, max] width, px
+    # Node opacity: 1 hides the edges under the nodes; below 1 they show
+    # through (Plotly's own default for sized markers is 0.7).
+    node_opacity:     float = 1.0
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not 0 < self.node_opacity <= 1:
+            raise ValueError("actors.network.node_opacity must be in (0, 1], "
+                             f"got {self.node_opacity!r}")
+        if self.edge_width_by not in ("count", "weight"):
+            raise ValueError("actors.network.edge_width_by must be 'count' or "
+                             f"'weight', got {self.edge_width_by!r}")
+        if (len(self.edge_width_range) != 2
+                or not 0 < self.edge_width_range[0] < self.edge_width_range[1]):
+            raise ValueError("actors.network.edge_width_range must be [min, max] "
+                             "with 0 < min < max")
+        if self.size_by not in ("citations", "papers", "fractional"):
+            raise ValueError("actors.network.size_by must be 'citations', 'papers' "
+                             f"or 'fractional', got {self.size_by!r}")
+        if len(self.size_range) != 2 or not 0 < self.size_range[0] < self.size_range[1]:
+            raise ValueError("actors.network.size_range must be [min, max] with "
+                             "0 < min < max")
+        if self.normalize not in ("salton", "association", "count"):
+            raise ValueError("actors.network.normalize must be 'salton', "
+                             f"'association' or 'count', got {self.normalize!r}")
+        if self.min_papers < 1 or self.max_nodes < 2:
+            raise ValueError("actors.network needs min_papers >= 1 and max_nodes >= 2")
+
+
+@dataclass
+class ActorsSectionConfig(ConfigField):
+    """Actors section: who drives the literature (authors, institutions, countries).
+
+    Read from the reviewed dataset's ``actors`` column (built at the ``bib``
+    stage, whatever the source); renders whenever that column is present. Per
+    level in *levels*: the *top_n* most involved actors (ranked by *sort_by*:
+    ``papers`` — full counting —, ``fractional`` — each paper split among its
+    actors — or ``citations``) and, unless disabled, their collaboration network.
+    """
+    levels:  List[str] = field(default_factory=lambda: ["country", "institution", "author"])
+    top_n:   int = 15
+    sort_by: str = "papers"              # "papers" | "fractional" | "citations"
+    network: ActorNetworkConfig = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.network = _with_defaults(ActorNetworkConfig, self.network, 'network')
+        bad = [lv for lv in self.levels if lv not in ("author", "institution", "country")]
+        if bad:
+            raise ValueError(f"actors.levels: unknown level(s) {bad}; "
+                             "expected author, institution, country")
+        if self.sort_by not in ("papers", "fractional", "citations"):
+            raise ValueError("actors.sort_by must be 'papers', 'fractional' or "
+                             f"'citations', got {self.sort_by!r}")
+        if self.top_n < 1:
+            raise ValueError("actors.top_n must be >= 1")
 
 
 @dataclass
 class TemporalSectionConfig(ConfigField):
+    # "trajectory" draws the per-year curves (counts and share of the year);
+    # the other three are cumulative.
     variants: List[str] = field(default_factory=lambda: [
-        "absolute", "normalized", "weighted"
+        "trajectory", "absolute", "normalized", "weighted"
     ])
+    # Width, in years, of the centred rolling mean added beside the raw
+    # trajectory curves. 1 = no smoothing (raw counts only).
+    smoothing_window: int = 3
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.smoothing_window < 1:
+            raise ValueError(
+                f"temporal.smoothing_window must be >= 1 (1 = no smoothing), "
+                f"got {self.smoothing_window}"
+            )
 
 
 @dataclass
@@ -932,15 +1190,8 @@ class PaperSelectionConfig(ConfigField):
 
     def __post_init__(self):
         super().__post_init__()
-        if isinstance(self.composite, dict):
-            self.composite = CompositeConfig(**self.composite)
-        elif self.composite is None:
-            self.composite = CompositeConfig()
-
-        if isinstance(self.review, dict):
-            self.review = ReviewSelectionConfig(**self.review)
-        elif self.review is None:
-            self.review = ReviewSelectionConfig()
+        self.composite = _with_defaults(CompositeConfig, self.composite, 'composite')
+        self.review    = _with_defaults(ReviewSelectionConfig, self.review, 'review')
 
         if self.allocation not in ("sqrt", "linear"):
             raise ValueError(
@@ -961,6 +1212,7 @@ class PaperSelectionConfig(ConfigField):
 class ReportSectionsConfig(ConfigField):
     topics:                TopicsSectionConfig       = None
     bib_network:           BibNetworkSectionConfig   = None
+    actors:                ActorsSectionConfig       = None
     temporal:              TemporalSectionConfig     = None
     topic_characteristics: TopicCharacteristicsConfig = None
     topic_similarity:      TopicSimilarityConfig     = None
@@ -969,35 +1221,16 @@ class ReportSectionsConfig(ConfigField):
 
     def __post_init__(self):
         super().__post_init__()
-        if isinstance(self.topics, dict):
-            self.topics = TopicsSectionConfig(**self.topics)
-        elif self.topics is None:
-            self.topics = TopicsSectionConfig()
-
-        if isinstance(self.bib_network, dict):
-            self.bib_network = BibNetworkSectionConfig(**self.bib_network)
-        elif self.bib_network is None:
-            self.bib_network = BibNetworkSectionConfig()
-
-        if isinstance(self.temporal, dict):
-            self.temporal = TemporalSectionConfig(**self.temporal)
-        elif self.temporal is None:
-            self.temporal = TemporalSectionConfig()
-
-        if isinstance(self.topic_characteristics, dict):
-            self.topic_characteristics = TopicCharacteristicsConfig(**self.topic_characteristics)
-        elif self.topic_characteristics is None:
-            self.topic_characteristics = TopicCharacteristicsConfig()
-
-        if isinstance(self.topic_similarity, dict):
-            self.topic_similarity = TopicSimilarityConfig(**self.topic_similarity)
-        elif self.topic_similarity is None:
-            self.topic_similarity = TopicSimilarityConfig()
-
-        if isinstance(self.paper_selection, dict):
-            self.paper_selection = PaperSelectionConfig(**self.paper_selection)
-        elif self.paper_selection is None:
-            self.paper_selection = PaperSelectionConfig()
+        self.topics      = _with_defaults(TopicsSectionConfig, self.topics, 'topics')
+        self.bib_network = _with_defaults(BibNetworkSectionConfig, self.bib_network, 'bib_network')
+        self.actors      = _with_defaults(ActorsSectionConfig, self.actors, 'actors')
+        self.temporal   = _with_defaults(TemporalSectionConfig, self.temporal, 'temporal')
+        self.topic_characteristics = _with_defaults(
+            TopicCharacteristicsConfig, self.topic_characteristics, 'topic_characteristics')
+        self.topic_similarity = _with_defaults(
+            TopicSimilarityConfig, self.topic_similarity, 'topic_similarity')
+        self.paper_selection = _with_defaults(
+            PaperSelectionConfig, self.paper_selection, 'paper_selection')
 
 
 @dataclass
@@ -1027,23 +1260,42 @@ class TopicLabelerConfig(ConfigField):
 
 
 @dataclass
+class TopicReportExportConfig(ConfigField):
+    """Output configuration for the topic-report stage.
+
+    Each report is written to ``<export_dir>/report_<timestamp>/``, once per
+    entry of ``formats``: ``pdf`` (the printable document) and/or ``html`` (one
+    self-contained interactive page — sections in a sidebar, live figures,
+    sortable tables).
+    """
+    export_dir: str
+    formats:    List[str] = field(default_factory=lambda: ["pdf", "html"])
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.formats is None:
+            self.formats = ["pdf", "html"]
+        if isinstance(self.formats, str):
+            self.formats = [self.formats]
+        bad = [f for f in self.formats if f not in ("pdf", "html")]
+        if bad or not self.formats:
+            raise ValueError("topic_report.export.formats must list 'pdf' and/or "
+                             f"'html', got {self.formats!r}")
+
+
+@dataclass
 class TopicReportConfig(ConfigField):
     """PDF layout parameters for the topic-report stage."""
     run_dir:     str = None  # auto-detected by Config.load() from topic_model.export.export_dir when blank
-    export_to:   str = None
+    export:      Union[None, TopicReportExportConfig] = None
     meta:        Union[None, ReportMetaConfig]     = None
     sections:    Union[None, ReportSectionsConfig] = None
 
     def __post_init__(self):
         super().__post_init__()
-        if isinstance(self.meta, dict):
-            self.meta = ReportMetaConfig(**self.meta)
-        elif self.meta is None:
-            self.meta = ReportMetaConfig()
-        if isinstance(self.sections, dict):
-            self.sections = ReportSectionsConfig(**self.sections)
-        elif self.sections is None:
-            self.sections = ReportSectionsConfig()
+        self.export   = _build(TopicReportExportConfig, self.export, 'export')
+        self.meta     = _with_defaults(ReportMetaConfig, self.meta, 'meta')
+        self.sections = _with_defaults(ReportSectionsConfig, self.sections, 'sections')
 
 
 @dataclass
@@ -1106,10 +1358,8 @@ class DownloadConfig(ConfigField):
             raise ValueError(
                 f"download.format must be 'pdf' or 'xml', got {self.format!r}"
             )
-        if isinstance(self.unpaywall, dict):
-            self.unpaywall = UnpaywallConfig(**self.unpaywall)
-        if isinstance(self.elsevier, dict):
-            self.elsevier = ElsevierDownloadConfig(**self.elsevier)
+        self.unpaywall = _build(UnpaywallConfig, self.unpaywall, 'unpaywall')
+        self.elsevier  = _build(ElsevierDownloadConfig, self.elsevier, 'elsevier')
         os.makedirs(os.path.join(self.output_dir, 'papers'), exist_ok=True)
 
     @classmethod
@@ -1131,7 +1381,61 @@ class DownloadConfig(ConfigField):
 
         resolved = _resolve_env_vars(raw)
         resolved.pop('env', None)
-        return cls(**resolved)
+        return _instantiate(cls, resolved)
+
+
+#: Which config sections each stage reads. A ``needs`` section must be present
+#: and valid for the stage to run; a ``uses`` one only decorates the stage, so a
+#: broken one costs its contribution, not the run.
+STAGE_SECTIONS = {
+    'bib':          {'needs': ('bib',),          'uses': ()},
+    'review':       {'needs': ('review',),       'uses': ('topic_model',)},
+    'topic-model':  {'needs': ('topic_model',),  'uses': ('llm', 'topic_report')},
+    'topic-report': {'needs': ('topic_report',), 'uses': ('topic_model', 'llm')},
+}
+
+#: Section name -> the dataclass mirroring it.
+SECTION_CLASSES = {}   # filled in below, once every class exists
+
+
+def mandatory_keys(cls, prefix: str = '') -> List[str]:
+    """The dotted keys the YAML must fill under *cls*, sub-blocks included."""
+    keys = []
+    for field_ in fields(cls):
+        if not _is_mandatory(field_):
+            continue
+        path = f'{prefix}.{field_.name}' if prefix else field_.name
+        nested = _config_class(field_.type)
+        if nested is None:
+            keys.append(path)
+        else:
+            suffix = '[]' if get_origin(field_.type) is list else ''
+            keys.extend(mandatory_keys(nested, path + suffix))
+    return keys
+
+
+def conditional_keys(cls, prefix: str = '') -> List[str]:
+    """Keys mandatory only under some other setting, as declared by the
+    dataclasses' ``CONDITIONAL`` notes."""
+    notes = [f'{prefix} — {note}' for note in getattr(cls, 'CONDITIONAL', ())]
+    for field_ in fields(cls):
+        nested = _config_class(field_.type)
+        if nested is not None and nested is not cls:
+            path = f'{prefix}.{field_.name}' if prefix else field_.name
+            notes.extend(conditional_keys(nested, path))
+    return notes
+
+
+def _config_class(annotation):
+    """The ConfigField subclass an annotation resolves to, if any —
+    unwrapping ``Union[None, X]`` and ``List[X]``."""
+    if isinstance(annotation, type):
+        return annotation if issubclass(annotation, ConfigField) else None
+    for arg in get_args(annotation):
+        found = _config_class(arg)
+        if found is not None:
+            return found
+    return None
 
 
 @dataclass
@@ -1145,13 +1449,48 @@ class Config:
     ``Config.load()`` propagates outputs between stages automatically when
     ``doc_dataset`` / ``run_dir`` are left blank, so a full-pipeline YAML
     requires no explicit cross-section paths.
+
+    A section the YAML declares but gets wrong lands in :attr:`errors` with its
+    attribute left None, so only the stages that need it fail (see
+    :meth:`require_stages`).
     """
     env:                Union[None, str]                    = None
+    #: Project root: each section exports to ``<output_dir>/<section>/``
+    #: unless its own ``export.export_dir`` says otherwise.
+    output_dir:         Union[None, str]                    = None
     bib:                Union[None, BibConfig]              = None
     review:             Union[None, ReviewConfig]           = None
     topic_model:        Union[None, TopicModelConfig]       = None
     topic_report:       Union[None, TopicReportConfig]      = None
     llm:                Union[None, TopicLabelerConfig]     = None
+    #: Sections written in the YAML, whether or not they parsed.
+    declared:           Set[str]                            = field(default_factory=set)
+    #: Section name -> why it could not be parsed.
+    errors:             Dict[str, ConfigError]              = field(default_factory=dict)
+
+    # ---- per-stage validation ------------------------------------------
+
+    def stage_is_declared(self, stage: str) -> bool:
+        """True when the YAML declares every section *stage* needs."""
+        return all(s in self.declared for s in STAGE_SECTIONS[stage]['needs'])
+
+    def require_stages(self, stages: List[str]) -> None:
+        """Raise on the first section *stages* need and cannot get; warn for the
+        ones they merely use."""
+        for stage in stages:
+            for name in STAGE_SECTIONS[stage]['needs']:
+                if name in self.errors:
+                    raise self.errors[name]
+                if getattr(self, name) is None:
+                    raise ConfigError(
+                        f"stage {stage!r} needs a `{name}:` section in the config. "
+                        f"Mandatory keys: "
+                        f"{', '.join(mandatory_keys(SECTION_CLASSES[name], name)) or 'none'}.",
+                        path=name)
+            for name in STAGE_SECTIONS[stage]['uses']:
+                if name in self.errors:
+                    print(f"[config] stage {stage!r} runs without `{name}:` — "
+                          f"{self.errors[name]}")
 
     @classmethod
     def load(cls, config_file):
@@ -1161,9 +1500,11 @@ class Config:
           1. Read the YAML.
           2. Load the .env file referenced by the root-level ``env:`` key (if any).
           3. Resolve all ``${VAR}`` references.
-          4. Propagate outputs between stages when ``doc_dataset`` / ``run_dir``
+          4. Place each section's ``export_dir`` under the root ``output_dir``.
+          5. Propagate outputs between stages when ``doc_dataset`` / ``run_dir``
              are left blank (auto-detection of the latest run in each export_dir).
-          5. Build typed dataclasses for every section present.
+          6. Build a typed dataclass for every section present, recording rather
+             than raising the failures (see :meth:`require_stages`).
         """
         with open(config_file, 'r') as file:
             raw = yaml.safe_load(file) or {}
@@ -1172,15 +1513,16 @@ class Config:
         if env_path:
             load_dotenv(env_path)
 
-        resolved = _resolve_env_vars(raw)
+        resolved = _resolve_export_dirs(_resolve_env_vars(raw))
+        output_dir = resolved.get('output_dir')
 
         # ── Propagate outputs between stages when doc_dataset is blank ────────
-        #   bib.export.export_dir    → review.doc_dataset
-        #   review.export.export_dir → topic_model.doc_dataset
+        #   bib export dir    → review.doc_dataset
+        #   review export dir → topic_model.doc_dataset
         #     (topic_model.doc_dataset — the reviewed_included.csv — is also the
         #      source the report's network panels are recomputed from.)
-        bib_export_dir    = (resolved.get('bib') or {}).get('export', {}).get('export_dir')
-        review_export_dir = (resolved.get('review') or {}).get('export', {}).get('export_dir')
+        bib_export_dir    = _export_dir_of(resolved, 'bib')
+        review_export_dir = _export_dir_of(resolved, 'review')
         review_data      = dict(resolved.get('review') or {})
         topic_model_data = dict(resolved.get('topic_model') or {})
 
@@ -1197,20 +1539,52 @@ class Config:
         # ── Auto-detect topic_report.run_dir from latest topic_model run ─────
         topic_report_data = dict(resolved.get('topic_report') or {})
         if topic_report_data and not topic_report_data.get('run_dir'):
-            tm_export_dir = (
-                topic_model_data.get('export', {}).get('export_dir')
-                or (resolved.get('topic_model') or {}).get('export', {}).get('export_dir')
-            )
+            tm_export_dir = _export_dir_of(resolved, 'topic_model')
             if tm_export_dir:
                 latest = _find_latest_dir(tm_export_dir)
                 if latest:
                     topic_report_data['run_dir'] = latest
 
-        return cls(
-            env                = resolved.get('env'),
-            bib                = BibConfig(**resolved['bib'])            if resolved.get('bib')          else None,
-            review             = ReviewConfig(**review_data)             if review_data                   else None,
-            topic_model        = TopicModelConfig(**topic_model_data)    if topic_model_data              else None,
-            topic_report       = TopicReportConfig(**topic_report_data)  if topic_report_data             else None,
-            llm                = TopicLabelerConfig(**resolved['llm'])   if resolved.get('llm')           else None,
-        )
+        # A section name the loader does not know would otherwise drop a whole
+        # stage without a word — a typo must not read as "not configured".
+        for name in resolved:
+            if name not in ('env', 'output_dir') and name not in SECTION_CLASSES:
+                print(f"[config] ignoring unknown section `{name}:` — known "
+                      f"sections: {', '.join(SECTION_CLASSES)}")
+
+        declared, errors, sections = set(), {}, {}
+        for name, data in (('bib',          resolved.get('bib')),
+                           ('review',       review_data),
+                           ('topic_model',  topic_model_data),
+                           ('topic_report', topic_report_data),
+                           ('llm',          resolved.get('llm'))):
+            if not data:
+                continue
+            declared.add(name)
+            try:
+                with _at(name):
+                    sections[name] = _instantiate(SECTION_CLASSES[name], data)
+            except (ValueError, TypeError) as exc:
+                # A section is only wrong for the stages that read it: record it,
+                # let `require_stages` raise it if and when one of them runs.
+                if not output_dir and re.search(r'missing.*\bexport\b', str(exc)):
+                    exc = ConfigError(
+                        f"{exc} — or set a root-level `output_dir:` to export "
+                        f"every section under one project folder.",
+                        path=getattr(exc, 'path', name))
+                errors[name] = exc if isinstance(exc, ConfigError) \
+                    else ConfigError(str(exc), path=name)
+                print(f"[config] section `{name}:` is unusable and will stop the "
+                      f"stages that need it — {exc}")
+
+        return cls(env=resolved.get('env'), output_dir=output_dir,
+                   declared=declared, errors=errors, **sections)
+
+
+SECTION_CLASSES.update(
+    bib          = BibConfig,
+    review       = ReviewConfig,
+    topic_model  = TopicModelConfig,
+    topic_report = TopicReportConfig,
+    llm          = TopicLabelerConfig,
+)

@@ -45,6 +45,14 @@ if TYPE_CHECKING:
 ALL_STAGES = ['bib', 'review', 'topic-model', 'topic-report']
 
 
+def _require_sections(config, stages) -> None:
+    """Check the config sections *stages* need, when the config knows how. A
+    hand-built config carries no such knowledge and is taken as given."""
+    check = getattr(config, 'require_stages', None)
+    if check is not None:
+        check(stages)
+
+
 @dataclass
 class Pipeline:
     """Literature review pipeline.
@@ -93,6 +101,7 @@ class Pipeline:
             )
 
         ordered = [s for s in ALL_STAGES if s in stages]
+        _require_sections(self.config, ordered)
 
         if 'bib' in ordered:
             from pysyrev.bibdata import BibDataset
@@ -132,7 +141,14 @@ class Pipeline:
         return self
 
     def _configured_stages(self) -> List[str]:
-        """Return stages that have a section in the config, in canonical order."""
+        """Return stages that have a section in the config, in canonical order.
+
+        A section the YAML declares but gets wrong still counts: dropping it here
+        would turn a full run into a silently shorter one.
+        """
+        declared = getattr(self.config, 'stage_is_declared', None)
+        if declared is not None:
+            return [s for s in ALL_STAGES if declared(s)]
         present = {
             'bib':          self.config.bib          is not None,
             'review':       self.config.review        is not None,

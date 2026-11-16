@@ -23,10 +23,20 @@ from pysyrev.core.networks.cocitation import (
     reference_texts,
 )
 from pysyrev.core.networks.connectivity import (
+    configuration_null,
     inter_cluster_matrix,
+    inter_cluster_enrichment,
+    internal_support,
     corpus_baseline,
     coupling_inout,
     groups_from_labels,
+)
+from pysyrev.core.networks.collaboration import (
+    actor_frame,
+    build_collaboration,
+    collaboration_matrix,
+    collaboration_summary,
+    rank_actors,
 )
 from pysyrev.core.networks.plotting import plot_network
 # The matrix panels moved to the report-wide figure module; re-exported here so
@@ -50,10 +60,18 @@ __all__ = [
     "build_cocitation",
     "reference_texts",
     "cluster_profiles",
+    "configuration_null",
     "inter_cluster_matrix",
+    "inter_cluster_enrichment",
+    "internal_support",
     "corpus_baseline",
     "coupling_inout",
     "groups_from_labels",
+    "actor_frame",
+    "rank_actors",
+    "collaboration_matrix",
+    "build_collaboration",
+    "collaboration_summary",
     "plot_connectivity_matrix",
     "plot_crosstab_heatmap",
 ]

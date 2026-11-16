@@ -13,6 +13,7 @@ from typing import Optional
 
 import pandas as pd
 
+from pysyrev.core.actors import ACTORS, actors_from_openalex, actors_from_wos_record
 from pysyrev.core.bib import DEFAULT_FIELDS
 
 
@@ -21,9 +22,10 @@ from pysyrev.core.bib import DEFAULT_FIELDS
 # ---------------------------------------------------------------------------
 
 def _to_dataframe(rows: list) -> pd.DataFrame:
-    """Build a DEFAULT_FIELDS DataFrame from a list of record dicts and
-    cast numeric columns to a numeric dtype."""
-    df = pd.DataFrame(rows, columns=list(DEFAULT_FIELDS.keys()))
+    """Build a DEFAULT_FIELDS DataFrame (plus the canonical :data:`ACTORS`
+    column) from a list of record dicts and cast numeric columns to a numeric
+    dtype."""
+    df = pd.DataFrame(rows, columns=list(DEFAULT_FIELDS.keys()) + [ACTORS])
     for col, kind in DEFAULT_FIELDS.items():
         if kind == 'numeric':
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -99,6 +101,7 @@ def _map_openalex_record(record: dict) -> dict:
         'references':      references_str,
         'year':            record.get('publication_year'),
         'cited_by':        record.get('cited_by_count'),
+        ACTORS:            actors_from_openalex(record.get('authorships')),
     }
 
 
@@ -260,6 +263,7 @@ def _map_wos_record(record: dict) -> dict:
         'doi':             _wos_doi(record),
         'cited_by':        _wos_cited_by(record),
         'references':      _wos_references(record),
+        ACTORS:            actors_from_wos_record(record),
     }
 
 

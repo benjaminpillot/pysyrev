@@ -63,13 +63,15 @@ def _subsections(section):
 
 class TestBuildTopicsSection:
 
-    def _run(self, topic_info, sections_cfg=None, topic_labels=None, nb_topics=3, n=1):
+    def _run(self, topic_info, sections_cfg=None, topic_labels=None, nb_topics=3,
+             n=1, bertopic_results=None):
         cfg = sections_cfg or TopicsSectionConfig(n_repr_docs_per_topic=3)
 
         class _FakeSections:
             topics = cfg
 
-        return _build_topics_section(topic_info, _FakeSections(), topic_labels, nb_topics, n)
+        return _build_topics_section(topic_info, _FakeSections(), topic_labels,
+                                     nb_topics, n, bertopic_results=bertopic_results)
 
     def test_returns_section_dict(self, tiny_topic_info):
         sec = self._run(tiny_topic_info)
@@ -131,6 +133,61 @@ class TestBuildTopicsSection:
         sec = self._run(tiny_topic_info, topic_labels=None)
         table = sec["blocks"][0]
         assert "Name" in table["headers"]
+
+    def test_no_median_column_without_bertopic_results(self, tiny_topic_info):
+        table = self._run(tiny_topic_info)["blocks"][0]
+        assert "Docs/yr" not in table["headers"]
+        assert all(len(row) == len(table["headers"]) for row in table["rows"])
+
+    def test_median_column_added_with_bertopic_results(self, tiny_topic_info,
+                                                       tiny_bertopic_results):
+        table = self._run(tiny_topic_info,
+                          bertopic_results=tiny_bertopic_results)["blocks"][0]
+        assert table["headers"] == ["ID", "Name", "# Docs", "Docs/yr",
+                                    "Med. year", "Top words"]
+        assert len(table["col_widths"]) == len(table["headers"])
+        assert all(len(row) == len(table["headers"]) for row in table["rows"])
+        assert table["caption"]
+
+    def test_median_columns_dropped_without_year(self, tiny_topic_info,
+                                                 tiny_bertopic_results):
+        br = tiny_bertopic_results.drop(columns=["year"])
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        assert "Docs/yr" not in table["headers"]
+        assert "Med. year" not in table["headers"]
+
+    def test_median_is_the_median_of_the_topic_own_years(self, tiny_topic_info):
+        # Topic 0: 3 docs in 2020, 1 in 2021, none in 2022 → median over
+        # 2020-2022 is 1. Topic 1 starts in 2022, so its two silent years
+        # before that must not count: median over 2022 alone is 4.
+        br = pd.DataFrame({
+            "Topic": [0] * 4 + [1] * 4 + [-1],
+            "year":  [2020, 2020, 2020, 2021] + [2022] * 4 + [2020],
+        })
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        by_id = {row[0]: row[3] for row in table["rows"]}
+        assert by_id["0"] == "1"
+        assert by_id["1"] == "4"
+        assert by_id["2"] == "-"        # a topic with no document at all
+
+    def test_median_year_is_where_the_topic_sits_in_time(self, tiny_topic_info):
+        # Topic 0 publishes 4 documents in 2020 and one in 2024: it is a 2020
+        # topic, not a 2022 one. Topic 1's four documents are all from 2024.
+        br = pd.DataFrame({
+            "Topic": [0] * 5 + [1] * 4 + [-1],
+            "year":  [2020, 2020, 2020, 2020, 2024] + [2024] * 4 + [2020],
+        })
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        by_id = {row[0]: row[4] for row in table["rows"]}
+        assert by_id["0"] == "2020"
+        assert by_id["1"] == "2024"
+        assert by_id["2"] == "-"        # a topic with no document at all
+
+    def test_median_year_is_taken_low_on_an_even_count(self, tiny_topic_info):
+        # Two documents, 2010 and 2013 → a real year of the corpus, not 2011.5
+        br = pd.DataFrame({"Topic": [0, 0], "year": [2010, 2013]})
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        assert table["rows"][0][4] == "2010"
 
 
 # =============================================================================
@@ -238,7 +295,66 @@ class TestBuildNetworksSection:
         assert "co-citation" in text
         assert "bibliographic coupling" not in text
         assert _blocks_of_type(sub, "table")[0]["title"] == (
-            "Internal vs outward co-citation per community")
+            "Internal vs outward co-citation per community (obs/exp)")
+
+
+class TestConnectivitySupportThreshold:
+
+    @staticmethod
+    def _panel(min_support, observations):
+        from pysyrev.core.report.sections.networks import _connectivity_panel
+        W = np.array([[0, .9, .1, 0],
+                      [.9, 0, 0, .1],
+                      [.1, 0, 0, .9],
+                      [0, .1, .9, 0]], dtype=float)
+        groups = [("A", np.array([0, 1])), ("B", np.array([2, 3]))]
+        return _connectivity_panel(W, groups, "community", None,
+                                   kind="cocitation", observations=observations,
+                                   min_support=min_support)
+
+    @staticmethod
+    def _table(panel):
+        return next(b for b in panel["blocks"] if b["type"] == "table")
+
+    def test_a_thin_group_reports_no_internal_ratio(self):
+        # two observations back A, six back B: A's internal ratio is unknown,
+        # not small, so it must not be printed as a number that can be ranked
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        table = self._table(self._panel(5, obs))
+        rows = {r[0]: r for r in table["rows"]}
+        assert rows["A"][2] == "—"
+        assert rows["A"][-1] == "insufficient"
+        assert rows["B"][2] != "—"
+        assert rows["B"][-1] in {"self-contained", "integrated"}
+
+    def test_the_withheld_ratio_is_a_gap_in_the_heatmap_diagonal(self):
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        panel = self._panel(5, obs)
+        z = np.asarray(next(b for b in panel["blocks"]
+                            if b["type"] == "plotly")["figure"].data[0].z,
+                       dtype=float)
+        assert not np.isfinite(z[0, 0])       # A withheld
+        assert np.isfinite(z[1, 1])           # B reported
+        assert np.isfinite(z[0, 1])           # outward cells are never withheld
+
+    def test_outward_still_reported_for_a_thin_group(self):
+        # only the diagonal rests on the group's own thin evidence; its outward
+        # cells rest on the whole corpus and stay readable
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        rows = {r[0]: r for r in self._table(self._panel(5, obs))["rows"]}
+        assert rows["A"][3] != "—"
+
+    def test_threshold_is_honoured(self):
+        obs = [[0, 1], [0, 1]] + [[2, 3]] * 6
+        lenient = {r[0]: r for r in self._table(self._panel(2, obs))["rows"]}
+        strict  = {r[0]: r for r in self._table(self._panel(20, obs))["rows"]}
+        assert lenient["A"][2] != "—" and lenient["B"][2] != "—"
+        assert strict["A"][2] == "—" and strict["B"][2] == "—"
+
+    def test_nothing_is_withheld_without_observations(self):
+        table = self._table(self._panel(1000, None))
+        assert all(r[2] != "—" for r in table["rows"])
+        assert "Support" not in table["headers"]
 
 
 class TestConnectivityMatrix:
@@ -260,6 +376,102 @@ class TestConnectivityMatrix:
         prof = coupling_inout(M, 0)
         assert prof["internal"] == M[0, 0]
         assert prof["outward"] == M[0, 1]
+
+    def test_a_block_at_the_null_scores_one_whatever_the_group_size(self):
+        # a group carrying exactly the weight its nodes' strengths predict
+        # scores 1.00, whether it holds 5 strong nodes or 100 weak ones. The
+        # raw mean ranks the two apart though neither is enriched at all.
+        from pysyrev.core.networks import (configuration_null,
+                                           inter_cluster_matrix,
+                                           inter_cluster_enrichment)
+        strengths = np.concatenate([np.full(5, 40.0), np.full(100, 2.0)])
+        W = np.outer(strengths, strengths) / strengths.sum()
+        np.fill_diagonal(W, 0.0)
+        W = configuration_null(W)        # a network that *is* its own null
+        groups = [("strong", np.arange(5)), ("weak", np.arange(5, 105))]
+
+        M, _ = inter_cluster_matrix(W, groups, scale=1000)
+        R, labs = inter_cluster_enrichment(W, groups)
+        assert labs == ["strong", "weak"]
+        assert np.allclose(R, R.T)
+        assert M[0, 0] / M[1, 1] > 50            # the mean ranks them apart...
+        assert R[0, 0] == pytest.approx(1.0, rel=1e-6)   # ...the ratio does not
+        assert R[1, 1] == pytest.approx(1.0, rel=1e-6)
+
+    def test_enrichment_separates_real_cohesion_from_a_saturated_micro_group(self):
+        # the case that prompted the change, in miniature: a few references
+        # co-cited by two documents against two much larger intellectual bases.
+        # The ratio must score the equal-sized bases equally; the support count
+        # is what exposes the micro-group.
+        from pysyrev.core.networks import (cocitation_matrix, internal_support,
+                                           inter_cluster_matrix,
+                                           inter_cluster_enrichment)
+        rng = np.random.default_rng(0)
+        micro = [f"a{i}" for i in range(8)]
+        base_b = [f"b{i}" for i in range(300)]
+        base_c = [f"c{i}" for i in range(300)]
+        refsets = [set(micro), set(micro)]           # two documents, that is all
+        for src, other in ((base_b, base_c), (base_c, base_b)):
+            for _ in range(400):
+                refsets.append(set(rng.choice(src, 20, replace=False)) |
+                               set(rng.choice(other, 2, replace=False)))
+
+        ids, W = cocitation_matrix(refsets, min_ref_freq=2)
+        pos = {r: i for i, r in enumerate(ids)}
+        groups = [(name, np.array([pos[r] for r in members if r in pos]))
+                  for name, members in (("micro", micro), ("B", base_b),
+                                        ("C", base_c))]
+        M, _ = inter_cluster_matrix(W, groups, scale=1000)
+        R, _ = inter_cluster_enrichment(W, groups)
+        observations = [[pos[r] for r in refs if r in pos] for refs in refsets]
+        support = internal_support([o for o in observations if len(o) > 1], groups)
+
+        # the two bases are built the same way, so they must score the same
+        assert R[1, 1] == pytest.approx(R[2, 2], rel=0.15)
+        # each is cohesive on its own terms and depleted towards the other
+        assert R[1, 1] > 1 and R[1, 2] < 1
+        assert M[0, 0] / M[1, 1] > 10        # the raw mean buried them
+        # the micro-group still scores high, so support is what exposes it
+        assert support[0] == 2
+        assert support[1] > 100 and support[2] > 100
+
+    def test_enrichment_matches_averaging_the_dense_null(self):
+        # inter_cluster_enrichment evaluates the null's block means in closed
+        # form to avoid building a second dense n x n matrix; it must agree
+        # exactly with averaging configuration_null itself.
+        from pysyrev.core.networks import (configuration_null,
+                                           inter_cluster_matrix,
+                                           inter_cluster_enrichment)
+        rng = np.random.default_rng(3)
+        for _ in range(3):
+            n = 40
+            A = np.triu(rng.random((n, n)) * (rng.random((n, n)) < 0.4), 1)
+            W = A + A.T
+            perm = rng.permutation(n)
+            groups = [("a", perm[:9]), ("b", perm[9:20]), ("c", perm[20:])]
+            obs, _ = inter_cluster_matrix(W, groups, scale=1.0)
+            exp, _ = inter_cluster_matrix(configuration_null(W), groups, scale=1.0)
+            expected = np.where(exp > 0, obs / exp, 0.0)
+            got, _ = inter_cluster_enrichment(W, groups)
+            assert np.allclose(got, expected)
+
+    def test_configuration_null_preserves_total_strength(self):
+        from pysyrev.core.networks import configuration_null
+        W = np.array([[0, 2., 1.], [2., 0, 3.], [1., 3., 0]])
+        E = configuration_null(W)
+        assert np.allclose(E.sum(axis=1), W.sum(axis=1))
+        assert np.allclose(configuration_null(np.zeros((3, 3))), 0.0)
+
+    def test_internal_support_counts_observations_touching_two_nodes(self):
+        from pysyrev.core.networks import internal_support
+        groups = [("A", np.array([0, 1, 2])), ("B", np.array([3, 4]))]
+        observations = [
+            [0, 1],        # supports A
+            [0, 2, 3],     # supports A (two of its nodes), not B (only one)
+            [3, 4],        # supports B
+            [2],           # supports nothing: a single node makes no pair
+        ]
+        assert internal_support(observations, groups) == [2, 1]
 
 
 class TestCompositeSelection:
@@ -478,6 +690,62 @@ class TestBuildTemporalSection:
         cfg = TemporalSectionConfig(variants=["absolute"])
         sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 4)
         assert "4." in sec["title"]
+
+    def test_trajectory_is_a_default_variant(self):
+        assert "trajectory" in TemporalSectionConfig().variants
+
+    def test_smoothing_window_below_one_is_refused(self):
+        with pytest.raises(ValueError):
+            TemporalSectionConfig(smoothing_window=0)
+
+    def test_trajectory_draws_counts_smoothed_and_share(self, tiny_bertopic_results):
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=3)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
+        sub = _subsections(sec)[0]
+        assert "per year" in sub["title"].lower()
+        assert len(_blocks_of_type(sub, "plotly")) == 3
+
+    def test_trajectory_without_smoothing_drops_the_rolling_mean(self, tiny_bertopic_results):
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
+        sub = _subsections(sec)[0]
+        assert len(_blocks_of_type(sub, "plotly")) == 2
+
+    def test_trajectory_curves_are_not_cumulative(self, tiny_bertopic_results):
+        # The whole point of the section: a topic that stops publishing must be
+        # able to come back down, which a cumulative curve can never do.
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3)
+        fig = _blocks_of_type(_subsections(sec)[0], "plotly")[0]["figure"]
+        assert any(
+            any(b < a for a, b in zip(trace.y, trace.y[1:]))
+            for trace in fig.data
+        )
+
+    def test_trajectory_uses_llm_labels_in_the_legend(self, tiny_bertopic_results):
+        labels = {0: "Agent-Based Models", 1: "Epidemiology", 2: "Network Theory"}
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(tiny_bertopic_results, 3, cfg, 3,
+                                      topic_labels=labels)
+        fig = _blocks_of_type(_subsections(sec)[0], "plotly")[0]["figure"]
+        assert {t.name for t in fig.data} == {
+            "0. Agent-Based Models", "1. Epidemiology", "2. Network Theory"}
+
+    def test_trajectory_skipped_on_a_single_year_corpus(self, tiny_bertopic_results):
+        br = tiny_bertopic_results.assign(year=2020)
+        cfg = TemporalSectionConfig(variants=["trajectory", "absolute"])
+        sec = _build_temporal_section(br, 3, cfg, 3)
+        # no trend to draw through one point → only the "absolute" subsection
+        assert [s["title"] for s in _subsections(sec)] == ["Absolute"]
+
+    def test_trajectory_fills_the_years_a_topic_skipped(self, tiny_bertopic_results):
+        br = tiny_bertopic_results[tiny_bertopic_results["year"] != 2015]
+        cfg = TemporalSectionConfig(variants=["trajectory"], smoothing_window=1)
+        sec = _build_temporal_section(br, 3, cfg, 3)
+        fig = _blocks_of_type(_subsections(sec)[0], "plotly")[0]["figure"]
+        for trace in fig.data:
+            assert 2015 in list(trace.x)          # drawn at zero, not skipped
+            assert len(trace.x) == len(set(trace.x))
 
 
 # =============================================================================
@@ -745,6 +1013,39 @@ class TestBuildReportData:
         titles = [s["title"] for s in sections]
         assert not any("network" in t.lower() for t in titles)
 
+    def test_actors_section_present_without_references(
+        self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+        tmp_path,
+    ):
+        # The actors section reads the `actors` column, not the references: a
+        # dataset without references still gets it (and no network section).
+        from pysyrev.core.actors import make_actors
+        cells = [make_actors([{"key": f"orcid:{a}", "name": a} for a in authors],
+                             [{"key": f"ror:{c}", "name": f"U{c}", "country": c}
+                              for c in countries])
+                 for authors, countries in [(["a", "b"], ["FR", "SN"]),
+                                            (["a", "c"], ["FR"]),
+                                            (["b", "c"], ["SN", "US"])]]
+        p = tmp_path / "actors.csv"
+        pd.DataFrame({"id": ["w1", "w2", "w3"], "year": [2019, 2020, 2021],
+                      "cited_by": [3, 1, 0], "actors": cells}).to_csv(p, index=False)
+        titles = [s["title"] for s in self._run(
+            tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+            coupling_dataset=str(p))["sections"]]
+        assert any("Actors" in t for t in titles)
+        assert not any("network" in t.lower() for t in titles)
+
+    def test_actors_section_skipped_without_actors_column(
+        self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+        tmp_path,
+    ):
+        p = tmp_path / "no_actors.csv"
+        pd.DataFrame({"id": ["a", "b"], "title": ["A", "B"]}).to_csv(p, index=False)
+        titles = [s["title"] for s in self._run(
+            tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
+            coupling_dataset=str(p))["sections"]]
+        assert not any("Actors" in t for t in titles)
+
     def test_networks_section_present_with_dataset(
         self, tiny_best_results, tiny_topic_info, tiny_bertopic_results, report_cfg,
         reviewed_dataset_path,
@@ -930,6 +1231,46 @@ class TestCommunityLLMLabelColumn:
         sub = self._subsection({0: ["solar"], 1: ["wind"]}, None)
         tbl = self._theme_table(sub)
         assert tbl["headers"] == ["Community", "Docs", "Top terms"]
+
+    def _legend(self, sub):
+        fig = next(b for b in sub["blocks"] if b.get("type") == "plotly")["figure"]
+        return [t.name for t in fig.data if t.name and t.name.startswith("C")]
+
+    def test_legend_and_hover_name_the_communities_by_their_label(self):
+        sub = self._subsection(
+            {0: ["solar"], 1: ["wind"]},
+            {0: "Solar photovoltaic deployment", 1: "Onshore wind integration"})
+        assert self._legend(sub) == ["C0 · Solar photovoltaic deployment",
+                                     "C1 · Onshore wind integration"]
+        fig = next(b for b in sub["blocks"] if b.get("type") == "plotly")["figure"]
+        c0 = next(t for t in fig.data if t.name and t.name.startswith("C0"))
+        assert "Community: C0 · Solar photovoltaic deployment" in c0.hovertext[0]
+
+    def test_legend_keeps_the_id_alone_without_a_label(self):
+        assert self._legend(self._subsection({0: ["solar"], 1: ["wind"]},
+                                             {0: "Solar"})) == ["C0 · Solar", "C1"]
+        assert self._legend(self._subsection({}, None)) == ["C0", "C1"]
+
+
+class TestCoCitedWorksTable:
+    """The works each co-citation community is built on come with their DOI."""
+
+    def test_doi_column(self):
+        from pysyrev.core.report.sections.networks import _community_profile_blocks
+        from pysyrev.core.networks.common import NetworkResult
+        ids = ["10.1000/aaa", "https://openalex.org/W2"]
+        res = NetworkResult(node_ids=ids, W=np.array([[0, 1], [1, 0]], float),
+                            labels=np.array([0, 0]), coords=np.zeros((2, 2)),
+                            modularity=0.0)
+        meta = {ids[0]: {"title": "Keyed by its DOI", "year": 2020, "authors": ["A"]},
+                ids[1]: {"title": "Resolved DOI", "year": 2021, "authors": ["B"],
+                         "doi": "https://doi.org/10.1000/BBB"}}
+        works = next(b for b in _community_profile_blocks(res, meta)
+                     if b["title"].startswith("Most co-cited works"))
+        assert works["headers"][-1] == "DOI"
+        assert len(works["col_widths"]) == len(works["headers"])
+        assert {r[1]: r[-1] for r in works["rows"]} == {
+            "Keyed by its DOI": "10.1000/aaa", "Resolved DOI": "10.1000/bbb"}
 
 
 class TestCommunityTopicMapping:
