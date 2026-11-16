@@ -1154,11 +1154,15 @@ configurations to ``best_results.csv``.
 ----
 
 
-``topic_report`` — PDF report generation
-------------------------------------------
+``topic_report`` — report generation
+--------------------------------------
 
 Selects one model configuration from the topic-model results and generates the
-PDF report. Optionally uses the ``llm`` section for topic and community labels.
+report, as a PDF and as an interactive HTML page (see :doc:`report`).
+Optionally uses the ``llm`` section for topic and community labels.
+
+The drawing settings listed in :doc:`report` can also be tried in the browser
+with ``pysyrev serve config.yaml``, without regenerating the report.
 
 Which configuration is rendered is decided by ``topic_model.best_model_index``,
 not here.
@@ -1178,6 +1182,16 @@ not here.
    sub-directory.  Interactive HTML versions of the network figures and the
    paper-selection annex are written there too.  The former flat key
    ``topic_report.export_to`` is still accepted, with a deprecation warning.
+
+``topic_report.export.formats``
+   :Type: list of ``str`` (a single ``str`` is accepted)
+   :Default: ``[pdf, html]``
+   :Values: ``pdf`` | ``html``
+
+   Formats to write, side by side under the same file name.  ``pdf`` is the
+   printable document; ``html`` is one self-contained page with interactive
+   figures, sortable tables and clickable DOIs.  When both are asked for, a
+   failing HTML export is reported and the PDF is kept.
 
 ``topic_report.meta``
    :Type: mapping

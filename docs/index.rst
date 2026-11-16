@@ -4,7 +4,7 @@ pysyrev — Python Systematic Review
 **pysyrev** is an automated, LLM-assisted PRISMA workflow for systematic
 literature reviews. It covers the full pipeline — from raw bibliographic
 records to screened, deduplicated, and thematically structured corpora —
-and produces a PDF report at the end.
+and produces a report at the end, as a PDF and as an interactive HTML page.
 
 Features
 --------
@@ -33,8 +33,12 @@ Features
   BERTopic topic, plus an inter-topic connectivity matrix
 - **Reading-list selection** — rank the most relevant papers per topic by
   citations, network centrality, or a three-axis composite
-- **PDF report generation** — declarative, theme-aware PDF engine built on
-  ReportLab
+- **PDF and HTML report** — the same declarative report rendered as a
+  printable PDF (ReportLab) and as one self-contained HTML page with
+  interactive figures, sortable tables and clickable DOIs
+- **Live report** — serve the page locally with a settings panel
+  (``pysyrev serve``): change a report setting and its section is redrawn at
+  once
 - **Full-text download** — retrieve PDFs for a candidate list
   (``pysyrev download``), cascading Unpaywall → OpenAlex → Elsevier TDM
 
@@ -61,7 +65,7 @@ Pipeline stages
        coherence
    * - Report
      - ``topic-report``
-     - Generate a PDF report from the selected topic model run, including the
+     - Generate the report (PDF and HTML) from the selected topic model run, including the
        bibliographic coupling, co-citation and topic-connectivity network
        panels (recomputed from the reviewed corpus' references)
 
@@ -76,4 +80,5 @@ when run standalone.
    installation
    quickstart
    configuration
+   report
    api/index

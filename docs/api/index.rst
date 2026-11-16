@@ -9,4 +9,5 @@ API reference
    network
    review
    topic_model
+   report
    config

@@ -33,6 +33,10 @@ Sub-commands
    pysyrev estimate config.yaml --calibrate previous_run/reviewed_total.csv
    pysyrev estimate config.yaml --offline    # no API call; ±15 % from character counts
 
+   # Explore the report live: the interactive page plus a settings panel
+   pysyrev serve config.yaml
+   pysyrev serve config.yaml --port 9000 --no-browser
+
    # Download full-text papers for a candidate list
    # (cascade: Unpaywall → OpenAlex → Elsevier TDM)
    pysyrev download candidates.csv output_folder/
@@ -52,7 +56,7 @@ Python API
    # Or stage by stage — results persist between calls
    pipeline.run(stages=["bib"])
    pipeline.run(stages=["review"])       # uses pipeline.bib.dataset automatically
-   pipeline.run(stages=["topic-report"]) # generates the PDF report
+   pipeline.run(stages=["topic-report"]) # writes the report (PDF + HTML)
 
    # Run from a given stage to the end
    start = ALL_STAGES.index("topic-model")
@@ -82,6 +86,24 @@ re-running the full pipeline:
 .. code-block:: bash
 
    pysyrev report_only.yaml
+
+Interactive report and live mode
+--------------------------------
+
+The ``topic-report`` stage writes two files side by side: a PDF and a
+self-contained HTML page with interactive figures, sortable tables and
+clickable DOIs. Choose with ``topic_report.export.formats`` (default
+``[pdf, html]``).
+
+To tune the report without regenerating it each time, serve it:
+
+.. code-block:: bash
+
+   pysyrev serve config.yaml
+
+The page opens in the browser with a settings panel. Changing a setting
+redraws its section at once; the panel gives the YAML to paste back into the
+config. See :doc:`report`.
 
 Auto-detection between stages
 ------------------------------
