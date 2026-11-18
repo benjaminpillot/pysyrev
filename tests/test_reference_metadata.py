@@ -13,6 +13,7 @@ and a fake OpenAlex client for the OpenAlex one, so nothing hits the network.
 
 from functools import partial
 
+import os
 import numpy as np
 import pandas as pd
 import pytest
@@ -274,6 +275,22 @@ class TestCocitationWithMetadata:
         kept, _ = frequent_references(refsets, min_ref_freq=2)
         node_ids, _ = cocitation_matrix(refsets, min_ref_freq=2)
         assert kept == node_ids             # the node set can be derived up front
+
+    def test_frequent_references_order_is_stable(self):
+        refsets = [{"b", "a", "c"}, {"c", "a"}, {"b", "a"}, {"d"}]
+        kept, _ = frequent_references(refsets, min_ref_freq=2)
+        assert kept == ["a", "b", "c"]      # most-cited first, ties by id
+
+    def test_cocitation_nodes_do_not_depend_on_hash_seed(self):
+        import subprocess, sys
+        code = ("from pysyrev.core.networks.cocitation import frequent_references;"
+                "refs=[{f'r{i}' for i in range(j, j + 30)} for j in range(20)];"
+                "print(frequent_references(refs, 2)[0])")
+        outs = {subprocess.run([sys.executable, "-c", code], capture_output=True,
+                               text=True, env={**os.environ, "PYTHONHASHSEED": s},
+                               check=True).stdout
+                for s in ("1", "2", "3")}
+        assert len(outs) == 1
 
     def test_reference_texts_are_row_aligned(self):
         meta = {"W1": make_meta(title="T", venue="V", abstract="A")}

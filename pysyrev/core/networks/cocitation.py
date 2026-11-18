@@ -50,11 +50,16 @@ def frequent_references(refsets: Sequence[set],
     The co-citation node set, derived from the reference sets alone. Split out of
     :func:`cocitation_matrix` because a caller may need to know the nodes before
     paying for the matrix — resolving their metadata, say.
+
+    The nodes come most-cited first, ties by id, so the network is the same
+    from one run to the next.
     """
     freq: Counter = Counter()
     for refs in refsets:
         freq.update(refs)
-    return [r for r, c in freq.items() if c >= min_ref_freq], freq
+    kept = sorted((r for r, c in freq.items() if c >= min_ref_freq),
+                  key=lambda r: (-freq[r], str(r)))
+    return kept, freq
 
 
 def cocitation_matrix(refsets: Sequence[set],
