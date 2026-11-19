@@ -130,20 +130,30 @@ def _make_run_dir(export_dir: str, run_name: Union[str, None]) -> tuple:
     return run_name, run_dir
 
 
-def _find_latest_dir(export_dir: str) -> Union[str, None]:
-    """Return the most recently modified subdirectory of *export_dir*."""
+def _find_latest_dir(export_dir: str, contains: str = None) -> Union[str, None]:
+    """Return the most recently modified subdirectory of *export_dir*.
+
+    With *contains*, only a run holding that entry (file or folder) counts: an
+    interrupted run leaves a directory behind with nothing in it to read, and
+    the previous complete run is then the one to use.
+    """
     if not os.path.isdir(export_dir):
         return None
-    candidates = [
-        (entry.stat().st_mtime, entry.path)
-        for entry in os.scandir(export_dir)
-        if entry.is_dir()
-    ]
-    return max(candidates, default=(None, None))[1]
+    candidates = sorted(
+        ((entry.stat().st_mtime, entry.path)
+         for entry in os.scandir(export_dir) if entry.is_dir()),
+        reverse=True)
+    for _, path in candidates:
+        if contains is None or os.path.exists(os.path.join(path, contains)):
+            if path != candidates[0][1]:
+                print(f"[config] skipping incomplete run(s) in {export_dir} "
+                      f"(no {contains}); using {os.path.basename(path)}")
+            return path
+    return None
 
 
 def _find_latest_file(export_dir: str, filename: str) -> Union[str, None]:
-    """Return *filename* in the most recently modified subdirectory of *export_dir*.
+    """Return *filename* from the most recent run of *export_dir* that has it.
 
     Handles two layouts:
     - flat:              export_dir/filename
@@ -154,11 +164,8 @@ def _find_latest_file(export_dir: str, filename: str) -> Union[str, None]:
     flat = os.path.join(export_dir, filename)
     if os.path.isfile(flat):
         return flat
-    latest_dir = _find_latest_dir(export_dir)
-    if latest_dir is None:
-        return None
-    candidate = os.path.join(latest_dir, filename)
-    return candidate if os.path.isfile(candidate) else None
+    latest_dir = _find_latest_dir(export_dir, contains=filename)
+    return os.path.join(latest_dir, filename) if latest_dir else None
 
 
 #: Sections that write results, in stage order. Under a root-level
@@ -1541,7 +1548,7 @@ class Config:
         if topic_report_data and not topic_report_data.get('run_dir'):
             tm_export_dir = _export_dir_of(resolved, 'topic_model')
             if tm_export_dir:
-                latest = _find_latest_dir(tm_export_dir)
+                latest = _find_latest_dir(tm_export_dir, contains='metrics')
                 if latest:
                     topic_report_data['run_dir'] = latest
 

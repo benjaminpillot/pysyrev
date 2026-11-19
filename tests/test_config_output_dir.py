@@ -100,12 +100,54 @@ class TestStagesFindEachOtherUnderTheRoot:
 
     def test_report_reads_the_latest_topic_model_run(self, tmp_path):
         run = tmp_path / "project" / "topic_model" / "run_1"
-        run.mkdir(parents=True)
+        (run / "metrics").mkdir(parents=True)
         config = Config.load(_write(tmp_path, _Yaml(f"""
             output_dir: {tmp_path}/project
             topic_report: {{meta: {{title: T}}}}
             """)))
         assert config.topic_report.run_dir == str(run)
+
+
+class TestIncompleteRunsAreSkipped:
+    """An interrupted run leaves a newer directory with nothing to read in it;
+    auto-detection falls back to the latest run that has its output."""
+
+    @staticmethod
+    def _runs(root, older_content, newer_content=None):
+        older, newer = root / "2026-01-01T000000", root / "2026-01-02T000000"
+        for run, content in ((older, older_content), (newer, newer_content)):
+            (run / "cache").mkdir(parents=True)
+            if content:
+                content(run)
+        os.utime(older, (1, 1))                       # older by mtime too
+        return older, newer
+
+    def test_topic_model_skips_a_review_run_without_its_csv(self, tmp_path, capsys):
+        older, _ = self._runs(tmp_path / "project" / "review",
+                              lambda r: (r / "reviewed_included.csv").write_text("title\n"))
+        config = Config.load(_write(tmp_path, _Yaml(f"""
+            output_dir: {tmp_path}/project
+            topic_model: {{desired_topics: [5, 15]}}
+            """)))
+        assert config.topic_model.doc_dataset == str(older / "reviewed_included.csv")
+        assert "skipping incomplete run" in capsys.readouterr().out
+
+    def test_report_skips_a_topic_model_run_without_metrics(self, tmp_path):
+        older, _ = self._runs(tmp_path / "project" / "topic_model",
+                              lambda r: (r / "metrics").mkdir())
+        config = Config.load(_write(tmp_path, _Yaml(f"""
+            output_dir: {tmp_path}/project
+            topic_report: {{meta: {{title: T}}}}
+            """)))
+        assert config.topic_report.run_dir == str(older)
+
+    def test_no_complete_run_leaves_the_dataset_blank(self, tmp_path):
+        self._runs(tmp_path / "project" / "review", None)
+        config = Config.load(_write(tmp_path, _Yaml(f"""
+            output_dir: {tmp_path}/project
+            topic_model: {{desired_topics: [5, 15]}}
+            """)))
+        assert config.topic_model.doc_dataset is None
 
 
 class TestLegacyExportTo:

@@ -271,15 +271,18 @@ class TopicModel:
             (set via config or auto-detected by Config.load).
         show_progress : bool
         """
-        run_dir = self._make_run_dir()
-
         if dataset is None:
             if not self.doc_dataset:
                 raise ValueError(
                     "No dataset provided: pass a DataFrame to run() or set "
-                    "doc_dataset in the topic_model section of your config."
+                    "doc_dataset in the topic_model section of your config. "
+                    "Left blank, it is taken from the latest review run that "
+                    "holds a reviewed_included.csv — none was found."
                 )
             dataset = pd.read_csv(self.doc_dataset)
+        # Only once the input is in hand: a run directory created for a run that
+        # cannot start would pass for the latest run with the report stage.
+        run_dir = self._make_run_dir()
         cleans_docs, surviving_indices = self._clean_dataset(dataset, show_progress=show_progress)
         print(
             f"[TopicModel] {len(dataset)} documents in dataset → "
