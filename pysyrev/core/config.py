@@ -847,6 +847,12 @@ class TopicModelConfig(ConfigField):
 class TopicsSectionConfig(ConfigField):
     n_repr_docs_per_topic: int = 5
 
+    def __post_init__(self):
+        super().__post_init__()
+        if not isinstance(self.n_repr_docs_per_topic, int) or self.n_repr_docs_per_topic < 1:
+            raise ValueError("topics.n_repr_docs_per_topic must be a positive integer, "
+                             f"got {self.n_repr_docs_per_topic!r}")
+
 
 def _check_edge_style(cfg, where: str) -> None:
     """Validate a panel's ``edge_scale`` / ``edge_width_range``."""

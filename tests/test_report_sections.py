@@ -34,6 +34,7 @@ from pysyrev.core.report.sections.topics import (
     _build_topic_characteristics_section,
     _build_topic_similarity_section,
     _build_topics_section,
+    rank_topic_documents,
 )
 
 
@@ -83,13 +84,14 @@ class TestBuildTopicsSection:
         assert "1." in sec["title"]
         assert "Topic" in sec["title"]
 
-    def test_summary_table_is_first_block(self, tiny_topic_info):
+    def test_guide_then_summary_table(self, tiny_topic_info):
         sec = self._run(tiny_topic_info)
-        assert sec["blocks"][0]["type"] == "table"
+        assert sec["blocks"][0]["type"] == "callout"
+        assert sec["blocks"][1]["type"] == "table"
 
     def test_summary_table_has_one_row_per_topic(self, tiny_topic_info, nb_topics=3):
         sec = self._run(tiny_topic_info, nb_topics=nb_topics)
-        table = sec["blocks"][0]
+        table = sec["blocks"][1]
         assert len(table["rows"]) == nb_topics
 
     def test_one_subsection_per_topic(self, tiny_topic_info):
@@ -126,23 +128,23 @@ class TestBuildTopicsSection:
     def test_summary_table_uses_llm_label_column_header(self, tiny_topic_info):
         labels = {0: "L0", 1: "L1", 2: "L2"}
         sec = self._run(tiny_topic_info, topic_labels=labels)
-        table = sec["blocks"][0]
+        table = sec["blocks"][1]
         assert "LLM label" in table["headers"]
 
     def test_summary_table_uses_name_column_header_without_llm(self, tiny_topic_info):
         sec = self._run(tiny_topic_info, topic_labels=None)
-        table = sec["blocks"][0]
+        table = sec["blocks"][1]
         assert "Name" in table["headers"]
 
     def test_no_median_column_without_bertopic_results(self, tiny_topic_info):
-        table = self._run(tiny_topic_info)["blocks"][0]
+        table = self._run(tiny_topic_info)["blocks"][1]
         assert "Docs/yr" not in table["headers"]
         assert all(len(row) == len(table["headers"]) for row in table["rows"])
 
     def test_median_column_added_with_bertopic_results(self, tiny_topic_info,
                                                        tiny_bertopic_results):
         table = self._run(tiny_topic_info,
-                          bertopic_results=tiny_bertopic_results)["blocks"][0]
+                          bertopic_results=tiny_bertopic_results)["blocks"][1]
         assert table["headers"] == ["ID", "Name", "# Docs", "Docs/yr",
                                     "Med. year", "Top words"]
         assert len(table["col_widths"]) == len(table["headers"])
@@ -152,7 +154,7 @@ class TestBuildTopicsSection:
     def test_median_columns_dropped_without_year(self, tiny_topic_info,
                                                  tiny_bertopic_results):
         br = tiny_bertopic_results.drop(columns=["year"])
-        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][1]
         assert "Docs/yr" not in table["headers"]
         assert "Med. year" not in table["headers"]
 
@@ -164,7 +166,7 @@ class TestBuildTopicsSection:
             "Topic": [0] * 4 + [1] * 4 + [-1],
             "year":  [2020, 2020, 2020, 2021] + [2022] * 4 + [2020],
         })
-        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][1]
         by_id = {row[0]: row[3] for row in table["rows"]}
         assert by_id["0"] == "1"
         assert by_id["1"] == "4"
@@ -177,7 +179,7 @@ class TestBuildTopicsSection:
             "Topic": [0] * 5 + [1] * 4 + [-1],
             "year":  [2020, 2020, 2020, 2020, 2024] + [2024] * 4 + [2020],
         })
-        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][1]
         by_id = {row[0]: row[4] for row in table["rows"]}
         assert by_id["0"] == "2020"
         assert by_id["1"] == "2024"
@@ -186,7 +188,7 @@ class TestBuildTopicsSection:
     def test_median_year_is_taken_low_on_an_even_count(self, tiny_topic_info):
         # Two documents, 2010 and 2013 → a real year of the corpus, not 2011.5
         br = pd.DataFrame({"Topic": [0, 0], "year": [2010, 2013]})
-        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][0]
+        table = self._run(tiny_topic_info, bertopic_results=br)["blocks"][1]
         assert table["rows"][0][4] == "2010"
 
 
@@ -746,6 +748,69 @@ class TestBuildTemporalSection:
         for trace in fig.data:
             assert 2015 in list(trace.x)          # drawn at zero, not skipped
             assert len(trace.x) == len(set(trace.x))
+
+
+# =============================================================================
+# Representative documents ranked at report time
+# =============================================================================
+
+def _ranked_corpus():
+    """Two topics with a clear core vocabulary, plus one outlier."""
+    docs = [
+        "alpha beta alpha beta",                 # topic 0 core
+        "alpha beta gamma",
+        "omega sigma omega sigma alpha",         # topic 0 fringe: topic 1's words
+        "omega sigma omega sigma",               # topic 1 core
+        "omega sigma tau",
+        "alpha beta alpha beta omega",           # topic 1 fringe: topic 0's words
+        "unrelated outlier text",
+    ]
+    return pd.DataFrame({
+        "Document": docs,
+        "Topic": [0, 0, 0, 1, 1, 1, -1],
+        "title": [f"T{i}" for i in range(7)],
+        "year": [2020] * 7, "cited_by": [1] * 7,
+        "document_type": ["article"] * 7, "doi": [f"10.1/{i}" for i in range(7)],
+    })
+
+
+class TestRepresentativeDocuments:
+
+    def test_every_member_ranked_most_typical_first(self):
+        br = _ranked_corpus()
+        ranking = rank_topic_documents(br, n_gram_range="unigram")
+        assert set(ranking) == {0, 1}                     # no outlier topic
+        pos0, sims0 = ranking[0]
+        pos1, _ = ranking[1]
+        assert sorted(pos0) == [0, 1, 2] and sorted(pos1) == [3, 4, 5]
+        assert list(sims0) == sorted(sims0, reverse=True)
+        assert pos0[-1] == 2 and pos1[-1] == 5           # the fringe docs come last
+
+    def test_no_document_text_gives_no_ranking(self):
+        assert rank_topic_documents(_ranked_corpus().drop(columns="Document")) is None
+        assert rank_topic_documents(None) is None
+
+    def test_section_shows_more_than_the_topic_model_stored(self, tiny_topic_info):
+        br = _ranked_corpus()
+        ranking = rank_topic_documents(br, n_gram_range="unigram")
+        info = tiny_topic_info[tiny_topic_info["Topic"].isin([-1, 0, 1])]
+
+        class _Sections:
+            topics = TopicsSectionConfig(n_repr_docs_per_topic=3)
+
+        sec = _build_topics_section(info, _Sections(), None, 2, 1,
+                                    bertopic_results=br, ranking=ranking)
+        tables = [t for sub in _subsections(sec) for t in _blocks_of_type(sub, "table")]
+        assert [len(t["rows"]) for t in tables] == [3, 3]
+        assert tables[0]["headers"][-1] == "Sim."
+        sims = [float(r[-1]) for r in tables[0]["rows"]]
+        assert sims == sorted(sims, reverse=True)       # most typical first
+        assert tables[0]["rows"][-1][0] == "T2"         # the fringe doc last
+        assert "(3 of 3)" in tables[0]["title"]
+
+    def test_n_repr_docs_must_be_positive(self):
+        with pytest.raises(ValueError, match="n_repr_docs_per_topic"):
+            TopicsSectionConfig(n_repr_docs_per_topic=0)
 
 
 # =============================================================================
@@ -1344,3 +1409,47 @@ class TestCompositeByCommunity:
         assert set(det) == set(det2)
         assert all(abs(det[k]["score"] - det2[k]["score"]) < 1e-9 for k in det)
 
+
+
+# =============================================================================
+# "How to read this section" boxes
+# =============================================================================
+
+class TestSectionGuides:
+
+    def test_every_guide_is_a_callout(self):
+        from pysyrev.core.config import ActorsSectionConfig
+        from pysyrev.core.report.sections import guides
+        boxes = [
+            guides.topics_guide(ranked=True, labelled=True),
+            guides.networks_guide(BibNetworkSectionConfig()),
+            guides.actors_guide(ActorsSectionConfig()),
+            guides.temporal_guide(), guides.topic_characteristics_guide(),
+            guides.topic_similarity_guide(), guides.overview_guide(),
+            guides.paper_selection_guide(PaperSelectionConfig(), composite_used=False),
+        ]
+        for box in boxes:
+            assert box["type"] == "callout" and box["title"] == "How to read this section"
+            assert len(box["text"]) > 100
+
+    def test_topics_guide_follows_the_ranking(self):
+        from pysyrev.core.report.sections.guides import topics_guide
+        assert "every document of the topic" in topics_guide(True, False)["text"]
+        assert "unordered" in topics_guide(False, False)["text"]
+        assert "LLM" not in topics_guide(True, False)["text"]
+
+    def test_paper_selection_guide_explains_the_three_axes(self):
+        from pysyrev.core.report.sections.guides import paper_selection_guide
+        cfg = PaperSelectionConfig(
+            selection_by="composite", budget=40,
+            composite=CompositeConfig(aggregate="chebyshev", relevance_mode="cpy"))
+        text = paper_selection_guide(cfg, composite_used=True)["text"]
+        for word in ("Centrality", "Relevance", "Typicality", "PageRank",
+                     "citations per year", "weakest axis", "budget of 40"):
+            assert word in text
+
+    def test_paper_selection_guide_without_composite(self):
+        from pysyrev.core.report.sections.guides import paper_selection_guide
+        text = paper_selection_guide(PaperSelectionConfig(selection_by="citations"),
+                                     composite_used=False)["text"]
+        assert "raw citation count" in text and "Centrality" not in text

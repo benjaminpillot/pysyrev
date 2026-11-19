@@ -252,7 +252,8 @@ def _build_actors_section(df, section_cfg, export_to, section_n,
     if df is None or ACTORS not in df.columns or df[ACTORS].isna().all():
         return None
     cfg = section_cfg
-    blocks = _summary_blocks(df)
+    from pysyrev.core.report.sections.guides import actors_guide
+    blocks = [actors_guide(cfg)] + _summary_blocks(df)
     for level in cfg.levels:
         sub = []
         table = _ranking_table(df, level, cfg)

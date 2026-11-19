@@ -925,4 +925,6 @@ def _build_networks_section(df, coupling_result, cocitation_result,
 
     if not sub_blocks:
         return None
-    return {"title": f"{section_n}. Bibliographic networks", "blocks": sub_blocks}
+    from pysyrev.core.report.sections.guides import networks_guide
+    return {"title": f"{section_n}. Bibliographic networks",
+            "blocks": [networks_guide(cfg)] + sub_blocks}

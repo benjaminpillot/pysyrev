@@ -55,6 +55,12 @@ def _edge_controls(panel: str) -> List[dict]:
 
 
 CONTROLS: Dict[str, List[dict]] = {
+    "topics": [
+        {"title": "Representative documents", "controls": [
+            {"path": "n_repr_docs_per_topic", "kind": "int", "min": 1, "max": 1000,
+             "hint": "documents listed per topic"},
+        ]},
+    ],
     "actors": [
         {"title": "Rankings", "controls": [
             {"path": "levels", "kind": "multi",

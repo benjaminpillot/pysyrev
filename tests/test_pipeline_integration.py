@@ -206,13 +206,15 @@ class TestTopicReportIntegration:
             coupling_dataset=str(Path(__file__).parent / "data" / "bib_dataset.csv"),
         )
         live = report.live()
-        assert live.keys == ["actors", "bib_network"]
+        assert live.keys == ["topics", "actors", "bib_network"]
         assert 'id="settings"' in live.page()
         out = live.update("bib_network", {"coupling.color_by": "community",
                                           "cocitation.backbone_k": 2})
         assert "Bibliographic coupling" in out["html"]
         out = live.update("actors", {"top_n": 3, "sort_by": "fractional"})
         assert "fractional count" in out["html"]
+        out = live.update("topics", {"n_repr_docs_per_topic": 1})
+        assert "Representative documents (1 of" in out["html"]
         assert "color_by: community" in out["yaml"] and "top_n: 3" in out["yaml"]
         # Live: nothing is written.
         assert list(tmp_path.iterdir()) == []

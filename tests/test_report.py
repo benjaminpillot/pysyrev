@@ -158,7 +158,9 @@ class TestBlockRenderers:
     def test_callout_structure(self):
         result = self.engine._render_callout({"text": "A note.", "title": "Note"})
         assert len(result) == 2
-        assert isinstance(result[0], Table)
+        # Kept on one page: the box's title never parts from its text.
+        assert isinstance(result[0], KeepTogether)
+        assert isinstance(result[0]._content[0], Table)
         assert isinstance(result[1], Spacer)
 
     def test_code_escapes_html(self):

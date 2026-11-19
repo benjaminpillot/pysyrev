@@ -10,6 +10,7 @@ import glob
 import os
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Tuple
 
 import pandas as pd
@@ -17,6 +18,7 @@ import pandas as pd
 from pysyrev.core.actors import ACTORS
 from pysyrev.core.report.sections.actors import _build_actors_section
 from pysyrev.core.report.sections.common import _FIXED_METRIC_COLS
+from pysyrev.core.report.sections.guides import overview_guide
 from pysyrev.core.report.sections.networks import (
     _build_networks_section, _cocitation_metadata,
     _label_cocitation_communities, _label_coupling_communities)
@@ -24,7 +26,7 @@ from pysyrev.core.report.sections.papers import _build_paper_selection_section
 from pysyrev.core.report.sections.temporal import _build_temporal_section
 from pysyrev.core.report.sections.topics import (
     _build_topic_characteristics_section, _build_topic_similarity_section,
-    _build_topics_section)
+    _build_topics_section, rank_topic_documents)
 
 
 def find_best_results_csv(run_dir: str) -> Tuple[str, str]:
@@ -87,7 +89,7 @@ def _build_overview_section(run_dir, best_model_index, best_results, section_n):
         })
     return {
         "title": f"{section_n}. Topic model — Technical overview",
-        "blocks": [{"type": "key_value", "items": kv_items}],
+        "blocks": [overview_guide(), {"type": "key_value", "items": kv_items}],
     }
 
 
@@ -118,7 +120,8 @@ def build_report_data(run_dir: str,
                       export_to: str = None,
                       coupling_dataset: str = None,
                       cluster_labeler_config=None,
-                      rebuilders: dict = None) -> dict:
+                      rebuilders: dict = None,
+                      topic_vectorizer: dict = None) -> dict:
     """Build the declarative report_data dict the report engines render.
 
     Every section carries a ``key`` — the name of its block under
@@ -129,6 +132,10 @@ def build_report_data(run_dir: str,
     again from the data already loaded here (the networks are not recomputed).
     That is what the live report calls when a setting changes; such a rebuild
     writes no file.
+
+    *topic_vectorizer* gives the topic model's ``n_gram_range``,
+    ``bm25_weighting`` and ``reduce_frequent_words``, so the representative
+    documents are ranked as BERTopic ranked them (defaults: the config's).
     """
     meta = report_config.meta
     sec  = report_config.sections
@@ -154,10 +161,20 @@ def build_report_data(run_dir: str,
         if rebuilders is not None and rebuild is not None:
             rebuilders[key] = rebuild
 
-    # 1. Topics
-    _add("topics", _build_topics_section(
-        topic_info, sec, topic_labels, nb_topics, n,
-        bertopic_results=bertopic_results))
+    # 1. Topics. Every document is ranked once; a rebuild only re-slices.
+    try:
+        _ranking = rank_topic_documents(bertopic_results, **(topic_vectorizer or {}))
+    except Exception as e:
+        print(f"[report] representative documents: ranking skipped, falling back "
+              f"to the topic model's own few ({e!r})")
+        _ranking = None
+
+    def _topics(cfg, export_to=None, n=n):
+        return _build_topics_section(
+            topic_info, SimpleNamespace(topics=cfg), topic_labels, nb_topics, n,
+            bertopic_results=bertopic_results, ranking=_ranking)
+
+    _add("topics", _topics(sec.topics), _topics)
     n += 1
 
     # Compute the coupling and co-citation networks once from the reviewed

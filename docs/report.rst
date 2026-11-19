@@ -32,6 +32,10 @@ Both files are written by default. Choose with ``topic_report.export.formats``:
      export:
        formats: [pdf, html]   # or [pdf], or [html]
 
+In both formats, each section opens with a *How to read this section* box: what
+its results are and how they were computed (for the reading list, the three
+axes of the composite score), following the settings the report was built with.
+
 They land side by side in the report's run directory, under the same name:
 
 .. code-block:: text
@@ -130,6 +134,9 @@ defaults, in the :doc:`configuration reference <configuration>`.
    * - Section
      - Setting
      - Effect
+   * - ``topics``
+     - ``n_repr_docs_per_topic``
+     - Representative documents listed per topic
    * - ``actors``
      - ``levels``
      - Levels shown: country, institution, author

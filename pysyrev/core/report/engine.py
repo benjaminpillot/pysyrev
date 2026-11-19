@@ -252,7 +252,7 @@ _PDF_TEXT_MAP = {
     # Primes, maths, arrows.
     "\u2032": "'", "\u2033": '"', "\u2035": "'",
     "\u2260": "!=", "\u2264": "<=", "\u2265": ">=", "\u2248": "~=",
-    "\u221e": "inf",
+    "\u221e": "inf", "\u221a": "sqrt",
     "\u2190": "<-", "\u2192": "->", "\u2194": "<->",
     "\u21d0": "<=", "\u21d2": "=>", "\u21d4": "<=>",
 }
@@ -669,7 +669,8 @@ class PDFReportEngine:
             ("TOPPADDING",    (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
-        return [table, Spacer(1, lo.callout_bottom_spacer_cm * cm)]
+        # A box is read as one piece: never split its title from its text.
+        return [KeepTogether([table]), Spacer(1, lo.callout_bottom_spacer_cm * cm)]
 
     def _render_code(self, block):
         text = (block["text"]

@@ -430,7 +430,8 @@ def test_actors_section_renders_rankings_and_networks(tmp_path):
     assert len(countries["headers"]) == len(countries["rows"][0]) == len(countries["col_widths"])
     assert len(_blocks_of(section, "plotly")) == 3
     # Every actor carries an identifier here: no caveat about name matching.
-    callout = _blocks_of(section, "callout")[0]
+    callout = next(b for b in _blocks_of(section, "callout")
+                   if b["title"] == "Identity of actors")
     assert "100% of authors" in callout["text"] and "homonyms" not in callout["text"]
     assert (tmp_path / "authors_collaboration_network.html").exists()
 

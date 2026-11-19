@@ -1242,8 +1242,12 @@ not here.
          :Type: ``int``
          :Default: ``5``
 
-         Number of representative documents (closest to the topic
-         centroid) displayed in the per-topic section.
+         Number of representative documents listed per topic, most typical
+         first.  Every document of the topic is ranked by the cosine
+         similarity between its c-TF-IDF vector and the topic's — BERTopic's
+         own measure, recomputed at report time with the topic model's
+         ``bertopic.n_gram_range`` and ``ctfidf`` settings — so there is no
+         upper bound.  The similarity is shown in the table's *Sim.* column.
 
    ``sections.bib_network``
       :Type: mapping

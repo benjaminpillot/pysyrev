@@ -474,7 +474,8 @@ topic_model:
 #   # ---- Section parameters (defaults shown) --------------------------------
 #   # sections:
 #   #   topics:
-#   #     n_repr_docs_per_topic: 5   # representative documents shown per topic
+#   #     n_repr_docs_per_topic: 5   # representative documents listed per topic, most typical first
+#   #                                # (c-TF-IDF similarity to the topic, as BERTopic measures it; no upper bound)
 #   #   bib_network:                # coupling + co-citation + connectivity panels
 #   #     coupling:                 # document × document (Salton + Leiden, coloured by topic)
 #   #       resolution_range: [0.4, 1.2]  # sweep Leiden resolutions and keep the best-modularity partition (default: [0.4, 1.2])

@@ -59,6 +59,7 @@ class TopicReport:
     # ---- bridge from configuration ----------------------------------------
 
     coupling_dataset:   object           = None  # reviewed dataset (raw references) for the network panels
+    topic_vectorizer:   object           = None  # n-grams / c-TF-IDF of the topic model, to rank representative docs
 
     @classmethod
     def from_config(cls, config: Config) -> 'TopicReport':
@@ -78,6 +79,11 @@ class TopicReport:
             # need the raw references, which the bertopic outputs drop) — the same
             # reviewed_included.csv fed to the topic model.
             coupling_dataset   = (config.topic_model.doc_dataset
+                                  if config.topic_model is not None else None),
+            topic_vectorizer   = (dict(
+                n_gram_range          = config.topic_model.bertopic.n_gram_range,
+                bm25_weighting        = config.topic_model.ctfidf.bm25_weighting,
+                reduce_frequent_words = config.topic_model.ctfidf.reduce_frequent_words)
                                   if config.topic_model is not None else None),
         )
 
@@ -181,6 +187,7 @@ class TopicReport:
             coupling_dataset      = self.coupling_dataset,
             cluster_labeler_config = self.labeler_config,
             rebuilders            = rebuilders,
+            topic_vectorizer      = self.topic_vectorizer,
         )
 
     @property

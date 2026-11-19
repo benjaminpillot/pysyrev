@@ -13,6 +13,9 @@ from pysyrev.core.report.sections.common import (_docs_per_topic_per_year,
                                                  _median_year_per_topic,
                                                  _safe_parse, _topic_cols,
                                                  _topic_label, _wo_outliers)
+from pysyrev.core.report.sections.guides import (topic_characteristics_guide,
+                                                 topic_similarity_guide,
+                                                 topics_guide)
 
 
 def _format_median(value) -> str:
@@ -22,9 +25,82 @@ def _format_median(value) -> str:
     return f"{value:.0f}" if float(value).is_integer() else f"{value:.1f}"
 
 
+_N_GRAM_RANGES = {"unigram": (1, 1), "bigram": (2, 2)}
+
+
+def rank_topic_documents(bertopic_results, n_gram_range="bigram",
+                         bm25_weighting=True, reduce_frequent_words=True):
+    """Every document of every topic, most representative first.
+
+    BERTopic's criterion: the cosine similarity between a document's c-TF-IDF
+    vector and its topic's, both computed as the topic model did (same n-grams,
+    same c-TF-IDF weighting) from the preprocessed text it saw. BERTopic itself
+    only keeps a few of them, picked from a sample and left unordered; here
+    every member is scored, so any number can be shown.
+
+    Returns ``{topic: (row positions, similarities)}``, sorted by decreasing
+    similarity, or None when the results carry no ``Document`` text.
+    """
+    if bertopic_results is None or "Document" not in bertopic_results.columns:
+        return None
+    from bertopic.vectorizers import ClassTfidfTransformer
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    ngrams = _N_GRAM_RANGES.get(n_gram_range, n_gram_range)
+    docs = bertopic_results["Document"].fillna("").astype(str).to_numpy()
+    topics = bertopic_results["Topic"].astype(int).to_numpy()
+    labels = sorted(set(topics.tolist()))
+    joined = [" ".join(docs[topics == t]) for t in labels]
+    try:
+        vectorizer = CountVectorizer(ngram_range=tuple(ngrams)).fit(joined)
+    except ValueError:                      # empty vocabulary — tiny corpus
+        return None
+    ctfidf = ClassTfidfTransformer(bm25_weighting=bm25_weighting,
+                                   reduce_frequent_words=reduce_frequent_words)
+    topic_vectors = ctfidf.fit_transform(vectorizer.transform(joined))
+    doc_vectors = ctfidf.transform(vectorizer.transform(docs))
+
+    ranking = {}
+    for row, t in enumerate(labels):
+        if t == -1:
+            continue
+        idx = np.flatnonzero(topics == t)
+        sims = cosine_similarity(doc_vectors[idx], topic_vectors[row]).ravel()
+        order = np.argsort(-sims, kind="stable")
+        ranking[t] = (idx[order], sims[order])
+    return ranking
+
+
+def _repr_rows_from_ranking(bertopic_results, positions, sims, n):
+    """Table rows for the *n* first ranked documents of a topic."""
+    def cell(row, col, as_int=False):
+        val = row.get(col) if col in row.index else None
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return "-"
+        if as_int:
+            try:
+                return str(int(float(val)))
+            except (ValueError, TypeError):
+                pass
+        return str(val)
+
+    rows = []
+    for pos, sim in zip(positions[:n], sims[:n]):
+        r = bertopic_results.iloc[int(pos)]
+        rows.append([cell(r, "title"), cell(r, "year", True), cell(r, "cited_by", True),
+                     cell(r, "document_type"), cell(r, "doi"), f"{sim:.2f}"])
+    return rows
+
+
 def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics,
-                          section_n, bertopic_results=None):
-    """Section 1 — human-readable topic overview."""
+                          section_n, bertopic_results=None, ranking=None):
+    """Section 1 — human-readable topic overview.
+
+    *ranking* is :func:`rank_topic_documents`' output; without it, the
+    representative documents fall back to the few BERTopic stored in
+    ``topic_info``.
+    """
     use_labels = topic_labels is not None
     nr_repr = sections_cfg.topics.n_repr_docs_per_topic
 
@@ -81,7 +157,8 @@ def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics,
             "couple of years. Med. year: the year by which the topic had "
             "published half of its documents, i.e. where it sits in time."
         )
-    blocks = [summary_table]
+    blocks = [topics_guide(ranked=ranking is not None, labelled=use_labels),
+              summary_table]
 
     # Per-topic detail subsections with representative docs
     repr_meta = ["title", "year", "cited_by", "document_type", "doi"]
@@ -93,7 +170,28 @@ def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics,
         label = _topic_label(topic_id, topic_labels)
         keywords = str(t.get("Representation", "-"))
 
-        # Parse repr_doc columns
+        sub_blocks = [
+            {"type": "paragraph", "text": f"<b>Keywords:</b> {keywords}"},
+        ]
+        if ranking is not None and topic_id in ranking:
+            positions, sims = ranking[topic_id]
+            rows = _repr_rows_from_ranking(bertopic_results, positions, sims, nr_repr)
+            if rows:
+                sub_blocks.append({
+                    "type":    "table",
+                    "title":   f"Representative documents ({len(rows)} of {len(positions)})",
+                    "headers": ["Title", "Year", "Citations", "Type", "DOI", "Sim."],
+                    "rows":    rows,
+                    "col_widths": [6.2, 1.2, 1.8, 1.7, 4.8, 1.3],  # 17 cm
+                })
+            blocks.append({
+                "type":   "subsection",
+                "title":  f"Topic {topic_id} — {label}",
+                "blocks": sub_blocks,
+            })
+            continue
+
+        # Fallback: the few representative docs stored by the topic model.
         repr_rows = []
         parsed = {
             col: _safe_parse(t.get(f"repr_doc_{col}", []))
@@ -121,9 +219,6 @@ def _build_topics_section(topic_info, sections_cfg, topic_labels, nb_topics,
                 row.append(val)
             repr_rows.append(row)
 
-        sub_blocks = [
-            {"type": "paragraph", "text": f"<b>Keywords:</b> {keywords}"},
-        ]
         if repr_rows:
             sub_blocks.append({
                 "type":    "table",
@@ -237,7 +332,8 @@ def _build_topic_characteristics_section(bertopic_results, topic_labels,
 
     if not sub_blocks:
         return None
-    return {"title": f"{section_n}. Topic characteristics", "blocks": sub_blocks}
+    return {"title": f"{section_n}. Topic characteristics",
+            "blocks": [topic_characteristics_guide()] + sub_blocks}
 
 
 def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, section_n):
@@ -327,4 +423,5 @@ def _build_topic_similarity_section(bertopic_results, topic_labels, sim_cfg, sec
         "filename_prefix": "topic_similarity",
     })
 
-    return {"title": f"{section_n}. Topic similarity", "blocks": sub_blocks}
+    return {"title": f"{section_n}. Topic similarity",
+            "blocks": [topic_similarity_guide()] + sub_blocks}

@@ -471,7 +471,9 @@ def _build_paper_selection_section(bertopic_results, topic_info, topic_labels,
                     f.write(" | ".join(r) + "\n")
         annex_msg = f"Full selection ({len(src)} papers) exported to: {ann_path}"
 
+    from pysyrev.core.report.sections.guides import paper_selection_guide
     blocks = [
+        paper_selection_guide(sel_cfg, composite_used=is_composite),
         {
             "type":       "table",
             "title":      f"Paper reading list — {len(full_df)} papers selected",

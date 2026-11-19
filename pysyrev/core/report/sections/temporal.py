@@ -237,4 +237,6 @@ def _build_temporal_section(bertopic_results, nb_topics, temporal_cfg, section_n
 
     if not sub_blocks:
         return None
-    return {"title": f"{section_n}. Temporal dynamics", "blocks": sub_blocks}
+    from pysyrev.core.report.sections.guides import temporal_guide
+    return {"title": f"{section_n}. Temporal dynamics",
+            "blocks": [temporal_guide()] + sub_blocks}
