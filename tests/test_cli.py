@@ -53,6 +53,11 @@ class TestCLIArguments:
         for stage in ("bib", "review", "topic-model", "topic-report"):
             assert stage in result.stdout
 
+    def test_help_lists_the_sub_commands(self):
+        result = _run("--help")
+        for command in ("serve", "estimate", "check", "download"):
+            assert f"  {command} " in result.stdout
+
     def test_missing_config_file_exits_nonzero(self):
         result = _run("nonexistent_config.yaml")
         assert result.returncode != 0

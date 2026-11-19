@@ -60,6 +60,18 @@ def _run_pipeline(argv):
     parser = argparse.ArgumentParser(
         prog='pysyrev',
         description='Systematic literature review pipeline.',
+        epilog=(
+            'sub-commands (run `pysyrev <sub-command> --help` for their options):\n'
+            '  serve     config.yaml   explore the report live: the interactive page\n'
+            '                          plus a panel of settings, served locally\n'
+            '  estimate  config.yaml   price the review stage before running it\n'
+            '                          (no model call)\n'
+            '  check     [config.yaml] list the mandatory keys, or check a config\n'
+            '                          against them\n'
+            '  download  list.csv dir  download the full texts of a list of papers\n'
+            '                          (Unpaywall -> OpenAlex -> Elsevier TDM)'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('config', help='Path to the YAML pipeline config file.')
